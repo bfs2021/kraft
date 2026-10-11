@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_e76ffebab55e5b0a_lifecycle_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-11 11:33 +0000
+            created at 2026-10-11 14:30 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -153,8 +153,8 @@
     <p class="run"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t">    <span class="key">return</span> <span class="op">[</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t">        <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t">            <span class="str">&quot;id&quot;</span><span class="op">:</span> <span class="nam">p</span><span class="op">.</span><span class="nam">id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">            <span class="com"># The plugin a qualified profile comes from; None for the instance&#x27;s own.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">            <span class="str">&quot;plugin&quot;</span><span class="op">:</span> <span class="nam">catalogue</span><span class="op">.</span><span class="nam">plugin_view</span><span class="op">(</span><span class="nam">library</span><span class="op">,</span> <span class="nam">p</span><span class="op">.</span><span class="nam">id</span><span class="op">)</span> <span class="key">if</span> <span class="nam">library</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">else</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">            <span class="com"># The add-on a qualified profile comes from; None for the instance&#x27;s own.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">            <span class="str">&quot;addon&quot;</span><span class="op">:</span> <span class="nam">catalogue</span><span class="op">.</span><span class="nam">addon_view</span><span class="op">(</span><span class="nam">library</span><span class="op">,</span> <span class="nam">p</span><span class="op">.</span><span class="nam">id</span><span class="op">)</span> <span class="key">if</span> <span class="nam">library</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">else</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t">            <span class="str">&quot;effort&quot;</span><span class="op">:</span> <span class="nam">p</span><span class="op">.</span><span class="nam">effort</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t77" href="#t77">77</a></span><span class="t">            <span class="str">&quot;model&quot;</span><span class="op">:</span> <span class="nam">p</span><span class="op">.</span><span class="nam">model</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t">            <span class="str">&quot;providers&quot;</span><span class="op">:</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
@@ -197,7 +197,7 @@
     <p class="run"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t">    <span class="nam">library</span> <span class="op">=</span> <span class="nam">getattr</span><span class="op">(</span><span class="nam">st</span><span class="op">,</span> <span class="str">&quot;library&quot;</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">        <span class="nam">table</span> <span class="op">=</span> <span class="nam">HarnessProfileTable</span><span class="op">.</span><span class="nam">from_yaml</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">            <span class="nam">path</span><span class="op">,</span> <span class="nam">harnesses</span><span class="op">=</span><span class="nam">providers</span><span class="op">,</span> <span class="nam">plugins</span><span class="op">=</span><span class="nam">getattr</span><span class="op">(</span><span class="nam">library</span><span class="op">,</span> <span class="str">&quot;plugins&quot;</span><span class="op">,</span> <span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">            <span class="nam">path</span><span class="op">,</span> <span class="nam">harnesses</span><span class="op">=</span><span class="nam">providers</span><span class="op">,</span> <span class="nam">addons</span><span class="op">=</span><span class="nam">getattr</span><span class="op">(</span><span class="nam">library</span><span class="op">,</span> <span class="str">&quot;addons&quot;</span><span class="op">,</span> <span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">        <span class="nam">profiles</span><span class="op">,</span> <span class="nam">error</span> <span class="op">=</span> <span class="nam">table</span><span class="op">.</span><span class="nam">profiles</span><span class="op">,</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t121" href="#t121">121</a></span><span class="t">    <span class="key">except</span> <span class="nam">TemplateEnvironmentError</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -352,7 +352,7 @@
             <a class="nav" href="z_e76ffebab55e5b0a_lifecycle_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-11 11:33 +0000
+            created at 2026-10-11 14:30 +0000
         </p>
     </div>
 </footer>

@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_cf999581e38b9e91_subprocess_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-11 11:33 +0000
+            created at 2026-10-11 14:30 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -90,8 +90,8 @@
     <p class="run"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t"><span class="key">from</span> <span class="nam">pathlib</span> <span class="key">import</span> <span class="nam">Path</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span> <span class="key">import</span> <span class="nam">harness</span> <span class="key">as</span> <span class="nam">_harness</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">paths</span> <span class="key">import</span> <span class="nam">config_dir</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">plugins</span> <span class="key">import</span> <span class="nam">load</span> <span class="key">as</span> <span class="nam">plugins_load</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">addons</span> <span class="key">import</span> <span class="nam">load</span> <span class="key">as</span> <span class="nam">addons_load</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">paths</span> <span class="key">import</span> <span class="nam">config_dir</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">templates</span><span class="op">.</span><span class="nam">environment</span> <span class="key">import</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t">    <span class="nam">HarnessProfile</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t">    <span class="nam">HarnessProfileTable</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -121,12 +121,12 @@
     <p class="pln"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">    <span class="str">&quot;&quot;&quot;The live `harnesses.yaml` and its path, or `HarnessUnavailable`. Read</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t"><span class="str">    from the app&#x27;s templates directory (`KRAFT_CONFIG_DIR`, else</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t41" href="#t41">41</a></span><span class="t"><span class="str">    `$KRAFT_HOME/config`) on every call, so an edit reaches the next launch.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t42" href="#t42">42</a></span><span class="t"><span class="str">    A plugin&#x27;s agent profiles are the exception: `pins` are the versions a</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t43" href="#t43">43</a></span><span class="t"><span class="str">    work item started with (`ResolvedChain.plugins`), and theirs are read.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t42" href="#t42">42</a></span><span class="t"><span class="str">    An add-on&#x27;s agent profiles are the exception: `pins` are the versions a</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t43" href="#t43">43</a></span><span class="t"><span class="str">    work item started with (`ResolvedChain.addons`), and theirs are read.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t44" href="#t44">44</a></span><span class="t">    <span class="nam">path</span> <span class="op">=</span> <span class="nam">config_dir</span><span class="op">(</span><span class="op">)</span> <span class="op">/</span> <span class="str">&quot;harnesses.yaml&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t45" href="#t45">45</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t46" href="#t46">46</a></span><span class="t">        <span class="nam">table</span> <span class="op">=</span> <span class="nam">HarnessProfileTable</span><span class="op">.</span><span class="nam">from_yaml</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t47" href="#t47">47</a></span><span class="t">            <span class="nam">path</span><span class="op">,</span> <span class="nam">harnesses</span><span class="op">=</span><span class="nam">harnesses</span><span class="op">.</span><span class="nam">valid</span><span class="op">,</span> <span class="nam">plugins</span><span class="op">=</span><span class="nam">plugins_load</span><span class="op">.</span><span class="nam">for_item</span><span class="op">(</span><span class="nam">pins</span><span class="op">,</span> <span class="nam">path</span><span class="op">.</span><span class="nam">parent</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t47" href="#t47">47</a></span><span class="t">            <span class="nam">path</span><span class="op">,</span> <span class="nam">harnesses</span><span class="op">=</span><span class="nam">harnesses</span><span class="op">.</span><span class="nam">valid</span><span class="op">,</span> <span class="nam">addons</span><span class="op">=</span><span class="nam">addons_load</span><span class="op">.</span><span class="nam">for_item</span><span class="op">(</span><span class="nam">pins</span><span class="op">,</span> <span class="nam">path</span><span class="op">.</span><span class="nam">parent</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t48" href="#t48">48</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t49" href="#t49">49</a></span><span class="t">        <span class="key">return</span> <span class="nam">table</span><span class="op">,</span> <span class="nam">path</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t50" href="#t50">50</a></span><span class="t">    <span class="key">except</span> <span class="nam">TemplateEnvironmentError</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -176,7 +176,7 @@
             <a class="nav" href="z_cf999581e38b9e91_subprocess_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-11 11:33 +0000
+            created at 2026-10-11 14:30 +0000
         </p>
     </div>
 </footer>
