@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -116,6 +117,46 @@ def config_problem(config_dir: Path) -> str | None:
     return None
 
 
+#: `installed()`'s last answer per (config dir, store root) and what it was
+#: computed from. Replaced whole, never mutated: a thread and the loop cannot
+#: corrupt it; the worst race is one redundant recompute.
+_memo: dict[tuple[str, str], tuple[tuple, tuple[InstalledPlugin, ...]]] = {}
+
+
+def stamp(path: Path) -> tuple | None:
+    """`path`'s (mtime_ns, size, inode), or None when it cannot be statted."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+
+def signature(config_dir: Path, found: tuple[InstalledPlugin, ...] = ()) -> tuple:
+    """Everything `installed()` reads, as stat triples (None: absent), so an
+    unchanged answer can be told without re-parsing: the five config files,
+    the harness overlay directory, `found`'s stores (existence, manifest,
+    digest file), the restore failures `_why_left_out` quotes, and this
+    Kraft's version, which decides `requires.kraft`."""
+    from kraft import paths, update
+    from kraft.plugins import fetch, manifest
+
+    config_dir = Path(config_dir)
+    names = ("plugins.yaml", "plugins.lock", "harnesses.yaml", "repos.yaml", "policy.yaml")
+    store_files = (manifest.PLUGIN_JSON, fetch.DIGEST_FILE)
+    try:
+        overlaid = sorted(paths.default_harnesses_dir().glob("*.yaml"))
+    except OSError:
+        overlaid = []
+    return (
+        tuple(stamp(config_dir / n) for n in names),
+        tuple((p.name, stamp(p)) for p in overlaid),
+        tuple((p.root.is_dir(), *(stamp(p.root / f) for f in store_files)) for p in found),
+        tuple(sorted(_unrestored.items())),
+        update.installed(),
+    )
+
+
 def installed(
     config_dir: Path | None = None,
     plugins_root: Path | None = None,
@@ -132,13 +173,35 @@ def installed(
     here, ever. `verify` re-hashes every stored file, not only the manifest.
     `config` is a `PluginsConfig` to read in place of the file: an edit of
     `plugins.yaml` not saved yet.
+
+    The answer is kept until a file it was computed from changes (see
+    `signature`); a `verify` or `config` call is never answered from it.
     """
+    global _memo
     from kraft import paths
+
+    config_dir = Path(config_dir) if config_dir is not None else paths.config_dir()
+    root = Path(plugins_root) if plugins_root is not None else plugins_dir()
+    if verify or config is not None:
+        return _installed(config_dir, root / "store", verify, config)
+    key = (str(config_dir), str(root))
+    hit = _memo.get(key)
+    if hit is not None and hit[0] == signature(config_dir, hit[1]):
+        return hit[1]
+    before = signature(config_dir)
+    found = _installed(config_dir, root / "store", verify, config)
+    after = signature(config_dir, found)
+    # An input that changed during the compute is not what `found` was made
+    # from (the stores, index 2, are derived from `found` and so not compared).
+    if (before[:2], before[3:]) == (after[:2], after[3:]):
+        _memo = {**_memo, key: (after, found)}
+    return found
+
+
+def _installed(config_dir: Path, store: Path, verify: bool, config) -> tuple[InstalledPlugin, ...]:
     from kraft.config import ConfigError
     from kraft.plugins.config import PluginsConfig, PluginsLock
 
-    config_dir = Path(config_dir) if config_dir is not None else paths.config_dir()
-    store = (Path(plugins_root) if plugins_root is not None else plugins_dir()) / "store"
     try:
         config = config or PluginsConfig.load(config_dir / PluginsConfig.FILE)
         lock = PluginsLock.load(config_dir / PluginsLock.FILE)
@@ -385,11 +448,13 @@ def _restore(plugin: InstalledPlugin, config_dir: Path, root: Path) -> Path:
         )
     except ConfigError as exc:
         raise RestoreError(f"{what}: {exc}") from exc
-    if collection is None or plugin.source is None:
+    if collection is None:
         raise RestoreError(
             f"{what}: collection {collection_name} is no longer in plugins.yaml; add it again"
         )
     again = f"run `kraft admin plugin install {plugin.id} --re-install`"
+    if plugin.source is None:
+        raise RestoreError(f"{what}: its pin does not record where its files came from; {again}")
     try:
         if collection.git is not None and plugin.commit is not None:
             try:
@@ -428,12 +493,18 @@ def restore_missing(
     plugins: tuple[InstalledPlugin, ...],
     config_dir: Path | None = None,
     plugins_root: Path | None = None,
+    cancel: threading.Event | None = None,
 ) -> dict[str, str]:
     """Restore every store of `plugins` that is gone; plugin id to why, for
-    each that could not be. A plugin left out on purpose is not restored."""
+    each that could not be. A plugin left out on purpose is not restored.
+    `cancel` (set at shutdown) is checked before each: the rest are reported
+    `cancelled`, and a restore already running finishes, its write atomic."""
     failed: dict[str, str] = {}
     for plugin in plugins:
         if plugin.quiet:
+            continue
+        if cancel is not None and cancel.is_set():
+            failed[plugin.id] = "cancelled"
             continue
         try:
             restore(plugin, config_dir, plugins_root)

@@ -17,6 +17,7 @@ from __future__ import annotations
 import fcntl
 import os
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -189,14 +190,48 @@ def problems(
     return out
 
 
+def referrers(namespace: str, plugins: Sequence[load.InstalledPlugin]) -> list[str]:
+    """Why `namespace` may not be taken: each skill of `plugins`, the other
+    installed plugins, that already names `<namespace>:`. It resolved to no
+    plugin when it was installed; a plugin installed now would answer it, and
+    there are no plugin dependencies. A store that does not read says nothing:
+    loading says why it is left out."""
+    out: list[str] = []
+    for plugin in plugins:
+        try:
+            files = fetch.extract_dir(plugin.root).files
+        except Exception:  # noqa: BLE001 -- an edited store can break in any way
+            continue
+        for rel in sorted(files):
+            if not (rel in ("library.yaml", "profiles.yaml") or rel.startswith("chains/")):
+                continue
+            try:
+                data = bounded_yaml(files[rel][1].decode(), [20_000])
+            except (ValueError, yaml.YAMLError):
+                continue
+            for at, component in _components(rel, data):
+                skill = component.get("skill")
+                if _qualifier(skill) == namespace:
+                    out.append(
+                        f"{plugin.id}: {rel}: {at or 'file'}: skill {skill!r} names this "
+                        f"plugin's namespace {namespace!r}; there are no plugin dependencies"
+                    )
+    return out
+
+
 def check(
     found: PluginManifest,
     files: Mapping[str, tuple[str, bytes]],
     *,
     other_namespaces: Collection[str] = (),
+    named_by: Sequence[str] = (),
 ) -> None:
-    """Raise `Refused` when this plugin's content may not be installed."""
-    if found_problems := problems(found, files, other_namespaces=other_namespaces):
+    """Raise `Refused` when this plugin's content may not be installed.
+    `named_by` is what `referrers()` says of its namespace."""
+    if found_problems := [
+        *problems(found, files, other_namespaces=other_namespaces),
+        *named_by,
+    ]:
         raise Refused(found_problems)
 
 
@@ -366,10 +401,7 @@ def _catalogue(
         source = fetch.redact(collection.git)
     else:
         mirror, commit, source = None, None, str(collection.path)
-        try:
-            data = (Path(source) / where).read_bytes()
-        except OSError as exc:
-            raise fetch.FetchError("refused", f"{source}: {exc}") from exc
+        data = fetch.read_regular(Path(source) / where, fetch.MAX_JSON)
     try:
         text = data.decode()
     except UnicodeDecodeError as exc:
@@ -506,7 +538,12 @@ def update(
                 others = set(holders) | {
                     config.namespace(o) for o in config.plugins if o != plugin_id
                 }
-                check(found, extracted.files, other_namespaces=others)
+                check(
+                    found,
+                    extracted.files,
+                    other_namespaces=others,
+                    named_by=referrers(namespace, [p for p in loaded if p.id != plugin_id]),
+                )
             except fetch.FetchError as exc:
                 results[plugin_id] = Result(
                     plugin_id, "failed", problems=(str(exc),), kind=exc.kind
@@ -710,7 +747,9 @@ def read_status(plugins_root: Path) -> dict[str, dict]:
 
 
 def auto_update(
-    config_dir: Path | None = None, plugins_root: Path | None = None
+    config_dir: Path | None = None,
+    plugins_root: Path | None = None,
+    cancel: threading.Event | None = None,
 ) -> dict[str, dict]:
     """Update every locked plugin whose auto-update is on (its collection's, or
     its own), applying only what `may_apply_unattended` allows, and record
@@ -718,7 +757,9 @@ def auto_update(
     `failed` (with `kind`: `network`, `auth`, `refused` or `busy`). Never
     installs, never re-installs, and never applies a ref or alias changed by
     hand: those wait for a person's `update`. A collection none of whose
-    plugins auto-update is not fetched."""
+    plugins auto-update is not fetched. `cancel` (set at shutdown) is checked
+    before each collection: the rest are reported `cancelled`, and not
+    recorded, so a restart does not read a stop as a failure."""
     import json
 
     from kraft import paths
@@ -762,9 +803,22 @@ def auto_update(
             held[review.plugin_id] = why
         return why is None
 
-    results = (
-        update(ids, accept=accept, config_dir=config_dir, plugins_root=plugins_root) if ids else []
-    )
+    by_collection: dict[str, list[str]] = {}
+    for plugin_id in ids:
+        by_collection.setdefault(plugin_id.split("@", 1)[1], []).append(plugin_id)
+    results: list[Result] = []
+    for collection_ids in by_collection.values():
+        if cancel is not None and cancel.is_set():
+            for plugin_id in collection_ids:
+                outcomes[plugin_id] = {
+                    "outcome": "failed",
+                    "kind": "cancelled",
+                    "message": "stopped at shutdown",
+                }
+            continue
+        results += update(
+            collection_ids, accept=accept, config_dir=config_dir, plugins_root=plugins_root
+        )
     for result in results:
         said = "; ".join(result.problems)
         outcomes[result.plugin_id] = {
@@ -778,11 +832,12 @@ def auto_update(
             "refused": {"outcome": "failed", "kind": "refused", "message": said},
             "failed": {"outcome": "failed", "kind": result.kind, "message": said},
         }[result.outcome]
-    if outcomes:
+    recorded = {i: o for i, o in outcomes.items() if o.get("kind") != "cancelled"}
+    if recorded:
         now = datetime.now(UTC).isoformat(timespec="seconds")
         status = read_status(plugins_root) | {
             plugin_id: {"at": now, "kind": None, "message": None, **outcome}
-            for plugin_id, outcome in outcomes.items()
+            for plugin_id, outcome in recorded.items()
         }
         plugins_root.mkdir(parents=True, exist_ok=True)
         write_text(plugins_root / STATUS_FILE, json.dumps(status, indent=2) + "\n")

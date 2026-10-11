@@ -335,3 +335,45 @@ origin: src/kraft/templates/catalogue.py §read_only_message
 WHEN a plugin component or chain is copied into a local draft, the system SHALL carry its plugin-internal references qualified, so the copy resolves.
 enforced-by: tests/api/test_plugin_content.py::test_copy_from_a_plugin[chain], tests/api/test_plugin_content.py::test_copy_from_a_plugin[component]
 origin: src/kraft/drafts/ops.py §copy_component
+
+## REQ installed-plugins-are-recomputed-only-when-an-input-changes
+
+WHEN `installed()` is called again and none of the files it reads has changed, the system SHALL return the earlier answer without re-running the load-time checks.
+enforced-by: tests/plugins/test_load.py::test_installed_is_answered_from_a_cache_until_an_input_changes[plugins-yaml], tests/plugins/test_load.py::test_installed_is_answered_from_a_cache_until_an_input_changes[plugins-lock], tests/plugins/test_load.py::test_installed_is_answered_from_a_cache_until_an_input_changes[harnesses-yaml], tests/plugins/test_load.py::test_installed_is_answered_from_a_cache_until_an_input_changes[repos-yaml], tests/plugins/test_load.py::test_installed_is_answered_from_a_cache_until_an_input_changes[policy-yaml], tests/plugins/test_load.py::test_installed_is_answered_from_a_cache_until_an_input_changes[dropped-store], tests/plugins/test_load.py::test_installed_is_answered_from_a_cache_until_an_input_changes[unrestored-reason], tests/plugins/test_load.py::test_verify_and_an_unsaved_config_never_hit_the_cache
+origin: src/kraft/plugins/load.py §installed
+
+## REQ a-pending-plugins-yaml-edit-is-linted-once
+
+WHILE a `plugins.yaml` edit is pending and nothing it reads changes, the system SHALL lint it once, not on each pending check.
+enforced-by: tests/api/test_config_check.py::test_a_pending_plugins_yaml_edit_is_linted_once
+origin: src/kraft/api/config_check.py §_check_plugins
+
+## REQ shutdown-stops-every-plugin-background-task
+
+WHEN the server shuts down, the system SHALL cancel every plugin background task and stop its worker thread before the next plugin write.
+enforced-by: tests/api/test_deps_plugin_tasks.py::test_shutdown_cancels_every_plugin_task_and_stops_the_thread, tests/api/test_deps_plugin_tasks.py::test_shutdown_names_a_thread_that_outlives_the_grace, tests/plugins/test_load.py::test_restore_missing_stops_between_plugins_once_cancelled, tests/plugins/test_update_hardening.py::test_auto_update_stops_between_collections_once_cancelled
+origin: src/kraft/api/startup.py §lifespan
+
+## REQ a-launch-stops-only-for-a-plugin-it-reads
+
+IF a pinned plugin's store cannot be read, THEN the system SHALL stop only a launch whose task selects that plugin's skill or profile.
+enforced-by: tests/plugins/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[skill-from-it-stops], tests/plugins/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[profile-from-it-stops], tests/plugins/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[fallback-to-it-stops], tests/plugins/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[unrelated-task-launches]
+origin: src/kraft/adapters/agent.py §resolve_agent_task
+
+## REQ a-profile-fallback-pins-the-plugin-it-names
+
+WHEN a chain selects a local agent profile whose `fallback` names a plugin profile, the system SHALL pin that plugin.
+enforced-by: tests/plugins/test_pins.py::test_a_local_profiles_fallback_pins_the_plugin_it_names
+origin: src/kraft/templates/library.py §_pins
+
+## REQ a-launch-restores-its-pins-before-reading-profiles
+
+WHEN an item's launch needs a pinned store that is gone, the system SHALL restore it before reading the harness profile table, at dispatch, gate review, escalation and review reply.
+enforced-by: tests/executor/test_dispatch_pins.py::test_the_fallback_table_is_read_after_the_pins_are_restored, tests/executor/test_gates_autoreview.py::test_the_profile_fallback_check_reads_restored_pins, tests/test_escalate.py::test_an_escalation_restores_the_pinned_store, tests/test_review_reply.py::test_a_review_reply_restores_the_pinned_store
+origin: src/kraft/executor/dispatch.py §restore_pins
+
+## REQ a-directory-collection-catalogue-is-read-bounded
+
+IF a directory collection's `collection.json` is a symlink, a FIFO or over the JSON cap, THEN the system SHALL refuse the collection.
+enforced-by: tests/plugins/test_update_hardening.py::test_a_directory_collections_catalogue_is_read_safely[fifo], tests/plugins/test_update_hardening.py::test_a_directory_collections_catalogue_is_read_safely[symlink], tests/plugins/test_update_hardening.py::test_a_directory_collections_catalogue_is_read_safely[oversized]
+origin: src/kraft/plugins/update.py §_catalogue

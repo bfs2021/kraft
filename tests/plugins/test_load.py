@@ -3,6 +3,8 @@ pins, from the store, and never one that fails a load-time check."""
 
 import ast
 import shutil
+import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,7 @@ import kraft
 from kraft import harness, update
 from kraft.config import read_yaml, write_yaml
 from kraft.plugins import fetch, load
+from kraft.plugins.config import PluginsConfig
 from kraft.templates.environment import HarnessProfileTable
 from kraft.templates.library import TemplateLibrary
 
@@ -227,22 +230,129 @@ def test_offline_lint_says_which_chains_it_did_not_check(process, capsys):
     assert "not checked (plugin)" in out
 
 
-def test_a_limit_above_a_lowered_maximum_leaves_the_plugin_out(tmp_path):
-    """The operator lowered `maxima:` after the plugin was installed: the
-    plugin drops out, named, and is not run past the new ceiling."""
+SHIPPED_POLICY = Path(kraft.__file__).resolve().parents[2] / "config" / "policy.yaml"
+
+
+@pytest.fixture
+def capped(tmp_path):
+    """`release@acme` with a task that sets budget_usd 8, under a maximum of 9."""
     config = home(tmp_path)
     plugins = tmp_path / "run" / "plugins"
-    capped = {**AGENT, "policy": {"budget_usd": 8}}
-    release = {"library": {"tasks": {"base": capped}}, "chains": {"ship": chain("base")}}
-    install(config, plugins, make_collection(tmp_path, {"release": release}), "release")
-    shipped = read_yaml(Path(kraft.__file__).resolve().parents[2] / "config" / "policy.yaml")
-    write_yaml(config / "policy.yaml", {**shipped, "maxima": {"tasks": {"budget_usd": 9}}})
+    release = {
+        "library": {"tasks": {"base": {**AGENT, "policy": {"budget_usd": 8}}}},
+        "chains": {"ship": chain("base")},
+    }
+    store = install(config, plugins, make_collection(tmp_path, {"release": release}), "release")
+    _maximum(config, 9)
+    return config, plugins, store
+
+
+def _maximum(config, usd):
+    maxima = {"tasks": {"budget_usd": usd}}
+    write_yaml(config / "policy.yaml", {**read_yaml(SHIPPED_POLICY), "maxima": maxima})
+
+
+def test_a_limit_above_a_lowered_maximum_leaves_the_plugin_out(capped):
+    """The operator lowered `maxima:` after the plugin was installed: the
+    plugin drops out, named, and is not run past the new ceiling."""
+    config, plugins, _ = capped
     assert _one(config, plugins).left_out is None
 
-    write_yaml(config / "policy.yaml", {**shipped, "maxima": {"tasks": {"budget_usd": 5}}})
+    _maximum(config, 5)
 
     found = _one(config, plugins)
     assert "sets budget_usd 8 > the administrator maximum 5" in found.left_out and not found.quiet
+
+
+# ── the answer is kept until an input changes ──
+
+
+def _counting(monkeypatch):
+    calls = []
+    real = load._installed
+
+    def counted(*a, **k):
+        calls.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(load, "_installed", counted)
+    return calls
+
+
+def _disable(config, plugins, store):
+    _edit(config, "plugins.yaml", lambda d: d["plugins"].update({"release@acme": False}))
+
+
+def _bump_lock(config, plugins, store):
+    _edit(config, "plugins.lock", lambda d: d["plugins"]["release@acme"].update(version="9.9.9"))
+
+
+def _edit_harnesses(config, plugins, store):
+    _edit(config, "harnesses.yaml", lambda d: d["harnesses"].clear())
+
+
+def _edit_repos(config, plugins, store):
+    write_yaml(config / "repos.yaml", {"repos": [{"id": "release", "path": "/work/release"}]})
+
+
+def _edit_policy(config, plugins, store):
+    _maximum(config, 5)
+
+
+def _mark_unrestored(config, plugins, store):
+    load._unrestored[store.name] = "x"
+
+
+@pytest.mark.parametrize(
+    ("before", "change"),
+    [
+        (None, _disable),
+        (None, _bump_lock),
+        (None, _edit_harnesses),
+        (None, _edit_repos),
+        (None, _edit_policy),
+        (None, lambda config, plugins, store: drop_store(store)),
+        (lambda config, plugins, store: drop_store(store), _mark_unrestored),
+    ],
+    ids=[
+        "plugins-yaml",
+        "plugins-lock",
+        "harnesses-yaml",
+        "repos-yaml",
+        "policy-yaml",
+        "dropped-store",
+        "unrestored-reason",
+    ],
+)
+def test_installed_is_answered_from_a_cache_until_an_input_changes(
+    capped, monkeypatch, before, change
+):
+    config, plugins, store = capped
+    monkeypatch.setattr(load, "_unrestored", {})
+    if before:
+        before(config, plugins, store)
+    calls = _counting(monkeypatch)
+    first = load.installed(config, plugins)
+    n = len(calls)
+    assert n >= 1
+    assert load.installed(config, plugins) == first
+    assert len(calls) == n  # nothing recomputed
+
+    change(config, plugins, store)
+
+    after = load.installed(config, plugins)
+    assert len(calls) > n  # recomputed
+    assert after != first  # and the answer reflects it
+
+
+def test_verify_and_an_unsaved_config_never_hit_the_cache(instance, monkeypatch):
+    config, plugins, _ = instance
+    calls = _counting(monkeypatch)
+    load.installed(config, plugins)
+    n = len(calls)
+    load.installed(config, plugins, verify=True)
+    load.installed(config, plugins, config=PluginsConfig.load(config / "plugins.yaml"))
+    assert len(calls) == n + 2  # each of the two calls recomputed
 
 
 # ── restoring a store that is gone ──
@@ -296,6 +406,12 @@ def _remote_gone(repo, config, plugins):
     shutil.rmtree(plugins / "mirrors")
 
 
+def _source_not_recorded(repo, config, plugins):
+    """An older pin: it names a commit, and not the directory in it."""
+    (found,) = load.installed(config, plugins)
+    return replace(found, source=None)
+
+
 def _collection_removed(repo, config, plugins):
     written = read_yaml(config / "plugins.yaml")
     written["collections"]["other"] = written["collections"].pop("acme")
@@ -308,21 +424,44 @@ def _collection_removed(repo, config, plugins):
     [
         (_remote_gone, "could not be fetched"),
         (_collection_removed, "collection acme is no longer in plugins.yaml"),
+        (_source_not_recorded, "its pin does not record where its files came from"),
     ],
-    ids=["commit-not-on-the-remote", "collection-removed"],
+    ids=["commit-not-on-the-remote", "collection-removed", "source-not-recorded"],
 )
 def test_a_store_that_cannot_be_restored_says_why(tmp_path, happens, why):
     repo, config, plugins, found, _publish = _locked(tmp_path)
     drop_store(found.root)
-    happens(repo, config, plugins)
+    pin = happens(repo, config, plugins) or found
 
-    failed = load.restore_missing((found,), config, plugins)
+    failed = load.restore_missing((pin,), config, plugins)
 
     assert why in failed["release@acme"] and "release@acme 1.0.0" in failed["release@acme"]
     assert not found.root.exists()
+    # The collection still being listed, a person can put it back: say how. A
+    # removed collection is said to be added again, which --re-install cannot do.
+    assert ("--re-install" in failed["release@acme"]) is (happens is not _collection_removed)
     if happens is _remote_gone:
         assert "kraft admin plugin install release@acme --re-install" in failed["release@acme"]
         assert "could not be restored: release@acme 1.0.0" in _one(config, plugins).left_out
+
+
+def test_restore_missing_stops_between_plugins_once_cancelled(tmp_path, monkeypatch):
+    """A shutdown during the first restore: the second is not started."""
+    _repo, config, plugins, found, _publish = _locked(tmp_path)
+    second = replace(found, id="tools@acme")
+    cancel = threading.Event()
+    restored = []
+
+    def restore(plugin, *_a):
+        restored.append(plugin.id)
+        cancel.set()
+
+    monkeypatch.setattr(load, "restore", restore)
+
+    failed = load.restore_missing((found, second), config, plugins, cancel=cancel)
+
+    assert restored == [found.id]
+    assert failed == {second.id: "cancelled"}
 
 
 @pytest.mark.parametrize("changed", [False, True], ids=["unchanged", "changed"])
