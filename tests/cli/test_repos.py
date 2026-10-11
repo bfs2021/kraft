@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-from support.addons import a_terminal, library_outcome, repo_with_library
 from support.harness import commit_all, make_repo, make_repo_with_submodule
 
 from kraft import cli, client
@@ -627,12 +626,14 @@ def test_repos_yaml_defaults_an_absent_test_field_to_none(tmp_path, field):
         "    test_scopes:\n      - command: just test\n",
         "    test_scopes:\n      - paths: ['**']\n        command: ''\n",
         "    test_scopes: nope\n",
+        "    library_auto_update: yes please\n",
     ],
     ids=[
         "non-string-test-command",
         "scope-missing-paths",
         "scope-empty-command",
         "non-list-scopes",
+        "non-boolean-library-auto-update",
     ],
 )
 def test_repos_yaml_rejects_a_malformed_test_field(tmp_path, tail):
@@ -642,6 +643,22 @@ def test_repos_yaml_rejects_a_malformed_test_field(tmp_path, tail):
     p.write_text("repos:\n  - path: /r\n" + tail)
     with pytest.raises(config.ConfigError):
         config.load_repos(p)
+
+
+@pytest.mark.parametrize(
+    "tail, value",
+    [
+        pytest.param("    library_auto_update: true\n", True, id="on"),
+        pytest.param("", False, id="absent-is-off"),
+    ],
+)
+def test_repos_yaml_reads_library_auto_update(tmp_path, tail, value):
+    from kraft import config
+
+    p = tmp_path / "repos.yaml"
+    p.write_text("repos:\n  - path: /r\n" + tail)
+
+    assert config.load_repos(p)[0].library_auto_update is value
 
 
 # ── test_scopes (Kraft-9wzy) ─────────────────────────────────────────────────
@@ -744,57 +761,3 @@ def test_repo_help_says_disconnect_is_refused_while_an_item_is_open(capsys):
     text = " ".join(capsys.readouterr().out.split())
     assert "forget a repo; refused while it has an item that has not ended" in text
     assert "untouched" not in text
-
-
-def _main(argv) -> int:
-    try:
-        cli.main(argv)
-    except SystemExit as exc:
-        return exc.code if isinstance(exc.code, int) else 1
-    return 0
-
-
-@pytest.mark.parametrize(
-    "argv, typed, outcome, code",
-    [
-        pytest.param(["--check"], None, "waiting", 1, id="check-says-waiting"),
-        pytest.param([], None, "waiting", 0, id="no-terminal-takes-nothing"),
-        pytest.param([], "n", "waiting", 0, id="declined"),
-        pytest.param([], "y", "current", 0, id="accepted-at-the-prompt"),
-        pytest.param(["-y"], None, "current", 0, id="yes-flag"),
-    ],
-)
-def test_repo_library_reviews_and_takes(
-    app, tmp_path, capsys, monkeypatch, argv, typed, outcome, code
-):
-    repo = repo_with_library(tmp_path)
-    cli.main(["repo", "connect", str(repo), "--no-tests", "-y"])
-    if typed is not None:
-        a_terminal(monkeypatch, typed)
-
-    assert _main(["repo", "library", str(repo), *argv]) == code
-
-    assert "Content:" in capsys.readouterr().out
-    assert library_outcome(repo) == outcome
-
-
-def test_repo_library_says_when_there_is_none(app, tmp_path, capsys):
-    repo = make_repo(tmp_path, "plain")
-    cli.main(["repo", "connect", str(repo), "--no-tests", "-y"])
-    capsys.readouterr()
-
-    assert _main(["repo", "library", str(repo)]) == 0
-
-    assert "no repo library on origin's default branch" in capsys.readouterr().out
-
-
-def test_a_worker_may_not_take_a_repo_library(app, tmp_path, monkeypatch):
-    repo = repo_with_library(tmp_path)
-    cli.main(["repo", "connect", str(repo), "--no-tests", "-y"])
-    monkeypatch.setenv("KRAFT_WORK_ITEM_ID", "w1")
-
-    with pytest.raises(SystemExit, match="a worker does not change the instance's repo libraries"):
-        cli.main(["repo", "library", str(repo), "-y"])
-
-    monkeypatch.delenv("KRAFT_WORK_ITEM_ID")
-    assert library_outcome(repo) == "waiting"

@@ -14,11 +14,12 @@ branches, remote-tracking refs or files is read.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import tempfile
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,10 +30,14 @@ import yaml
 from kraft.addons import fetch, load, manifest, update
 from kraft.addons.config import RESERVED_NAMESPACE, RepoLibrariesLock, RepoLockEntry
 from kraft.config import GIT_READ_ENV, ConfigError, bounded_yaml, load_repos, write_text
+from kraft.templates.library import TemplateLibraryError
 from kraft.worker.sandbox import harden_host_git_env
 
 if TYPE_CHECKING:
     from kraft.addons.review import Review
+    from kraft.templates.library import TemplateLibrary
+
+logger = logging.getLogger(__name__)
 
 #: The name every repo library's derived manifest carries. Inside the files it
 #: is the library's own qualifier (`library:base`), as an add-on's name is.
@@ -189,6 +194,9 @@ class Check:
     digest: str | None = None
     locked: str | None = None
     extracted: fetch.Extracted | None = None
+    #: Why a change may not be applied without a person although its review
+    #: has no Reach line. A person may still take it. Empty on a first load.
+    holds: tuple[str, ...] = ()
 
 
 def _short(digest: str) -> str:
@@ -208,6 +216,105 @@ def _id_problem(repo_id: str, addons: list[load.InstalledAddon]) -> str | None:
     return None
 
 
+#: The keys of a resolved chain that hold words an agent or a person reads,
+#: and the keys under which a task decides a gate.
+_TEXT = frozenset({"prompt", "message", "description", "icon"})
+_DECIDING = frozenset({"auto_review", "judge", "escalation"})
+
+
+def _shape(value: object, deciding: bool = False) -> object:
+    """A resolved chain with its text blanked: what is left is what runs.
+    Text inside a deciding task is kept, so a change to it is a change of
+    shape."""
+    if isinstance(value, dict):
+        return {
+            key: None
+            if key in _TEXT and not deciding
+            else _shape(item, deciding or key in _DECIDING)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_shape(item, deciding) for item in value]
+    return value
+
+
+def _read_by_deciding(value: object, deciding: bool = False) -> set[str]:
+    """Every skill and steering profile a deciding task of this chain names."""
+    out: set[str] = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            inside = deciding or key in _DECIDING
+            if inside and key == "skill" and isinstance(item, str):
+                out.add(item)
+            elif inside and key == "steering" and isinstance(item, list):
+                out.update(name for name in item if isinstance(name, str))
+            out |= _read_by_deciding(item, inside)
+    elif isinstance(value, list):
+        for item in value:
+            out |= _read_by_deciding(item, deciding)
+    return out
+
+
+def _steering_texts(extracted: fetch.Extracted) -> dict:
+    entry = extracted.files.get("library.yaml")
+    try:
+        data = bounded_yaml(entry[1].decode(), [20_000]) if entry else {}
+    except (ValueError, yaml.YAMLError):
+        return {}
+    section = data.get("steering") if isinstance(data, dict) else None
+    return section if isinstance(section, dict) else {}
+
+
+def _holds(
+    before: TemplateLibrary | None,
+    after: TemplateLibrary | None,
+    repo_id: str,
+    old: fetch.Extracted,
+    new: fetch.Extracted,
+    steering: Sequence[str] = (),
+) -> tuple[str, ...]:
+    """Why replacing `old` with `new` waits for a person although nothing in
+    its review is Reach: a chain of the library's or of the instance's own
+    would run differently, or the words of a skill or steering profile that a
+    deciding task reads changed. `steering` is the entry's own `steering:`,
+    injected into every launch, deciding tasks included."""
+    if before is None or after is None:
+        return ("the library does not resolve to compare with",)
+    reasons: list[str] = []
+    read: set[str] = set(steering)
+    own = f"{repo_id}:"
+    ids = {i for i in (*before.chain_ids, *after.chain_ids) if ":" not in i or i.startswith(own)}
+    for chain_id in sorted(ids):
+        sides = []
+        for library in (before, after):
+            try:
+                sides.append(library.resolve_chain(chain_id).chain.model_dump(mode="json"))
+            except TemplateLibraryError:
+                sides.append(None)
+        if _shape(sides[0]) != _shape(sides[1]):
+            reasons.append(f"chain {chain_id} changes more than text")
+        for side in sides:
+            read |= _read_by_deciding(side)
+    was, now = _steering_texts(old), _steering_texts(new)
+    changed = [
+        ("steering", key) for key in sorted(was.keys() | now.keys()) if was.get(key) != now.get(key)
+    ]
+    skills = sorted(
+        {rel.split("/")[1] for rel in (*old.files, *new.files) if rel.startswith("skills/")}
+    )
+    changed += [
+        ("skill", name)
+        for name in skills
+        if old.files.get(f"skills/{name}/SKILL.md") != new.files.get(f"skills/{name}/SKILL.md")
+    ]
+    reasons += [
+        f"{kind} {own}{name} is read by a task that decides a gate"
+        for kind, name in changed
+        if f"{own}{name}" in read
+    ]
+    return tuple(reasons)
+
+
 def check(
     checkout: Path,
     repo_id: str,
@@ -216,12 +323,13 @@ def check(
     *,
     repos: dict | None = None,
     default_chain: str | None = None,
+    steering: Sequence[str] = (),
 ) -> Check:
     """Ask the remote, and judge what it has as an add-on update is judged.
     Writes nothing. `repos` is a `repos.yaml` to judge in place of the file:
     the entry's id may be minted and not saved yet. `default_chain` is the
     entry's own, which decides whether a `default` chain here becomes the
-    repo's."""
+    repo's. `steering` is the entry's own `steering:` names."""
     from kraft.addons import review as review_mod
 
     addon_id = load.repo_library_id(repo_id)
@@ -277,6 +385,12 @@ def check(
     reach = list(reviewed.reach)
     if was and old is None:
         reach.insert(0, "the accepted version's files could not be read to compare with")
+    if locked is not None:
+        # Compared as stored: both sides are `fetch.redact`ed.
+        if found.url != locked.git:
+            reach.append(f"origin's URL changed: {locked.git} -> {found.url}")
+        if found.branch != locked.branch:
+            reach.append(f"the default branch changed: {locked.branch} -> {found.branch}")
     content = [
         f"read from {found.url} at {found.commit[:12]} ({found.branch})",
         *reviewed.content,
@@ -294,19 +408,25 @@ def check(
                 refused(*(why.replace(str(root), addon_id) for why in broken)),
                 review=reviewed,
             )
+        holds = (
+            _holds(state.library, after.library, repo_id, old, extracted, steering)
+            if old is not None
+            else ()
+        )
         if was is None:
             reach += [
                 f"{where}: {key} {value!r} is now read from this repo library"
                 for where, key, _kind, value in update.references(config_dir)
                 if update._qualifier(value) == repo_id
             ]
-            own = f"{repo_id}:default"
-            if (
-                default_chain in (None, "default")
-                and after.library is not None
-                and own in after.library.chain_ids
-            ):
+        own = f"{repo_id}:default"
+        if default_chain in (None, "default") and after.library is not None:
+            had = state.library is not None and own in state.library.chain_ids
+            has = own in after.library.chain_ids
+            if has and not had:
                 reach.append(f"becomes the chain new items in this repo run: {own}")
+            elif had and not has:
+                reach.append("new items in this repo go back to the instance's default chain")
         if after.library is not None:
             more_reach, more_content = review_mod.local_changes(
                 state.library, after.library, repo_id
@@ -316,6 +436,7 @@ def check(
     return replace(
         base,
         outcome="waiting",
+        holds=holds,
         review=replace(
             reviewed,
             old_version=_short(was) if was else None,
@@ -369,31 +490,81 @@ def drop(repo_id: str, config_dir: Path, addons_root: Path) -> bool:
     return True
 
 
+def _opted_in(config_dir: Path, repo_id: str) -> bool:
+    """Whether `repo_id`'s entry sets `library_auto_update`, read now: a
+    check may have taken a minute, and the key may have been cleared in it."""
+    try:
+        entries = load_repos(config_dir / "repos.yaml")
+    except ConfigError:
+        return False
+    return any(r.id == repo_id and r.library_auto_update for r in entries)
+
+
+def _unattended(found: Check, config_dir: Path, addons_root: Path) -> dict | None:
+    """What an opted-in entry does with a waiting change: `applied`, `held`
+    with why, or `failed` when the lock is busy. None when the entry has not
+    opted in, which leaves the change `waiting`."""
+    from kraft.addons import review as review_mod
+
+    if not _opted_in(config_dir, found.repo_id):
+        return None
+    why = update.may_apply_unattended(found.review)
+    reasons = [why] if why else list(found.holds)
+    if reasons:
+        more = f"; and {len(reasons) - 3} more" if len(reasons) > 3 else ""
+        return {
+            "outcome": "held",
+            "message": "; ".join(reasons[:3]) + more + "; run `kraft repo library`",
+        }
+    try:
+        accept(found, config_dir, addons_root)
+    except update.Busy as exc:
+        return {"outcome": "failed", "kind": "busy", "message": str(exc)}
+    logger.info(
+        "repo library %s updated unattended:\n%s", found.repo_id, review_mod.render(found.review)
+    )
+    return {"outcome": "applied"}
+
+
+def _waiting(found: Check) -> dict:
+    # `content[0]` is "read from <url> at <commit>": not what changed.
+    lines = [*found.review.reach, *found.review.content[1:]][:3]
+    said = "; ".join(line.splitlines()[0] for line in lines if line)
+    return {"outcome": "waiting", "message": said or "its files changed"}
+
+
 def check_all(
     config_dir: Path, addons_root: Path, cancel: threading.Event | None = None
 ) -> dict[str, dict]:
     """Ask the remote about every accepted repo library whose repository is
     still connected, and record what it said in `status.json`: `up to date`,
-    `waiting` or `failed`. Applies nothing: a person takes a waiting change
+    `waiting`, `applied`, `held` or `failed`. A change is applied only for an
+    entry that sets `library_auto_update`, when its review has no Reach line
+    and the check found nothing that holds it; anything else a person takes
     with `kraft repo library`. A repository nobody accepted a library for is
     not asked about. `cancel` (set at shutdown) stops between repositories."""
     try:
         lock = RepoLibrariesLock.load(config_dir / RepoLibrariesLock.FILE)
-        paths = {r.id: Path(r.path) for r in load_repos(config_dir / "repos.yaml") if r.id}
+        entries = {r.id: r for r in load_repos(config_dir / "repos.yaml") if r.id}
     except ConfigError:
         return {}  # the load says why
     outcomes: dict[str, dict] = {}
     for repo_id in lock.repos:
-        if repo_id not in paths or (cancel is not None and cancel.is_set()):
+        if repo_id not in entries or (cancel is not None and cancel.is_set()):
             continue
-        found = check(paths[repo_id], repo_id, config_dir, addons_root)
+        entry = entries[repo_id]
+        found = check(
+            Path(entry.path),
+            repo_id,
+            config_dir,
+            addons_root,
+            default_chain=entry.default_chain,
+            steering=entry.steering,
+        )
         if found.outcome == "current":
             outcome: dict = {"outcome": "up to date"}
         elif found.outcome == "waiting":
-            # `content[0]` is "read from <url> at <commit>": not what changed.
-            lines = [*found.review.reach, *found.review.content[1:]][:3]
-            said = "; ".join(line.splitlines()[0] for line in lines if line)
-            outcome = {"outcome": "waiting", "message": said or "its files changed"}
+            outcome = _unattended(found, config_dir, addons_root) or _waiting(found)
         elif found.outcome == "none":
             outcome = {"outcome": "waiting", "message": "origin no longer has a repo library"}
         else:
