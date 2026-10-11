@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">139 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">136<span class="text"> run</span></button>
+            <span class="text">152 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">149<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">3<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_fa5ad71588b883ea_fetch_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-11 16:53 +0000
+            created at 2026-10-11 19:52 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -386,6 +386,35 @@
     <p class="pln"><span class="n"><a id="t304" href="#t304">304</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t305" href="#t305">305</a></span><span class="t">    <span class="nam">lock_version</span><span class="op">:</span> <span class="nam">Literal</span><span class="op">[</span><span class="num">1</span><span class="op">]</span> <span class="op">=</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t306" href="#t306">306</a></span><span class="t">    <span class="nam">addons</span><span class="op">:</span> <span class="nam">dict</span><span class="op">[</span><span class="nam">AddonId</span><span class="op">,</span> <span class="nam">LockEntry</span><span class="op">]</span> <span class="op">=</span> <span class="op">{</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t307" href="#t307">307</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t308" href="#t308">308</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t309" href="#t309">309</a></span><span class="t"><span class="key">class</span> <span class="nam">RepoLockEntry</span><span class="op">(</span><span class="nam">_Model</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t310" href="#t310">310</a></span><span class="t">    <span class="str">&quot;&quot;&quot;What one repository&#x27;s repo library resolved to when a person accepted it.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t311" href="#t311">311</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t312" href="#t312">312</a></span><span class="t">    <span class="nam">model_config</span> <span class="op">=</span> <span class="nam">ConfigDict</span><span class="op">(</span><span class="nam">frozen</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">strict</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">extra</span><span class="op">=</span><span class="str">&quot;forbid&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t313" href="#t313">313</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t314" href="#t314">314</a></span><span class="t">    <span class="com">#: `origin`&#x27;s URL, credentials removed, and its default branch, as the</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t315" href="#t315">315</a></span><span class="t">    <span class="com">#: remote answered then. Another URL or branch is a change a person reviews.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t316" href="#t316">316</a></span><span class="t">    <span class="nam">git</span><span class="op">:</span> <span class="nam">StrictStr</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t317" href="#t317">317</a></span><span class="t">    <span class="nam">branch</span><span class="op">:</span> <span class="nam">StrictStr</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t318" href="#t318">318</a></span><span class="t">    <span class="nam">commit</span><span class="op">:</span> <span class="nam">Annotated</span><span class="op">[</span><span class="nam">StrictStr</span><span class="op">,</span> <span class="nam">Field</span><span class="op">(</span><span class="nam">pattern</span><span class="op">=</span><span class="nam">_OID</span><span class="op">)</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t319" href="#t319">319</a></span><span class="t">    <span class="com">#: The tree of `.kraft/` in `commit`.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t320" href="#t320">320</a></span><span class="t">    <span class="nam">tree</span><span class="op">:</span> <span class="nam">Annotated</span><span class="op">[</span><span class="nam">StrictStr</span><span class="op">,</span> <span class="nam">Field</span><span class="op">(</span><span class="nam">pattern</span><span class="op">=</span><span class="nam">_OID</span><span class="op">)</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t321" href="#t321">321</a></span><span class="t">    <span class="nam">digest</span><span class="op">:</span> <span class="nam">Annotated</span><span class="op">[</span><span class="nam">StrictStr</span><span class="op">,</span> <span class="nam">Field</span><span class="op">(</span><span class="nam">pattern</span><span class="op">=</span><span class="str">r&quot;^sha256:[0-9a-f]{64}$&quot;</span><span class="op">)</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t322" href="#t322">322</a></span><span class="t">    <span class="com"># Not strict: written back by `model_dump(mode=&quot;json&quot;)`, it reads as a string.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t323" href="#t323">323</a></span><span class="t">    <span class="nam">updated_at</span><span class="op">:</span> <span class="nam">Annotated</span><span class="op">[</span><span class="nam">AwareDatetime</span><span class="op">,</span> <span class="nam">Field</span><span class="op">(</span><span class="nam">strict</span><span class="op">=</span><span class="key">False</span><span class="op">)</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t324" href="#t324">324</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t325" href="#t325">325</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t326" href="#t326">326</a></span><span class="t"><span class="key">class</span> <span class="nam">RepoLibrariesLock</span><span class="op">(</span><span class="nam">_Model</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t327" href="#t327">327</a></span><span class="t">    <span class="str">&quot;&quot;&quot;`config/repo-libraries.lock`: the repo library each connected</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t328" href="#t328">328</a></span><span class="t"><span class="str">    repository was accepted at, by repository id. Its own file, so a Kraft</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t329" href="#t329">329</a></span><span class="t"><span class="str">    that predates repo libraries still reads `addons.lock`.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t330" href="#t330">330</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t331" href="#t331">331</a></span><span class="t">    <span class="nam">FILE</span><span class="op">:</span> <span class="nam">ClassVar</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span> <span class="op">=</span> <span class="str">&quot;repo-libraries.lock&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t332" href="#t332">332</a></span><span class="t">    <span class="nam">model_config</span> <span class="op">=</span> <span class="nam">ConfigDict</span><span class="op">(</span><span class="nam">frozen</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">strict</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">extra</span><span class="op">=</span><span class="str">&quot;forbid&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t333" href="#t333">333</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t334" href="#t334">334</a></span><span class="t">    <span class="nam">lock_version</span><span class="op">:</span> <span class="nam">Literal</span><span class="op">[</span><span class="num">1</span><span class="op">]</span> <span class="op">=</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t335" href="#t335">335</a></span><span class="t">    <span class="nam">repos</span><span class="op">:</span> <span class="nam">dict</span><span class="op">[</span><span class="nam">Name</span><span class="op">,</span> <span class="nam">RepoLockEntry</span><span class="op">]</span> <span class="op">=</span> <span class="op">{</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -395,7 +424,7 @@
             <a class="nav" href="z_fa5ad71588b883ea_fetch_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-10-11 16:53 +0000
+            created at 2026-10-11 19:52 +0000
         </p>
     </div>
 </footer>
