@@ -27,23 +27,26 @@ BUNDLED = Path(__file__).parent / "skills"
 #: What `adapters/agent.py` wraps the method text in.
 HEADING = "\n\n## Method\n\n"
 
-#: Appended after the method text, whatever its source. A plugin reference can
-#: name a skill this agent's installation does not have; without this the agent
-#: improvises a method and the human finds out at the gate.
+#: Appended after the method text, whatever its source. A reference to another
+#: tool's plugin skill can name a skill this agent's installation does not
+#: have; without this the agent improvises a method and the human finds out at
+#: the gate.
 UNAVAILABLE = (
     "\n\nIf you cannot load the method named above, stop with status "
     '"needs_context" and say in "question" exactly which method was missing. Do '
     "not improvise a method of your own."
 )
 
-#: What a `provider:name` value becomes. Kraft cannot read another tool's plugin
-#: cache, so the reference is handed to the agent, which can.
+#: What a `provider:name` value that names no loaded add-on becomes. Kraft
+#: cannot read another tool's plugin cache, so the reference is handed to the
+#: agent, which can.
 PLUGIN_PROMPT = "Follow the {ref} skill for how to do this work. Load it before you start."
 
 
-#: The plugin Kraft itself is. A V1 skill name is plugin-qualified
-#: (`templates.models.AgentTask.skill`), and `kraft:spec` names Kraft's own
-#: shipped method -- the same file a bare `spec` does (Kraft-vhcop).
+#: The qualifier of the methods Kraft itself ships. A V1 skill name is
+#: namespace-qualified (`templates.models.AgentTask.skill`), and `kraft:spec`
+#: names Kraft's own shipped method -- the same file a bare `spec` does
+#: (Kraft-vhcop).
 OWN_PLUGIN = "kraft:"
 
 
@@ -58,15 +61,16 @@ RENAMED = {"mr-checks-repair": "mr-metadata-repair"}
 
 
 def _own_name(value: str) -> str:
-    """`value` with Kraft's own plugin qualifier removed, if it has one, and a
+    """`value` with Kraft's own `kraft:` qualifier removed, if it has one, and a
     renamed method's old name read as its new one."""
     name = value.removeprefix(OWN_PLUGIN)
     return RENAMED.get(name, name)
 
 
 def is_plugin_ref(value: str) -> bool:
-    """A `:` means "somebody else's skill system", not a file name -- except
-    Kraft's own `kraft:` qualifier, which names a method Kraft ships."""
+    """A `:` means a namespaced skill, a Kraft add-on's or another tool's plugin's,
+    not a file name -- except Kraft's own `kraft:` qualifier, which names a
+    method Kraft ships."""
     return not value.startswith(OWN_PLUGIN) and ":" in value
 
 
@@ -104,30 +108,30 @@ def _local_path(skills_dir: Path | None, name: str, where: str) -> Path:
 
 def path_for(skills_dir: Path | None, name: str, *, where: str) -> Path:
     """The file a bare or `kraft:` skill name resolves to, or raise. Not for
-    another plugin's refs."""
+    a namespaced ref (an add-on's or another tool's plugin's)."""
     return _local_path(skills_dir, _own_name(name), where)
 
 
-def _plugin_path(
-    plugin_dirs: Mapping[str, Path | None] | None, value: str, where: str
+def _addon_path(
+    addon_dirs: Mapping[str, Path | None] | None, value: str, where: str
 ) -> Path | None:
     """The file `<namespace>:<name>` names when the namespace is a loaded Kraft
-    plugin's, read from that plugin's store; None when it is not, which leaves
+    add-on's, read from that add-on's store; None when it is not, which leaves
     the reference another tool's."""
     qualifier, _, name = value.partition(":")
-    if qualifier not in (plugin_dirs or {}):
+    if qualifier not in (addon_dirs or {}):
         return None
-    root = (plugin_dirs or {})[qualifier]
+    root = (addon_dirs or {})[qualifier]
     if root is None:
         raise SkillError(
-            f"{where}: plugin {qualifier!r} is installed but not loaded, so its skill "
+            f"{where}: add-on {qualifier!r} is installed but not loaded, so its skill "
             f"{name!r} cannot be read; `kraft admin health` says why"
         )
     _bare(name, where)
     path = Path(root) / "skills" / name / "SKILL.md"
     if not _is_file(path):
         raise SkillError(
-            f"{where}: plugin {qualifier!r} has no skill {name!r} at {path}; a method Kraft "
+            f"{where}: add-on {qualifier!r} has no skill {name!r} at {path}; a method Kraft "
             f"ships is written kraft:{name}"
         )
     return path
@@ -138,29 +142,29 @@ def validate(
     value,
     *,
     where: str,
-    plugin_dirs: Mapping[str, Path | None] | None = None,
+    addon_dirs: Mapping[str, Path | None] | None = None,
 ) -> None:
     """The value is a usable skill reference, or raise.
 
     Another tool's plugin reference is accepted without a lookup: whether the
     agent's installation has it is not knowable here, and the injected text
     tells the agent to stop with `needs_context` if it cannot load it. A
-    loaded Kraft plugin's is looked up in its store (`plugin_dirs`, namespace
+    loaded Kraft add-on's is looked up in its store (`addon_dirs`, namespace
     to directory).
     """
     if not isinstance(value, str) or not value:
         raise SkillError(f"{where}: 'skill' must be a non-empty string")
     if is_plugin_ref(value):
-        _plugin_path(plugin_dirs, value, where)
+        _addon_path(addon_dirs, value, where)
         return
     _local_path(skills_dir, _own_name(value), where)
 
 
 def read(
-    skills_dir: Path | None, value: str, plugin_dirs: Mapping[str, Path | None] | None = None
+    skills_dir: Path | None, value: str, addon_dirs: Mapping[str, Path | None] | None = None
 ) -> str:
     """The method text to inject. Called at dispatch, after `validate`."""
-    path = _plugin_path(plugin_dirs, value, "skill") if is_plugin_ref(value) else None
+    path = _addon_path(addon_dirs, value, "skill") if is_plugin_ref(value) else None
     if path is None and is_plugin_ref(value):
         return PLUGIN_PROMPT.format(ref=value)
     path = path or _local_path(skills_dir, _own_name(value), "skill")
