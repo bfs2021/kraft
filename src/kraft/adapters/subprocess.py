@@ -455,8 +455,9 @@ def _rate_limit_rejection(log_path: Path, *, reader: str | None) -> _usage.RateL
 
 
 async def _kill_group(pgid: int, grace: float, reap: Callable[[], object] | None = None) -> None:
-    """SIGTERM `pgid`, then SIGKILL whatever is still there after `grace`
-    seconds. `serve.py`'s `_terminate` is the model this copies.
+    """SIGTERM `pgid` (again at the first liveness check), then SIGKILL
+    whatever is still there after `grace` seconds. `frontend/e2e/serve.py`'s
+    `_terminate` is the model this copies.
 
     The session's own child is already gone by the time this runs — this is
     for what it backgrounded into the same group and never waited on itself
@@ -476,18 +477,26 @@ async def _kill_group(pgid: int, grace: float, reap: Callable[[], object] | None
     `PermissionError` for a zombie-only group instead, which is why this
     passed locally and failed pause/resume, SIGTERM shutdown and the e2e
     pause flow in CI (Kraft-rki).
+
+    The first liveness check is a second SIGTERM, not a probe: a member forked
+    while the first one was being delivered (what `_wrap_with_exit_file`'s `sh`
+    forks for the worker's command, on a cancel straight after launch) misses it
+    and would otherwise outlive the whole `grace` -- a pause or skip then paid
+    it, flaking under load.
     """
     try:
         os.killpg(pgid, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
         return
     deadline = time.monotonic() + grace
+    probe = signal.SIGTERM
     while time.monotonic() < deadline:
         await asyncio.sleep(0.2)
         if reap is not None:
             reap()
         try:
-            os.killpg(pgid, 0)
+            os.killpg(pgid, probe)
+            probe = 0
         except (ProcessLookupError, PermissionError):
             return
     try:
