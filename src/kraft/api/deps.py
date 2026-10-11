@@ -408,7 +408,8 @@ def invalid_templates(st) -> dict[str, str]:
     # that does not resolve. An add-on left out on purpose is no fault.
     for addon in st.library.addons if st.library else ():
         if addon.left_out is not None and not addon.quiet:
-            invalid[f"add-on {addon.id}"] = addon.left_out
+            key = f"repo library {addon.repo_id}" if addon.repo_id else f"add-on {addon.id}"
+            invalid[key] = addon.left_out
     if why := getattr(st, "addons_problem", None):
         invalid["addons.yaml"] = why
     return invalid
@@ -501,6 +502,7 @@ async def auto_update_addons(app) -> None:
     a start never waits on the network: restore what is missing, then take
     the updates that add-ons set to auto-update may take on their own."""
     from kraft import apply
+    from kraft.addons import repo_library
     from kraft.addons import update as addon_update
 
     st = app.state
@@ -516,6 +518,14 @@ async def auto_update_addons(app) -> None:
         await reload_templates(st)
         apply.notify(app)
         await collect_addon_stores(st)
+    # Reports what waits and applies nothing: a person takes it with `kraft repo library`.
+    await _in_thread(
+        st,
+        repo_library.check_all,
+        st.templates_dir,
+        st.run_dirs.addons,
+        cancel=st.addon_cancel,
+    )
 
 
 def in_background(app, work) -> asyncio.Task:
@@ -559,7 +569,7 @@ async def collect_addon_stores(st) -> list[str]:
     The database and the loaded library are read here, on the loop (`db.read`
     is not for another thread); the file work runs in a worker thread."""
     from kraft.addons import update as addon_update
-    from kraft.addons.config import AddonsLock
+    from kraft.addons.config import AddonsLock, RepoLibrariesLock
 
     ended = sorted(ENDED)
     rows = st.db.read(
@@ -578,7 +588,8 @@ async def collect_addon_stores(st) -> list[str]:
     def keep() -> set[str]:
         # Asked under the update lock: an install that just finished is in the lock.
         locked = AddonsLock.load(st.templates_dir / AddonsLock.FILE).addons.values()
-        return {entry.digest.removeprefix("sha256:") for entry in locked} | kept
+        repos = RepoLibrariesLock.load(st.templates_dir / RepoLibrariesLock.FILE).repos.values()
+        return {e.digest.removeprefix("sha256:") for e in (*locked, *repos)} | kept
 
     try:
         return await _in_thread(st, addons_load.gc, keep, st.run_dirs.addons)
@@ -622,20 +633,30 @@ def library_or_503(st):
     return st.library
 
 
-def chain_template_for(entry: RepoEntry, chain_template: str | None) -> str | None:
+def chain_template_for(
+    entry: RepoEntry, chain_template: str | None, library: TemplateLibrary | None = None
+) -> str | None:
     """The template an item filed in `entry`'s repo runs, as the row stores it:
-    the caller's own, else the repo's `default_chain`, else None --
-    the `default` template, un-chosen (Kraft-cd47). Every intake door asks this
-    one function (Kraft-9efnk.11). A workspace item asks its root repo.
+    the caller's own; else the repo's `default_chain`, unless that is unset or
+    `default`; else `<repo id>:default` when `library` holds the repo
+    library's chain of that id; else None -- the `default` template,
+    un-chosen (Kraft-cd47). Every intake door asks this one function
+    (Kraft-9efnk.11). A workspace item asks its root repo.
 
-    A repo default other than `default` is stored by name, not as None: every
-    reader of the row (the board, the stage graph, analytics) reads None as
-    `default`, so a None here would misreport the chain the item runs.
+    `default` counts as unset: connecting through the API writes it into every
+    entry. A repo default other than `default` is stored by name, not as None:
+    every reader of the row (the board, the stage graph, analytics) reads None
+    as `default`, so a None here would misreport the chain the item runs.
     """
     if chain_template is not None:
         return chain_template
     default = entry.default_chain
-    return None if default in (None, "default") else default
+    if default not in (None, "default"):
+        return default
+    own = f"{entry.id}:default" if entry.id else None
+    if own and library is not None and own in library.chain_ids:
+        return own
+    return None
 
 
 def resolve_chain(st, chain_template: str | None):
@@ -690,7 +711,7 @@ def intake_chain_or_422(st, repo: str, chain_template: str | None):
     store, and the chain it resolves. The library is checked first, so a broken
     one answers 503 before the repo lookup can answer 422."""
     library_or_503(st)
-    stored = chain_template_for(connected_or_422(st, repo), chain_template)
+    stored = chain_template_for(connected_or_422(st, repo), chain_template, st.library)
     return stored, resolve_chain_or_422(st, stored)
 
 
