@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">141 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">135<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">6<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">136<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">5<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_e76ffebab55e5b0a_harnesses_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-12 10:41 +0000
+            created at 2026-10-12 22:32 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -88,7 +88,7 @@
     <p class="run"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span> <span class="key">import</span> <span class="nam">events</span><span class="op">,</span> <span class="nam">executor</span><span class="op">,</span> <span class="nam">store</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">api</span> <span class="key">import</span> <span class="nam">api_router</span><span class="op">,</span> <span class="nam">deps</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">api</span><span class="op">.</span><span class="nam">routes</span> <span class="key">import</span> <span class="nam">artifacts</span><span class="op">,</span> <span class="nam">board</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">api</span><span class="op">.</span><span class="nam">routes</span><span class="op">.</span><span class="nam">lifecycle</span> <span class="key">import</span> <span class="nam">_stop_live_sessions</span><span class="op">,</span> <span class="nam">held_refusal</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">api</span><span class="op">.</span><span class="nam">routes</span><span class="op">.</span><span class="nam">lifecycle</span> <span class="key">import</span> <span class="nam">_stop_live_sessions</span><span class="op">,</span> <span class="nam">chain_or_409</span><span class="op">,</span> <span class="nam">held_refusal</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">executor</span> <span class="key">import</span> <span class="nam">stops</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">templates</span> <span class="key">import</span> <span class="nam">revision</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t"><span class="key">from</span> <span class="nam">kraft</span><span class="op">.</span><span class="nam">templates</span><span class="op">.</span><span class="nam">models</span> <span class="key">import</span> <span class="nam">GateNode</span>&nbsp;</span><span class="r"></span></p>
@@ -101,7 +101,7 @@
     <p class="pln"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t"><span class="str">    (`store.effective_nodes`). One reader for every gate route, so the</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t"><span class="str">    approve door, the reject door and the walk cannot disagree about where a</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t"><span class="str">    gate sits.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t">    <span class="key">return</span> <span class="nam">store</span><span class="op">.</span><span class="nam">effective_nodes</span><span class="op">(</span><span class="nam">executor</span><span class="op">.</span><span class="nam">chain_of</span><span class="op">(</span><span class="nam">row</span><span class="op">)</span><span class="op">,</span> <span class="nam">store</span><span class="op">.</span><span class="nam">node_overrides_of</span><span class="op">(</span><span class="nam">row</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t">    <span class="key">return</span> <span class="nam">store</span><span class="op">.</span><span class="nam">effective_nodes</span><span class="op">(</span><span class="nam">chain_or_409</span><span class="op">(</span><span class="nam">row</span><span class="op">)</span><span class="op">,</span> <span class="nam">store</span><span class="op">.</span><span class="nam">node_overrides_of</span><span class="op">(</span><span class="nam">row</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t"><span class="key">def</span> <span class="nam">_gate_or_404</span><span class="op">(</span><span class="nam">nodes</span><span class="op">,</span> <span class="nam">gate</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -422,7 +422,7 @@
     <p class="pln"><span class="n"><a id="t340" href="#t340">340</a></span><span class="t">    <span class="com"># its duration, and both refusals above run before any of it.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t341" href="#t341">341</a></span><span class="t">    <span class="key">await</span> <span class="nam">_stop_live_sessions</span><span class="op">(</span><span class="nam">st</span><span class="op">,</span> <span class="nam">wid</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t342" href="#t342">342</a></span><span class="t">    <span class="key">if</span> <span class="nam">deps</span><span class="op">.</span><span class="nam">task_is_live</span><span class="op">(</span><span class="nam">request</span><span class="op">.</span><span class="nam">app</span><span class="op">,</span> <span class="nam">wid</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t343" href="#t343">343</a></span><span class="t">        <span class="key">await</span> <span class="nam">deps</span><span class="op">.</span><span class="nam">cancel</span><span class="op">(</span><span class="nam">request</span><span class="op">.</span><span class="nam">app</span><span class="op">,</span> <span class="nam">wid</span><span class="op">,</span> <span class="nam">timeout</span><span class="op">=</span><span class="nam">deps</span><span class="op">.</span><span class="nam">CANCEL_TIMEOUT</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t343" href="#t343">343</a></span><span class="t">        <span class="key">await</span> <span class="nam">deps</span><span class="op">.</span><span class="nam">cancel</span><span class="op">(</span><span class="nam">request</span><span class="op">.</span><span class="nam">app</span><span class="op">,</span> <span class="nam">wid</span><span class="op">,</span> <span class="nam">timeout</span><span class="op">=</span><span class="nam">deps</span><span class="op">.</span><span class="nam">CANCEL_TIMEOUT</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t344" href="#t344">344</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t345" href="#t345">345</a></span><span class="t">    <span class="com"># Bracketed from *before* the claim to the hand-off, the same way the approve</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t346" href="#t346">346</a></span><span class="t">    <span class="com"># door above is. `apply_rejection` performs an `UPDATE work_items SET status</span>&nbsp;</span><span class="r"></span></p>
@@ -493,7 +493,7 @@
             <a class="nav" href="z_e76ffebab55e5b0a_harnesses_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-12 10:41 +0000
+            created at 2026-10-12 22:32 +0000
         </p>
     </div>
 </footer>
