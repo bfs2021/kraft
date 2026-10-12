@@ -50,6 +50,15 @@
     "onStartupFinished",
     "onLanguage:yaml"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode Kraft shows the board and gates read-only and does not check config files in the workspace.",
+      "restrictedConfigurations": [
+        "kraft.url"
+      ]
+    }
+  },
   "contributes": {
     "configuration": {
       "title": "Kraft",
@@ -57,7 +66,8 @@
         "kraft.url": {
           "type": "string",
           "default": "",
-          "description": "Kraft daemon URL. Empty: read KRAFT_HOST and KRAFT_PORT, then bind and port from $KRAFT_HOME/config/access.yaml."
+          "scope": "machine",
+          "description": "Kraft daemon URL, set in user or Remote settings only. Empty: read KRAFT_HOST and KRAFT_PORT, then bind and port from $KRAFT_HOME/config/access.yaml."
         },
         "kraft.notifications": {
           "type": "string",
@@ -68,6 +78,12 @@
           ],
           "default": "all",
           "description": "Which Kraft states raise a notification."
+        },
+        "kraft.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "The kraft binary Start Kraft runs, and the restart a config change offers. Empty: `kraft` on PATH; a leading `~` is your home folder."
         }
       }
     },
@@ -97,12 +113,20 @@
       {
         "command": "kraft.resume",
         "title": "Resume\u2026",
-        "category": "Kraft"
+        "category": "Kraft",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "kraft.answer",
+        "title": "Answer\u2026",
+        "category": "Kraft",
+        "icon": "$(comment)"
       },
       {
         "command": "kraft.retry",
         "title": "Retry\u2026",
-        "category": "Kraft"
+        "category": "Kraft",
+        "icon": "$(debug-restart)"
       },
       {
         "command": "kraft.cancel",
@@ -125,6 +149,27 @@
         "category": "Kraft"
       },
       {
+        "command": "kraft.raiseBudget",
+        "title": "Raise Budget\u2026",
+        "category": "Kraft",
+        "icon": "$(credit-card)"
+      },
+      {
+        "command": "kraft.unblock",
+        "title": "Unblock",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.complete",
+        "title": "Complete\u2026",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.restore",
+        "title": "Restore",
+        "category": "Kraft"
+      },
+      {
         "command": "kraft.openWorktree",
         "title": "Open Worktree in New Window",
         "category": "Kraft"
@@ -132,6 +177,47 @@
       {
         "command": "kraft.openInWebUi",
         "title": "Open in Web UI",
+        "category": "Kraft",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "kraft.showWorkerLog",
+        "title": "Show Worker Log",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.search",
+        "title": "Search…",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.approveNextGate",
+        "title": "Approve Next Gate\u2026",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.openItem",
+        "title": "Open Item\u2026",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.connectRepo",
+        "title": "Connect This Repo",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.openMergeRequest",
+        "title": "Open Merge Request",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.openSpec",
+        "title": "Open Spec",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.openPlan",
+        "title": "Open Plan",
         "category": "Kraft"
       },
       {
@@ -141,14 +227,31 @@
         "icon": "$(filter)"
       },
       {
+        "command": "kraft.showThisRepo",
+        "title": "Show This Repo",
+        "category": "Kraft",
+        "icon": "$(filter-filled)"
+      },
+      {
         "command": "kraft.startDaemon",
         "title": "Start Kraft",
         "category": "Kraft"
       },
       {
+        "command": "kraft.showLog",
+        "title": "Show Log",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.statusMenu",
+        "title": "Status Menu",
+        "category": "Kraft"
+      },
+      {
         "command": "kraft.openArtifact",
         "title": "Open Gate Document",
-        "category": "Kraft"
+        "category": "Kraft",
+        "icon": "$(go-to-file)"
       },
       {
         "command": "kraft.approve",
@@ -182,6 +285,52 @@
         "category": "Kraft"
       },
       {
+        "command": "kraft.review.editComment",
+        "title": "Edit",
+        "category": "Kraft",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "kraft.review.saveComment",
+        "title": "Save",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.review.cancelEdit",
+        "title": "Cancel",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.review.deleteComment",
+        "title": "Delete",
+        "category": "Kraft",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "kraft.review.setLabel",
+        "title": "Set Label\u2026",
+        "category": "Kraft",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "kraft.review.resolveThread",
+        "title": "Resolve",
+        "category": "Kraft",
+        "icon": "$(check)"
+      },
+      {
+        "command": "kraft.review.reopenThread",
+        "title": "Reopen",
+        "category": "Kraft",
+        "icon": "$(issue-reopened)"
+      },
+      {
+        "command": "kraft.review.otherThreads",
+        "title": "Show Threads Not on a File in This Review",
+        "category": "Kraft",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "kraft.lintLibrary",
         "title": "Lint Template Library",
         "category": "Kraft"
@@ -190,17 +339,90 @@
         "command": "kraft.showResolved",
         "title": "Show Resolved Chain",
         "category": "Kraft"
+      },
+      {
+        "command": "kraft.fileWork",
+        "title": "File Work Item\u2026",
+        "category": "Kraft",
+        "icon": "$(add)"
+      },
+      {
+        "command": "kraft.fileAsSpec",
+        "title": "File as Kraft Spec\u2026",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.fileAsPlan",
+        "title": "File as Kraft Plan\u2026",
+        "category": "Kraft"
+      },
+      {
+        "command": "kraft.fileSelection",
+        "title": "File Selection as Kraft Work\u2026",
+        "category": "Kraft"
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "kraft.board",
+        "contents": "No Kraft work in this repo. [Show all repos](command:kraft.toggleAllRepos)",
+        "when": "kraft.welcome == here || kraft.welcome == connect && kraft.readOnly"
+      },
+      {
+        "view": "kraft.board",
+        "contents": "This repo isn't connected to Kraft.\n[Connect this repo](command:kraft.connectRepo)\nFor test and setup commands, use the web UI or `kraft repo connect`.\n[Show all repos](command:kraft.toggleAllRepos)",
+        "when": "kraft.welcome == connect && !kraft.readOnly"
       }
     ],
     "menus": {
       "view/title": [
         {
+          "command": "kraft.fileWork",
+          "when": "view == kraft.board && !kraft.readOnly",
+          "group": "navigation"
+        },
+        {
           "command": "kraft.toggleAllRepos",
-          "when": "view == kraft.board",
+          "when": "view == kraft.board && !kraft.allRepos",
+          "group": "navigation"
+        },
+        {
+          "command": "kraft.showThisRepo",
+          "when": "view == kraft.board && kraft.allRepos",
           "group": "navigation"
         }
       ],
       "view/item/context": [
+        {
+          "command": "kraft.openArtifact",
+          "when": "view == kraft.board && viewItem =~ /\\bprimaryOpenArtifact\\b/",
+          "group": "inline"
+        },
+        {
+          "command": "kraft.answer",
+          "when": "view == kraft.board && viewItem =~ /\\bprimaryAnswer\\b/ && !kraft.readOnly",
+          "group": "inline"
+        },
+        {
+          "command": "kraft.retry",
+          "when": "view == kraft.board && viewItem =~ /\\bprimaryRetry\\b/ && !kraft.readOnly",
+          "group": "inline"
+        },
+        {
+          "command": "kraft.raiseBudget",
+          "when": "view == kraft.board && viewItem =~ /\\bprimaryRaiseBudget\\b/ && !kraft.readOnly",
+          "group": "inline"
+        },
+        {
+          "command": "kraft.resume",
+          "when": "view == kraft.board && viewItem =~ /\\bprimaryResume\\b/ && !kraft.readOnly",
+          "group": "inline"
+        },
+        {
+          "command": "kraft.openInWebUi",
+          "when": "view == kraft.board && viewItem =~ /\\bprimaryOpenInWebUi\\b/",
+          "group": "inline"
+        },
         {
           "command": "kraft.openArtifact",
           "when": "view == kraft.board && viewItem =~ /\\bgate\\b/",
@@ -208,12 +430,12 @@
         },
         {
           "command": "kraft.approve",
-          "when": "view == kraft.board && viewItem =~ /\\bgate\\b/ && !kraft.readOnly",
+          "when": "view == kraft.board && viewItem =~ /\\bapprove\\b/ && !kraft.readOnly",
           "group": "0_gate"
         },
         {
           "command": "kraft.reject",
-          "when": "view == kraft.board && viewItem =~ /\\bgate\\b/ && !kraft.readOnly",
+          "when": "view == kraft.board && viewItem =~ /\\breject\\b/ && !kraft.readOnly",
           "group": "0_gate"
         },
         {
@@ -232,6 +454,16 @@
           "group": "1_act"
         },
         {
+          "command": "kraft.raiseBudget",
+          "when": "view == kraft.board && viewItem =~ /\\braise_budget\\b/ && !kraft.readOnly",
+          "group": "1_act"
+        },
+        {
+          "command": "kraft.unblock",
+          "when": "view == kraft.board && viewItem =~ /\\bunblock\\b/ && !kraft.readOnly",
+          "group": "1_act"
+        },
+        {
           "command": "kraft.skip",
           "when": "view == kraft.board && viewItem =~ /\\bskip\\b/ && !kraft.readOnly",
           "group": "1_act"
@@ -247,18 +479,48 @@
           "group": "2_end"
         },
         {
+          "command": "kraft.complete",
+          "when": "view == kraft.board && viewItem =~ /\\bcomplete\\b/ && !kraft.readOnly",
+          "group": "2_end"
+        },
+        {
           "command": "kraft.archive",
           "when": "view == kraft.board && viewItem =~ /\\barchive\\b/ && !kraft.readOnly",
           "group": "2_end"
         },
         {
+          "command": "kraft.restore",
+          "when": "view == kraft.board && viewItem =~ /\\brestore\\b/ && !kraft.readOnly",
+          "group": "2_end"
+        },
+        {
           "command": "kraft.openWorktree",
-          "when": "view == kraft.board && viewItem =~ /^item:/",
+          "when": "view == kraft.board && viewItem =~ /\\bworktree\\b/",
           "group": "3_open"
         },
         {
           "command": "kraft.openInWebUi",
           "when": "view == kraft.board && viewItem =~ /^item:/",
+          "group": "3_open"
+        },
+        {
+          "command": "kraft.showWorkerLog",
+          "when": "view == kraft.board && viewItem =~ /^item:/",
+          "group": "3_open"
+        },
+        {
+          "command": "kraft.openMergeRequest",
+          "when": "view == kraft.board && viewItem =~ /\\bmr\\b/",
+          "group": "3_open"
+        },
+        {
+          "command": "kraft.openSpec",
+          "when": "view == kraft.board && viewItem =~ /\\battSpec\\b/",
+          "group": "3_open"
+        },
+        {
+          "command": "kraft.openPlan",
+          "when": "view == kraft.board && viewItem =~ /\\battPlan\\b/",
           "group": "3_open"
         },
         {
@@ -268,63 +530,146 @@
         },
         {
           "command": "kraft.review.submit",
-          "when": "view == kraft.board && viewItem =~ /^item:/ && !kraft.readOnly",
+          "when": "view == kraft.board && viewItem =~ /\\bdrafts\\b/ && !kraft.readOnly",
           "group": "4_review"
         },
         {
           "command": "kraft.review.discard",
-          "when": "view == kraft.board && viewItem =~ /^item:/ && !kraft.readOnly",
+          "when": "view == kraft.board && viewItem =~ /\\bdrafts\\b/ && !kraft.readOnly",
           "group": "4_review"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "kraft.fileAsSpec",
+          "when": "resourceExtname == .md && !explorerResourceIsFolder && !kraft.readOnly",
+          "group": "7_kraft"
+        },
+        {
+          "command": "kraft.fileAsPlan",
+          "when": "resourceExtname == .md && !explorerResourceIsFolder && !kraft.readOnly",
+          "group": "7_kraft"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "kraft.fileSelection",
+          "when": "editorHasSelection && !kraft.readOnly",
+          "group": "7_kraft"
         }
       ],
       "commandPalette": [
         {
-          "command": "kraft.pause",
+          "command": "kraft.toggleAllRepos",
+          "when": "!kraft.allRepos"
+        },
+        {
+          "command": "kraft.showThisRepo",
+          "when": "kraft.allRepos"
+        },
+        {
+          "command": "kraft.statusMenu",
           "when": "false"
+        },
+        {
+          "command": "kraft.pause",
+          "when": "kraft.connected && !kraft.readOnly"
         },
         {
           "command": "kraft.resume",
-          "when": "false"
+          "when": "kraft.connected && !kraft.readOnly"
+        },
+        {
+          "command": "kraft.answer",
+          "when": "kraft.connected && !kraft.readOnly"
         },
         {
           "command": "kraft.retry",
-          "when": "false"
+          "when": "kraft.connected && !kraft.readOnly"
         },
         {
           "command": "kraft.cancel",
-          "when": "false"
+          "when": "kraft.connected && !kraft.readOnly"
         },
         {
           "command": "kraft.skip",
-          "when": "false"
+          "when": "kraft.connected && !kraft.readOnly"
         },
         {
           "command": "kraft.escalate",
-          "when": "false"
+          "when": "kraft.connected && !kraft.readOnly"
         },
         {
           "command": "kraft.archive",
-          "when": "false"
+          "when": "kraft.connected && !kraft.readOnly"
+        },
+        {
+          "command": "kraft.raiseBudget",
+          "when": "kraft.connected && !kraft.readOnly"
+        },
+        {
+          "command": "kraft.unblock",
+          "when": "kraft.connected && !kraft.readOnly"
+        },
+        {
+          "command": "kraft.complete",
+          "when": "kraft.connected && !kraft.readOnly"
+        },
+        {
+          "command": "kraft.restore",
+          "when": "kraft.connected && !kraft.readOnly"
         },
         {
           "command": "kraft.openWorktree",
-          "when": "false"
+          "when": "kraft.connected"
         },
         {
           "command": "kraft.openInWebUi",
-          "when": "false"
+          "when": "kraft.connected"
+        },
+        {
+          "command": "kraft.showWorkerLog",
+          "when": "kraft.connected"
+        },
+        {
+          "command": "kraft.search",
+          "when": "kraft.connected"
+        },
+        {
+          "command": "kraft.approveNextGate",
+          "when": "kraft.connected"
+        },
+        {
+          "command": "kraft.openItem",
+          "when": "kraft.connected"
+        },
+        {
+          "command": "kraft.connectRepo",
+          "when": "kraft.welcome == connect && !kraft.readOnly"
+        },
+        {
+          "command": "kraft.openMergeRequest",
+          "when": "kraft.connected"
+        },
+        {
+          "command": "kraft.openSpec",
+          "when": "kraft.connected"
+        },
+        {
+          "command": "kraft.openPlan",
+          "when": "kraft.connected"
         },
         {
           "command": "kraft.openArtifact",
-          "when": "false"
+          "when": "kraft.connected"
         },
         {
           "command": "kraft.approve",
-          "when": "resourceScheme == kraft-artifact"
+          "when": "resourceScheme == kraft-artifact || kraft.artifactPreview"
         },
         {
           "command": "kraft.reject",
-          "when": "resourceScheme == kraft-artifact"
+          "when": "resourceScheme == kraft-artifact || kraft.artifactPreview"
         },
         {
           "command": "kraft.reviewChanges",
@@ -340,6 +685,62 @@
         },
         {
           "command": "kraft.review.discard",
+          "when": "false"
+        },
+        {
+          "command": "kraft.review.editComment",
+          "when": "false"
+        },
+        {
+          "command": "kraft.review.saveComment",
+          "when": "false"
+        },
+        {
+          "command": "kraft.review.cancelEdit",
+          "when": "false"
+        },
+        {
+          "command": "kraft.review.deleteComment",
+          "when": "false"
+        },
+        {
+          "command": "kraft.review.setLabel",
+          "when": "false"
+        },
+        {
+          "command": "kraft.review.resolveThread",
+          "when": "false"
+        },
+        {
+          "command": "kraft.review.reopenThread",
+          "when": "false"
+        },
+        {
+          "command": "kraft.review.otherThreads",
+          "when": "false"
+        },
+        {
+          "command": "kraft.lintLibrary",
+          "when": "isWorkspaceTrusted"
+        },
+        {
+          "command": "kraft.showResolved",
+          "when": "isWorkspaceTrusted"
+        },
+        {
+          "command": "kraft.fileWork",
+          "when": "!kraft.readOnly"
+        },
+        {
+          "command": "kraft.fileAsSpec",
+          "when": "false"
+        },
+        {
+          "command": "kraft.fileAsPlan",
+          "when": "false"
+        },
+        {
+          "command": "kraft.fileSelection",
           "when": "false"
         }
       ],
@@ -361,7 +762,32 @@
         },
         {
           "command": "kraft.review.submit",
-          "when": "resourceScheme =~ /^kraft-(wt|git|artifact)$/ && !kraft.readOnly",
+          "when": "resourceScheme =~ /^kraft-(wt|git|artifact|threads)$/ && kraft.review.activeHasDrafts && !kraft.readOnly",
+          "group": "navigation@4"
+        },
+        {
+          "command": "kraft.review.otherThreads",
+          "when": "resourceScheme =~ /^kraft-(wt|git)$/",
+          "group": "navigation@5"
+        },
+        {
+          "command": "kraft.approve",
+          "when": "resourceScheme == webview-panel && kraft.artifactPreview && !kraft.readOnly",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kraft.reject",
+          "when": "resourceScheme == webview-panel && kraft.artifactPreview && !kraft.readOnly",
+          "group": "navigation@2"
+        },
+        {
+          "command": "kraft.reviewChanges",
+          "when": "resourceScheme == webview-panel && kraft.artifactPreview",
+          "group": "navigation@3"
+        },
+        {
+          "command": "kraft.review.submit",
+          "when": "resourceScheme == webview-panel && kraft.artifactPreview && !kraft.readOnly",
           "group": "navigation@4"
         }
       ],
@@ -369,7 +795,48 @@
         {
           "command": "kraft.review.addComment",
           "group": "inline",
+          "when": "commentController == kraft.review && !kraft.readOnly"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "kraft.review.editComment",
+          "group": "inline@1",
+          "when": "commentController == kraft.review && comment =~ /\\bmine-draft\\b/ && !kraft.readOnly"
+        },
+        {
+          "command": "kraft.review.deleteComment",
+          "group": "inline@2",
+          "when": "commentController == kraft.review && comment =~ /\\bmine-draft\\b/ && !kraft.readOnly"
+        }
+      ],
+      "comments/comment/context": [
+        {
+          "command": "kraft.review.saveComment",
+          "group": "inline@1",
+          "when": "commentController == kraft.review && !kraft.readOnly"
+        },
+        {
+          "command": "kraft.review.cancelEdit",
+          "group": "inline@2",
           "when": "commentController == kraft.review"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "kraft.review.setLabel",
+          "group": "inline@1",
+          "when": "commentController == kraft.review && commentThread =~ /\\bcan-label\\b/ && !kraft.readOnly"
+        },
+        {
+          "command": "kraft.review.resolveThread",
+          "group": "inline@2",
+          "when": "commentController == kraft.review && commentThread =~ /\\bcan-resolve\\b/ && !kraft.readOnly"
+        },
+        {
+          "command": "kraft.review.reopenThread",
+          "group": "inline@3",
+          "when": "commentController == kraft.review && commentThread =~ /\\bcan-reopen\\b/ && !kraft.readOnly"
         }
       ]
     }

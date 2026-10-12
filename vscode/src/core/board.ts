@@ -1,45 +1,186 @@
-import { deriveState, type ItemDisplayState } from "../../../frontend/src/deriveState";
-import { STATUS_GROUPS } from "../../../frontend/src/statusGroups";
-import type { WorkItem } from "./api";
+import { groupOf, STATUS_GROUPS, type GroupKey } from "../../../frontend/src/ng/board/model";
+import { reasonTail } from "../../../frontend/src/ng/board/rowText";
+import type { WorkItem, WorkItemDetail } from "./api";
+import { linkTokens } from "./links";
+import { primaryAction, primaryToken } from "./primary";
+import { spendLine, timeLine } from "./spend";
 
-export type Action = "pause" | "resume" | "retry" | "cancel" | "skip" | "escalate" | "archive";
+/** The board reads the server's `display_status` and `stop`, as the web board
+ *  does (`groupOf`, `reasonTail`); nothing here derives state from `status`. */
 
-const ACTIONS: Record<ItemDisplayState, Action[]> = {
-  running: ["pause", "cancel"],
-  rate_limited: ["pause", "cancel"],
-  waiting: ["pause", "cancel"],
-  escalating: ["cancel"],
-  paused: ["resume", "cancel"],
-  not_started: ["resume", "cancel"],
-  blocked: ["pause", "cancel"],
-  gate: ["skip", "cancel"],
-  capped: ["retry", "skip", "escalate", "cancel"],
-  question: ["retry", "skip", "escalate", "cancel"],
-  budget: ["retry", "skip", "escalate", "cancel"],
-  escalated: ["retry", "skip", "escalate", "cancel"],
-  done: ["archive"],
-  abandoned: ["archive"],
-  archived: [],
+/** What a row is, for its icon: the `display_status`, with a
+ *  `needs_you` split by the stop kinds that look different and a paused item
+ *  that never started apart from one paused mid-chain. */
+export type ItemState =
+  | "gate" | "question" | "budget" | "cap" | "needs_you" | "failed" | "paused" | "not_started"
+  | "running" | "waiting" | "queued" | "blocked" | "escalated" | "done" | "cancelled" | "archived" | "unknown";
+
+const ICONS: Record<ItemState, string> = {
+  gate: "pass",
+  question: "question",
+  budget: "credit-card",
+  cap: "error",
+  needs_you: "warning",
+  failed: "error",
+  paused: "debug-pause",
+  not_started: "debug-pause",
+  running: "sync~spin",
+  waiting: "watch",
+  queued: "watch",
+  blocked: "watch",
+  escalated: "comment-discussion",
+  done: "check",
+  cancelled: "circle-slash",
+  archived: "archive",
+  unknown: "circle-filled",
 };
 
-export function groupItems(items: WorkItem[], repos: string[] | "all") {
-  const shown = items.filter((i) => !i.archived_at && (repos === "all" || repos.includes(i.repo)));
+const SPLIT_STOPS = new Set(["gate", "question", "budget", "cap"]);
+const AS_IS = new Set<string>(["failed", "running", "waiting", "queued", "blocked", "escalated", "done", "cancelled", "archived"]);
+
+export function stateOf(item: WorkItem): ItemState {
+  const d = item.display_status;
+  if (item.archived_at) return "archived";
+  if (d === "needs_you") return item.stop && SPLIT_STOPS.has(item.stop.kind) ? (item.stop.kind as ItemState) : "needs_you";
+  if (d === "paused") return item.current_node_id ? "paused" : "not_started";
+  return d && AS_IS.has(d) ? (d as ItemState) : "unknown";
+}
+
+const shown = (i: WorkItem) => !i.archived_at;
+
+/** Whether an item is in the window's scope (`WorkspaceScope.includes`):
+ *  the board, the badge and the toasts all ask the same question. */
+export type Include = (item: WorkItem) => boolean;
+
+/** The items the board shows: in the window's scope and not archived. */
+export const onBoard = (items: WorkItem[], include: Include) => items.filter((i) => shown(i) && include(i));
+
+export function groupItems(items: WorkItem[], include: Include): { id: GroupKey; label: string; items: WorkItem[] }[] {
+  const listed = onBoard(items, include);
   return STATUS_GROUPS.map((g) => ({
-    id: g.id,
+    id: g.key,
     label: g.label,
-    items: shown.filter((i) => g.test(deriveState(i))),
+    items: listed.filter((i) => groupOf(i) === g.key),
   })).filter((g) => g.items.length > 0);
 }
 
-export const actionsFor = (item: WorkItem): Action[] => ACTIONS[deriveState(item).state] ?? [];
+/** The group a shown item sits in, as `groupItems` places it; undefined when
+ *  the board does not show it (archived, or outside the window's scope). */
+export function groupHolding(items: WorkItem[], include: Include, id: string) {
+  return groupItems(items, include).find((g) => g.items.some((i) => i.id === id));
+}
 
-export const needsYouCount = (items: WorkItem[]) =>
-  items.filter((i) => !i.archived_at && deriveState(i).needsYou).length;
+/** The board's top level with the Archived group last: only under groups,
+ *  so a board with nothing on it keeps its welcome text. */
+export const withArchived = <G>(groups: G[]): (G | { kind: "archived" })[] =>
+  groups.length ? [...groups, { kind: "archived" }] : [];
 
+/** The Archived group's rows: the last list read of archived items, less any
+ *  the store now holds un-archived (a restore lands there before the re-read),
+ *  and the store's own copy of any it holds archived, which is the newer. */
+export const archivedChildren = (cached: WorkItem[], store: { item(id: string): WorkItem | undefined }): WorkItem[] =>
+  cached.flatMap((i) => {
+    const held = store.item(i.id);
+    return !held ? [i] : held.archived_at ? [held] : [];
+  });
+
+/** The board's welcome text: `here` says this repo has no Kraft work and
+ *  offers Show all repos; `connect` says this repo is not connected at all
+ *  (`unconnected`) and offers to connect it. Never before the scope is ready
+ *  (git is async), never while disconnected (the Start row says that), and
+ *  not when every repo is already shown. */
+export type Welcome = "none" | "here" | "connect";
+
+export function welcomeState(connected: boolean, ready: boolean, showAll: boolean, visible: number, unconnected = false): Welcome {
+  if (!(connected && ready && !showAll && visible === 0)) return "none";
+  return unconnected ? "connect" : "here";
+}
+
+const primaryTokens = (item: WorkItem) => {
+  const p = primaryAction(item);
+  return p ? [primaryToken(p)] : [];
+};
+
+/** The row's `contextValue`, which its menus match: `gate` while a gate is
+ *  pending, then the server's `actions`, the doors it would admit now, then
+ *  `drafts` while it has draft review comments (so Submit and Discard apply),
+ *  then what it links to (`linkTokens`), then its inline button's token
+ *  (`primaryToken`) when it has one, then `worktree` while its worktree is
+ *  on disk. A server that sends no `actions` gets no action entries, only the
+ *  ones every row has. */
+export const contextValueOf = (item: WorkItem, { drafts = false }: { drafts?: boolean } = {}): string =>
+  `item:${[
+    ...(item.pending_gate ? ["gate"] : []),
+    ...(item.actions ?? []),
+    ...(drafts ? ["drafts"] : []),
+    ...linkTokens(item),
+    ...primaryTokens(item),
+    ...(item.worktree_exists ? ["worktree"] : []),
+  ].join(",")}`;
+
+/** Whether a cached detail may fill the hover as is: not while the item runs,
+ *  since its running time grows and the detail is re-read only on events. */
+export const hoverFromCache = (item: WorkItem) => stateOf(item) !== "running";
+
+/** Where Open Worktree goes: the detail's own path, only while it exists. */
+export function worktreeTarget(detail: WorkItemDetail | undefined): string | undefined {
+  return detail?.worktree_exists === true && detail.worktree_path ? detail.worktree_path : undefined;
+}
+
+export const needsYou = (item: WorkItem) => shown(item) && groupOf(item) === "needs";
+
+export const needsYouCount = (items: WorkItem[], include: Include) => items.filter((i) => needsYou(i) && include(i)).length;
+
+/** The items a toast may be about: one window per repo announces a gate. */
+export const announceable = (items: WorkItem[], include: Include) => items.filter(include);
+
+export const iconOf = (item: WorkItem) => ICONS[stateOf(item)];
+
+/** The row's description: the id, then why it is where it is. */
 export function describe(item: WorkItem): string {
-  const parts = [item.id];
-  if (item.current_node_id) parts.push(item.current_node_id);
-  const p = (item as { progress?: { current?: number; total?: number } | null }).progress;
-  if (p?.current && p?.total) parts.push(`Task ${p.current} of ${p.total}`);
-  return parts.join(" · ");
+  const tail = reasonTail(item);
+  return tail ? `${item.id} · ${tail}` : item.id;
+}
+
+const MIN = 60_000;
+const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
+
+/** Milliseconds until the text of a countdown row ("retry in 5m", `until`)
+ *  next changes, or undefined when it never will (no clock, or expired).
+ *  `until` floors to the minute below an hour, the hour below a day: the text
+ *  turns over when the time left drops under a multiple of that unit, and
+ *  "in 1m" holds to expiry. */
+export function nextTick(items: Pick<WorkItem, "display_status" | "stop" | "retry_at">[], now: number): number | undefined {
+  let next: number | undefined;
+  for (const i of items) {
+    const at = i.display_status === "waiting" ? (i.stop?.resume_at ?? i.retry_at) : undefined;
+    const left = at ? Date.parse(at) - now : NaN;
+    if (!(left > 0)) continue;
+    const unit = left < 2 * MIN ? 0 : left < HOUR ? MIN : left < DAY ? HOUR : DAY;
+    // Past the boundary by a millisecond, so the redraw reads the new text.
+    const wait = unit ? left - Math.floor(left / unit) * unit + 1 : left;
+    next = Math.min(next ?? Infinity, wait);
+  }
+  return next;
+}
+
+/** A question's text without the worker's `needs_context:` marker. */
+export const questionText = (reason: string) => reason.replace(/^needs_context:\s*/, "");
+
+/** The hover: the stop's whole reason when there is one (the row keeps only its first sentence),
+ *  then, with the item's detail, what it has spent and how long it has run against their caps. */
+export function tooltipOf(item: WorkItem, detail?: Pick<WorkItemDetail, "budget_cap" | "running_time">): string {
+  const reason = item.stop?.reason;
+  const first = reason
+    ? item.stop?.kind === "question" ? questionText(reason) : reason
+    : `${item.id} — ${reasonTail(item) || item.display_status || item.status}`;
+  if (!detail) return first;
+  return [first, spendLine(detail.budget_cap), timeLine(detail.running_time)].filter((l) => l !== null).join("\n");
+}
+
+/** The Resume/Retry input box's prompt: a question stop shows the question, so the steer answers it. */
+export function steerPrompt(item: WorkItem): string {
+  const reason = item.stop?.kind === "question" ? item.stop.reason : null;
+  return reason ? `${item.id} asks: ${questionText(reason)} Your answer steers it (optional)` : `Steer for ${item.id} (optional)`;
 }

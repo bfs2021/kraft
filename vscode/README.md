@@ -47,11 +47,12 @@ window, or open it in the web UI.
 
 ## Gates
 
-![A notification that a work item is waiting at its spec approval gate, with Open, Approve and Reject](media/screenshot-gate-notification.png)
+![A notification that a work item is waiting at its spec approval gate, with Open and Reject…](media/screenshot-gate-notification.png)
 
-When a gate opens, a notification offers **Open**, **Approve** and **Reject**.
-Open shows the gate's document in a tab, with Approve and Reject in its title
-bar. A reject asks for a reason, which goes to the agent.
+When a gate opens, a notification offers **Open** and **Reject…**; read-only, it
+offers Open only. Open shows the gate's document in a tab, with Approve and
+Reject in its title bar: you approve a document once you have read it. A reject
+asks for a reason, which goes to the agent.
 
 ## Review
 
@@ -59,10 +60,23 @@ bar. A reject asks for a reason, which goes to the agent.
 
 Run **Review Changes** from an item's menu on the board, or from a gate
 document's title bar, to open its branch in the multi-file diff editor. Findings from the review agents show on the lines they
-name, as a colored bar with the message beside the line, and in the Problems panel. Comment on any line, then run
-**Submit Review**: your comments reach the agent as one note, as a reject at a
-gate or as a steer on a paused item. Approving instead asks before it discards
-your comments.
+name, as a colored bar with the message beside the line, and in the Problems panel.
+
+Comments are Kraft's review threads, the same ones the web UI's review and
+`kraft view threads` show, with their label, lines and side. Every comment is a
+draft until you submit a review, wherever it was written. Edit or delete your
+drafts, and resolve or reopen a submitted thread, from its title bar. A draft
+must-fix thread blocks Approve.
+
+**Submit Review** asks for the outcome and an optional note. At a gate it offers
+Request changes, Comment or Approve; with no gate, Request changes only, which
+a paused item queues until you resume it. Request changes asks where the work
+restarts. Approve with a must-fix thread open lists the threads that block it.
+Approving with drafts asks to send them with the approval. **Discard Review
+Comments** deletes every draft on the item, the web UI's and the CLI's
+included. Both show on an item with draft comments that is at a gate or stopped
+on you (paused, failed or out of budget), and on any other item once its review
+is open.
 
 ## Config
 
@@ -84,13 +98,19 @@ startup.
   Kraft 2.0 or a later 2.x. Against any other Kraft the extension turns
   read-only: the board still updates, every action is disabled, and the status
   bar's tooltip says whether to update Kraft or the extension.
+- A trusted workspace to act. In Restricted Mode the board, gate documents and
+  diffs are read-only, and config checks wait until you trust the workspace.
 - [Red Hat YAML](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml)
   for completion in config files. The extension offers it once if it is missing.
 
 ## Settings
 
 - `kraft.url`: where Kraft listens. Empty reads `KRAFT_HOST` and `KRAFT_PORT`,
-  then `bind` and `port` from `$KRAFT_HOME/config/access.yaml`.
+  then `bind` and `port` from `$KRAFT_HOME/config/access.yaml`. Set it in your
+  user or Remote settings only: a workspace's settings cannot change it.
+- `kraft.path`: the `kraft` binary **Start Kraft** runs, and the restart a
+  config change offers. Empty runs `kraft` on your `PATH`; a leading `~` means
+  your home folder. Set it in your user or Remote settings only.
 - `kraft.notifications`: `all`, `gates` or `off`, which states raise a
   notification. `gates` announces only gates; `all` also announces an item that
   stopped and needs you.

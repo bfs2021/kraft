@@ -1,5 +1,5 @@
 import type { RepoRow } from "./settings";
-import type { DisplayStatus, EventType, SessionStatus, StopKind, WorkItemStatus } from "./vocab.generated";
+import type { DisplayStatus, EventType, ItemAction, SessionStatus, StopKind, WorkItemStatus } from "./vocab.generated";
 
 export interface ChainNode {
   id: string;
@@ -121,7 +121,7 @@ export interface WorkItemAttachment {
  *  exactly one of these, so a pending gate, a plain failure and a
  *  stuck-but-not-yet-escalated stop -- all `needs_human` in `status` -- read
  *  apart with no client-side derivation. */
-export type { DisplayStatus };
+export type { DisplayStatus, ItemAction };
 
 /** The kinds the server sends: the generated vocabulary, nothing added by hand. */
 export type { StopKind };
@@ -277,7 +277,7 @@ export interface WorkItem {
   escalation_threads?: EscalationThread[];
   worktree_path?: string;
   /** Whether `worktree_path` is on disk: false once it was reclaimed or
-   *  deleted (and before the item first ran). Only on the detail endpoint. */
+   *  deleted (and before the item first ran). On the list rows and the detail. */
   worktree_exists?: boolean;
   /** The branch the item's worktree lives on (detail only): `kraft/<slug>-<id>`, or `kraft/<id>` on an older row. */
   branch?: string | null;
@@ -359,6 +359,11 @@ export interface WorkItem {
   dependencies?: { id: string; title: string; status: WorkItemStatus; met: boolean }[];
   /** The board's status badge (Kraft UI v2 · B1). */
   display_status?: DisplayStatus;
+  /** The item actions the server admits now (`vocab.work_item.open_doors`),
+   *  list and detail. A surface offers a door only when its verb is here;
+   *  absent from a server older than it, where the UI keeps its own reading
+   *  (`ng/item/status`'s `admits`). */
+  actions?: ItemAction[];
   /** The stop `display_status` is reporting on; `null` off `needs_human`,
    *  `waiting` and `rate_limited`. Additive, unread by the shipped UI. */
   stop?: WorkItemStop | null;
@@ -367,7 +372,7 @@ export interface WorkItem {
   summary?: WorkItemSummary;
   /** The current node's step out of its steps, with the step's id and the
    *  latest task's (absent when the task's path has no step or task segment), when the node declares more than one step and a session
-   *  has run. List only; `summary.step` is the detail's. */
+   *  has run. List and detail; `summary.step` is the same without `name` and `task`. */
   step?: { index: number; count: number; name?: string; task?: string } | null;
 }
 

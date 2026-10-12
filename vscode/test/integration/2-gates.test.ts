@@ -3,12 +3,23 @@ import * as vscode from "vscode";
 import { kraft, until } from "./helpers";
 
 suite("gates", () => {
-  test("approving from VS Code clears the gate", async () => {
+  test("approving after opening the document clears the gate", async () => {
     const k = await kraft();
     // After the reject in 1-review, the fake agent reruns and the gate comes back.
     const item = await until("an item back at a gate", () => k.store.items().find((i) => i.pending_gate), 180_000);
     const gate = item.pending_gate!;
-    await vscode.commands.executeCommand("kraft.approve", item.id, gate);
+    // The seeded gate (dev/seed.py) has no digest, so this cannot prove the approval is bound
+    // to the render; the unit tests in approve.test.ts do.
+    await vscode.commands.executeCommand("kraft.openArtifact", item.id);
+    // It opens rendered, in the markdown preview, and the tab names the item.
+    const tab = await until("the preview tab", () => {
+      const t = vscode.window.tabGroups.activeTabGroup.activeTab;
+      return t?.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith("markdown.preview") ? t : undefined;
+    });
+    assert.ok(tab.label.endsWith(`(${item.id}).md`), tab.label);
+    // As the preview's title bar calls it: the webview's own uri and the group, so the
+    // item is the one the active preview shows and the gate is the item's own.
+    await vscode.commands.executeCommand("kraft.approve", vscode.Uri.from({ scheme: "webview-panel", path: "webview-panel/webview-x" }), { groupId: 1 });
     await until("the gate to clear", () => k.store.item(item.id)?.pending_gate !== gate || undefined);
     assert.notEqual(k.store.item(item.id)?.pending_gate, gate);
   });
