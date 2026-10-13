@@ -30,3 +30,16 @@ Decisions made while running the four follow-ups (repo id vs add-on namespace, S
 | 2 store files checked at launch | session_01Vr4WJuyEsnsdYE85knQrVR | ccr-143df22f-uetbpy-2-store-digest |
 | 3 revision extends | session_01Pkhd82HNT1y5s72kTQYyBV | ccr-143df22f-uetbpy-3-revision-extends |
 | 4 repo-library scope | session_01WbZLPn8vKT8BSViNZYR6Ky | ccr-143df22f-uetbpy-4-repo-library-scope |
+
+## Merging
+
+- **D15. Child PRs are squash-merged** into the integration branch: one commit per item, titled like main's (`… (#NNN)`). *Why:* main's history is one squash commit per PR, and the final PR stays readable item by item.
+- **D16. Non-blocking review nits go in a small follow-up PR from the same child**, not into the reviewed PR. *Why:* a nit never holds a merge that other items are waiting on, and nothing a review found is dropped.
+- **Merged:** #750 (item 1) at 9eea419, after a review (MERGE: every door covered, mutation runs failing as they should) and green CI. Follow-up for its nits requested.
+- **#751 (item 3):** review MERGE. Merges on green CI for its merge-of-item-1 head (832fa5b). Its nits go in a follow-up PR (D16).
+- **#749 (item 2):** review FIX FIRST. `write_store` follows a symlinked store when replacing it (it chmods the target and leaves a writable store). Sent back with the fix, plus three nits in files it already changes (deleted SKILL.md misreported, unsafe `.kraft-digest` read in `_why_left_out`, clearer symlink message). The generic message for an unpinned live add-on stays: it already fails closed.
+- **D17. A follow-up PR may reuse the child's own branch, restarted from the integration branch** (child 1 did this for #752). *Why:* a session can push only its designated branch.
+- **Merged:** #751 (item 3) at edc46f3, after its review (MERGE, six mutations confirmed) and green CI on its merge-of-#750 head. A follow-up for its nits was requested.
+- **Merged:** #752 (item 1 nits), reviewed by this session: one fewer `load.installed` read, three new rows, two docs wordings. It trial-merged cleanly onto edc46f3 and CI was green (one stale "release impact declared" run from before the label was set failed; its re-run passed).
+- **#749 (item 2), re-review:** the FIX FIRST finding is fixed (62428bb). A symlinked store is unlinked, never chmodded or moved. An edited store is moved aside and removed best effort, after the fresh store is read-only. `remove_tree` walks without following links. The three nits are done too. Since then: it merged the integration branch (with #751 and #752), and one test-only commit (26037c3) takes the store's inode after the damage, since a freed inode can be reused. Merges on green CI for 26037c3.
+- **#753 (item 3 nits), reviewed by this session:** the REQ's wording for a pinned add-on disabled since, `_source` dropping an empty `, from`, and rows for bare task and step ids. Merges on green CI.
