@@ -576,14 +576,19 @@ def _addon_profiles(
     section is read: an add-on never chooses an executable, so a `harnesses:`
     section in it has no reader here."""
     # Imported here: `kraft.config` imports this module.
+    from kraft.addons import fetch
     from kraft.addons.load import qualify
     from kraft.config import bounded_yaml
 
     path = addon.root / "profiles.yaml"
-    if not path.is_file():
-        return {}
     try:
-        data = qualify(bounded_yaml(path.read_text(), [20_000]), addon)
+        # Through the store's digest: the bytes parsed are the bytes checked.
+        raw = fetch.open_store(addon.root).read("profiles.yaml", optional=True)
+        if raw is None:
+            return {}
+        data = qualify(bounded_yaml(raw.decode(), [20_000]), addon)
+    except fetch.StoreMismatch as exc:
+        raise TemplateEnvironmentError(f"{path}: {exc}") from exc
     except (OSError, ValueError, yaml.YAMLError) as exc:
         raise TemplateEnvironmentError(f"{path}: cannot read/parse: {exc}") from exc
     return _agent_profiles(_section(data, "profiles", path), path, harnesses, addon.namespace)
@@ -658,8 +663,21 @@ class HarnessProfileTable:
         for addon in addons:
             if addon.left_out is None:
                 agent_profiles |= _addon_profiles(addon, harnesses)
+        # A repo library left out of this table (another repository's, or a
+        # connected id with none), or an add-on left out by a fault (a store
+        # edited or gone), is known: a fallback into it is not a broken file,
+        # and the launch that walks into it stops with its own reason
+        # (`resolve_agent_task`). One disabled or not installed on purpose is
+        # not: naming it is the file's mistake.
+        known = {
+            f"{a.namespace}:"
+            for a in addons
+            if a.left_out and (a.repo_id is not None or not a.quiet)
+        }
         for p in agent_profiles.values():
             for n, entry in enumerate(p.fallback):
+                if entry.profile is not None and entry.profile.startswith(tuple(known)):
+                    continue
                 if entry.profile is not None and entry.profile not in agent_profiles:
                     raise TemplateEnvironmentError(
                         f"{path}: profiles.{p.id}.fallback[{n}]: profile {entry.profile!r} "

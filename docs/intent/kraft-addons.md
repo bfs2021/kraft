@@ -141,8 +141,20 @@ origin: src/kraft/addons/load.py §installed
 ## REQ an-addon-whose-digest-does-not-match-is-not-loaded
 
 IF an add-on's extracted files do not match the lock's digest, THEN the system SHALL leave that add-on out and report it under `invalid_templates`.
-enforced-by: tests/addons/test_load.py::test_a_digest_mismatch_leaves_the_addon_out, tests/api/test_deps.py::test_health_names_an_addon_that_did_not_load[store-edited]
+enforced-by: tests/addons/test_load.py::test_a_digest_mismatch_leaves_the_addon_out[emptied], tests/addons/test_load.py::test_a_digest_mismatch_leaves_the_addon_out[a-link-to-a-copy], tests/api/test_deps.py::test_health_names_an_addon_that_did_not_load[store-edited]
 origin: src/kraft/addons/load.py §installed
+
+## REQ an-edited-store-file-is-never-read
+
+IF a file the system reads from an add-on's or a repo library's store after the store was written does not match the digest the store was written with, THEN the system SHALL refuse the file, naming it, instead of reading its text.
+enforced-by: tests/addons/test_fetch.py::test_a_store_file_is_read_only_if_it_matches_its_digest[edited-file-is-refused], tests/addons/test_fetch.py::test_a_store_file_is_read_only_if_it_matches_its_digest[edited-digest-manifest-is-refused], tests/addons/test_fetch.py::test_a_store_file_is_read_only_if_it_matches_its_digest[unlisted-file-is-refused], tests/test_skill.py::test_addon_skill_references[edited-store-is-refused], tests/test_skill.py::test_addon_skill_references[edited-digest-manifest-is-refused], tests/templates/test_environment.py::test_addon_profiles[edited-store-is-refused], tests/templates/test_library_addons.py::test_an_addon_error_names_the_store_file[edited-after-install], tests/addons/test_update.py::test_an_installed_copy_that_does_not_read_is_said_in_the_review[edited-but-valid], tests/addons/test_repo_library.py::test_a_change_is_reviewed_against_the_accepted_version[store-edited]
+origin: src/kraft/addons/fetch.py §open_store
+
+## REQ an-edited-store-is-replaced-not-reused
+
+WHEN an add-on's store is written and a store with the same digest already exists, the system SHALL reuse it only if its files match the digest, and otherwise replace it with the files being written.
+enforced-by: tests/addons/test_fetch.py::test_a_store_is_addressed_by_its_content[edited-store-is-rewritten], tests/addons/test_fetch.py::test_a_store_is_addressed_by_its_content[edited-digest-manifest-is-rewritten]
+origin: src/kraft/addons/fetch.py §write_store
 
 ## REQ an-unloaded-addon-skill-is-never-delegated
 
@@ -270,6 +282,12 @@ WHILE a work item is not terminal, the system SHALL read its add-on skills and a
 enforced-by: tests/addons/test_pins.py::test_a_resolved_chain_pins_the_addons_it_reads[local-chain], tests/addons/test_pins.py::test_a_resolved_chain_pins_the_addons_it_reads[addon-chain], tests/addons/test_pins.py::test_a_rebuilt_snapshot_keeps_the_items_pins[retry-override], tests/addons/test_pins.py::test_a_rebuilt_snapshot_keeps_the_items_pins[chain-revision], tests/addons/test_pins.py::test_a_launch_reads_the_version_the_item_started_with, tests/addons/test_pins.py::test_a_pinned_version_that_is_gone_is_refused_not_delegated, tests/addons/test_pins.py::test_every_launch_is_handed_the_items_pins, tests/addons/test_pins.py::test_a_revision_resolves_against_pinned_addons[through-a-pinned-addon], tests/addons/test_pins.py::test_a_revision_resolves_against_pinned_addons[through-an-addon-not-touched-yet], tests/addons/test_pins.py::test_a_chain_through_a_repo_library_pins_its_commit_and_is_restored
 origin: src/kraft/adapters/agent.py §resolve_agent_task
 
+## REQ a-revision-can-add-an-addon-component
+
+WHEN a chain revision or an item draft adds a node, the system SHALL accept `<namespace>:<name>` in the node's and its tasks' `extends`, SHALL resolve it against the add-on versions the item pinned, pinning an add-on it had not read at the lock's version, SHALL keep the node's, steps' and tasks' own ids bare, and SHALL refuse a component of an add-on that is not loaded for the item. An add-on the item pinned stays loaded for it at that version after it is disabled, as at launch; one it had not pinned is not loaded once disabled.
+enforced-by: tests/addons/test_pins.py::test_a_revision_resolves_against_pinned_addons[added-node-extends-an-addon], tests/addons/test_pins.py::test_a_revision_resolves_against_pinned_addons[added-task-extends-an-addon], tests/addons/test_pins.py::test_a_revision_resolves_against_pinned_addons[added-task-extends-an-addon-not-touched-yet], tests/addons/test_pins.py::test_a_revision_cannot_add_from_an_addon_that_is_not_loaded[disabled], tests/addons/test_pins.py::test_a_revision_cannot_add_from_an_addon_that_is_not_loaded[pinned-version-gone], tests/api/test_addon_content.py::test_an_item_draft_adds_an_addons_node, tests/templates/test_revision.py::test_anything_but_one_strict_change_set_is_refused[added-node-with-a-qualified-id], tests/templates/test_revision.py::test_anything_but_one_strict_change_set_is_refused[added-task-with-a-qualified-id], tests/templates/test_revision.py::test_anything_but_one_strict_change_set_is_refused[added-step-with-a-qualified-id], tests/addons/test_pins.py::test_a_revision_resolves_against_pinned_addons[pinned-addon-disabled-since]
+origin: src/kraft/templates/revision.py §AddedNode
+
 ## REQ a-missing-store-is-restored-from-its-commit
 
 WHEN a store that the lock or a work item's pin names is missing, the system SHALL restore it from the recorded commit, SHALL load it only if its tree and digest match, and SHALL restore a work item's pinned store before a launch reads it.
@@ -356,8 +374,8 @@ origin: src/kraft/api/startup.py §lifespan
 
 ## REQ a-launch-stops-only-for-an-addon-it-reads
 
-IF a pinned add-on's store cannot be read, THEN the system SHALL stop only a launch whose task selects that add-on's skill or profile.
-enforced-by: tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[skill-from-it-stops], tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[profile-from-it-stops], tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[fallback-to-it-stops], tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[unrelated-task-launches]
+IF an add-on's store cannot be read, pinned or loaded and edited since, THEN the system SHALL stop only a launch whose task selects that add-on's skill or profile, a `harnesses.yaml` fallback into it included.
+enforced-by: tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[skill-from-it-stops], tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[profile-from-it-stops], tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[fallback-to-it-stops], tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[unrelated-task-launches], tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[edited-profiles-stop-its-profile], tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[edited-profiles-spare-an-unrelated-task], tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[a-local-fallback-into-it-stops], tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[unpinned-local-fallback-into-it-stops], tests/addons/test_pins.py::test_a_missing_pin_the_task_does_not_read_does_not_stop_it[unpinned-edited-profiles-spare-an-unrelated-task]
 origin: src/kraft/adapters/agent.py §resolve_agent_task
 
 ## REQ a-profile-fallback-pins-the-addon-it-names
@@ -377,3 +395,15 @@ origin: src/kraft/executor/dispatch.py §restore_pins
 IF a directory collection's `collection.json` is a symlink, a FIFO or over the JSON cap, THEN the system SHALL refuse the collection.
 enforced-by: tests/addons/test_update_hardening.py::test_a_directory_collections_catalogue_is_read_safely[fifo], tests/addons/test_update_hardening.py::test_a_directory_collections_catalogue_is_read_safely[symlink], tests/addons/test_update_hardening.py::test_a_directory_collections_catalogue_is_read_safely[oversized]
 origin: src/kraft/addons/update.py §_catalogue
+
+## REQ a-minted-repository-id-skips-addon-namespaces
+
+WHEN Kraft writes a repository id for an entry that has none, the system SHALL NOT choose `kraft`, the namespace of an add-on `addons.yaml` or `addons.lock` names, or a namespace an `as:` in `addons.yaml` would take.
+enforced-by: tests/api/test_repos_workspaces.py::test_connecting_a_workspace_declares_it_with_its_submodules_as_members[addon-namespace], tests/api/test_repos_workspaces.py::test_connecting_a_workspace_declares_it_with_its_submodules_as_members[reserved], tests/api/test_repos_library.py::test_a_repo_library_is_reviewed_then_accepted[addon-namespace], tests/api/test_repos_library.py::test_a_repo_library_is_reviewed_then_accepted[reserved], tests/api/test_repos_library.py::test_a_repo_library_is_reviewed_then_accepted[a-pending-alias], tests/api/test_repos_library.py::test_a_repo_library_is_reviewed_then_accepted[a-disabled-addon]
+origin: src/kraft/api/routes/repos.py §_repository_id
+
+## REQ a-workspace-never-names-an-addon-namespace-id
+
+IF connecting a repository would declare a workspace naming an entry whose `id` is `kraft` or an add-on's namespace, THEN the system SHALL refuse the connect, name the add-on, and write nothing.
+enforced-by: tests/api/test_repos_workspaces.py::test_a_member_whose_id_is_an_addon_namespace_refuses_the_connect[addon-namespace], tests/api/test_repos_workspaces.py::test_a_member_whose_id_is_an_addon_namespace_refuses_the_connect[reserved]
+origin: src/kraft/api/routes/repos.py §_declare_workspace

@@ -6,6 +6,8 @@ import pytest
 import yaml
 from support.addons import AGENT, load_release
 
+from kraft.templates.models import MaterializedChain
+
 READ_ONLY = "comes from add-on release@acme; extend it or copy it to your library"
 
 
@@ -21,7 +23,7 @@ def test_addon_entries_carry_their_addon(loaded):
         c["id"]: c["addon"] for c in loaded.get("/api/templates/library").json()["components"]
     }
 
-    addon = {"id": "release@acme", "version": "1.0.0"}
+    addon = {"id": "release@acme", "version": "1.0.0", "repo": None}
     assert (chains["release:ship"], chains["default"]) == (addon, None)
     assert components["tasks.release:base"] == addon
     assert {v for k, v in components.items() if ":" not in k} == {None}
@@ -108,6 +110,57 @@ def test_copy_from_an_addon(loaded, copy):
     assert not loaded.get("/api/health").json()["invalid_templates"]
 
 
+@pytest.fixture
+def repo_library(client, tmp_path):
+    from support.addons import accept_repo_library, repo_with_library
+
+    from kraft.api import deps
+
+    st = client.app.state
+    accept_repo_library(st.templates_dir, st.run_dirs.addons, repo_with_library(tmp_path), "app")
+    deps._reload_templates(st)
+    return client
+
+
+_IN_ITS_REPO = "edit it in that repository's .kraft/"
+
+
+@pytest.mark.parametrize(
+    "op, kind, key, says",
+    [
+        pytest.param(
+            {"op": "new_chain", "from": "app:ship"},
+            "chains",
+            "mine",
+            f"app:ship is in app's repo library, visible only to items in app; {_IN_ITS_REPO}",
+            id="repo-library-chain",
+        ),
+        pytest.param(
+            {"op": "copy_component", "ref": "tasks.app:base", "name": "mine"},
+            "library",
+            "library",
+            f"app:base is in app's repo library, visible only to items in app; {_IN_ITS_REPO}",
+            id="repo-library-component",
+        ),
+        pytest.param(
+            {"op": "add_node", "id": "x", "after": None},
+            "chains",
+            "app:ship",
+            f"app:ship comes from app's repo library; {_IN_ITS_REPO}",
+            id="read-only",
+        ),
+    ],
+)
+def test_a_repo_librarys_content_is_edited_in_its_repository(repo_library, op, kind, key, says):
+    """Not copied into the instance's own library: that would make an
+    instance-wide chain out of one repository's."""
+    answer = repo_library.post(f"/api/drafts/{kind}/{key}/ops", json={"ops": [op]})
+
+    assert answer.status_code in (409, 422), answer.text
+    assert answer.json()["detail"] == says
+    assert repo_library.get("/api/drafts").json() == []
+
+
 @pytest.mark.parametrize("ref", ["tasks.implementer", "tasks.another-tool:base"])
 def test_only_an_addons_component_is_copied(loaded, ref):
     """A local component is edited where it is; a namespace no loaded add-on
@@ -124,7 +177,7 @@ def test_an_addons_agent_profile_is_listed_with_its_addon(client, tmp_path):
         p["id"]: p["addon"] for p in client.get("/api/harnesses/profiles").json()["agent_profiles"]
     }
 
-    assert listed["release:deep"] == {"id": "release@acme", "version": "1.0.0"}
+    assert listed["release:deep"] == {"id": "release@acme", "version": "1.0.0", "repo": None}
     assert {addon for id, addon in listed.items() if ":" not in id} == {None}
 
 
@@ -133,7 +186,10 @@ def test_an_addon_chain_opens_read_only_through_the_draft_view(loaded):
     published, with its add-on, and no draft is ever made of it."""
     view = loaded.get("/api/drafts/chains/release:ship").json()
 
-    assert (view["draft"], view["addon"]) == (False, {"id": "release@acme", "version": "1.0.0"})
+    assert (view["draft"], view["addon"]) == (
+        False,
+        {"id": "release@acme", "version": "1.0.0", "repo": None},
+    )
     assert [n["id"] for n in view["result"]["resolved"]["nodes"]] == ["n"]
     assert view["result"]["problems"] == [] and view["result"]["changes"] == []
     authored = yaml.safe_load(view["files"]["chains/release:ship.yaml"])
@@ -204,3 +260,23 @@ def test_an_addons_components_are_extended_from_a_local_chain(client, tmp_path):
     assert part.status_code == 200 and "extends: release:base" in part.json()["text"]
     assert client.post("/api/drafts/chains/mine/publish").status_code == 200
     assert not client.get("/api/health").json()["invalid_templates"]
+
+
+def test_an_item_draft_adds_an_addons_node(client, repo, tmp_path):
+    """The item draft's add-node menu lists an add-on's nodes by their
+    qualified name; picking one adds it, and the item then pins the add-on."""
+    library = {"tasks": {"base": {**AGENT, "skill": "notes"}}, "nodes": {"build": BUILD}}
+    load_release(client, tmp_path, library=library)
+    body = {"title": "draft me", "repo": str(repo), "chain_template": "default"}
+    wid = client.post("/api/work-items", json=body).json()["id"]
+    node = {"id": "release_build", "extends": "release:build"}
+    op = {"op": "add_node", "after": "verification", "node": node}
+
+    put = client.put(f"/api/work-items/{wid}/draft", json={"ops": [op]})
+
+    assert put.status_code == 200, put.text
+    assert put.json()["problems"] == []
+    assert "release_build" in [n["id"] for n in put.json()["nodes"]]
+    assert client.post(f"/api/work-items/{wid}/draft/apply").status_code == 200
+    item = client.get(f"/api/work-items/{wid}").json()
+    assert "release" in MaterializedChain.from_json(item["materialized_chain"]).chain.addons

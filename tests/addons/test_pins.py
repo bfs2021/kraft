@@ -12,6 +12,8 @@ from support.addons import (
     accept_repo_library,
     chain,
     drop_store,
+    edit_addons_yaml,
+    edit_store,
     instance,
     make_collection,
     publish,
@@ -22,20 +24,32 @@ from kraft.adapters import agent
 from kraft.addons import load, update
 from kraft.executor import dispatch
 from kraft.policy import InstancePolicy, InstancePolicyInput
+from kraft.skill import SkillError
 from kraft.templates.environment import WorkItemTarget
 from kraft.templates.library import TemplateLibrary
 from kraft.templates.models import AgentTask, MaterializedChain
 from kraft.templates.retry import validate_retry_override
-from kraft.templates.revision import Add, AddedNode, ChangeSet, Override, revise
+from kraft.templates.revision import (
+    Add,
+    AddedNode,
+    ChangeSet,
+    Override,
+    RevisionError,
+    revise,
+)
 
 ID = "release@acme"
+
+
+def _node(extends):
+    return {"kind": "exec", "tasks": [{"id": "t", "extends": extends}]}
 
 
 def _release(version, model):
     task = {**AGENT, "skill": "notes", "profile": "release:deep"}
     return {
         "version": version,
-        "library": {"tasks": {"base": task}},
+        "library": {"tasks": {"base": task}, "nodes": {"stage": _node("base")}},
         "chains": {"ship": chain("base")},
         "skills": {"notes": f"the {version} method"},
         "profiles": {"deep": {"model": {"codex": model}}},
@@ -147,7 +161,9 @@ def test_a_chain_through_a_repo_library_pins_its_commit_and_is_restored(home, tm
     }
     assert library.commit and library.tree
     drop_store(library.root)
-    (pinned,) = [p for p in load.for_item(resolved.addons, config_dir, addons_dir) if p.repo_id]
+    (pinned,) = [
+        p for p in load.for_item(resolved.addons, config_dir, addons_dir, repo_id=None) if p.repo_id
+    ]
     assert pinned.left_out is not None
 
     load.restore(pinned, config_dir, addons_dir)
@@ -192,9 +208,20 @@ def test_a_local_profiles_fallback_pins_the_addon_it_names(home):
     assert list(resolved.addons) == ["release"]
 
 
-def test_a_chain_that_reads_no_addon_stores_no_pins(home):
+@pytest.mark.parametrize(
+    "task",
+    [
+        pytest.param({}, id="plain"),
+        pytest.param(
+            {"prompt": "release: write the notes", "model": "release:x"},
+            id="prose-names-a-namespace",
+        ),
+    ],
+)
+def test_a_chain_that_reads_no_addon_stores_no_pins(home, task):
     repo, config_dir, addons_dir = home
-    (config_dir / "chains" / "plain.yaml").write_text(json.dumps(chain("base")))
+    body = {"nodes": [{"id": "n", "kind": "exec", "tasks": [{"id": "t", **AGENT, **task}]}]}
+    (config_dir / "chains" / "plain.yaml").write_text(json.dumps(body))
     resolved = _resolved(config_dir, addons_dir, "plain")
     assert resolved.addons == {}
     stored = _stored(resolved)
@@ -237,34 +264,62 @@ def test_a_pinned_version_that_is_gone_is_refused_not_delegated(home):
     )
 
 
+_EDITED = "profiles.yaml does not match its digest"
+_FAST = {"model": {"codex": "gpt-5"}, "fallback": [{"profile": "release:deep"}]}
+
+
 @pytest.mark.parametrize(
-    ("fields", "stops"),
+    ("damage", "pinned", "fields", "stops"),
     [
-        ({"skill": "release:notes"}, True),
-        ({"profile": "release:deep"}, True),
-        ({"fallback": [{"profile": "release:deep"}]}, True),
-        ({"prompt": "unrelated"}, False),
+        ("gone", True, {"skill": "release:notes"}, "could not be read"),
+        ("gone", True, {"profile": "release:deep"}, "could not be read"),
+        ("gone", True, {"fallback": [{"profile": "release:deep"}]}, "could not be read"),
+        ("gone", True, {"prompt": "unrelated"}, None),
+        ("edited", True, {"profile": "release:deep"}, _EDITED),
+        ("edited", True, {"prompt": "unrelated"}, None),
+        ("edited", True, {"profile": "fast"}, _EDITED),
+        ("edited", False, {"profile": "fast"}, _EDITED),
+        ("edited", False, {"prompt": "unrelated"}, None),
+        ("disabled", False, {"prompt": "unrelated"}, "profile 'release:deep' is not defined"),
     ],
     ids=[
         "skill-from-it-stops",
         "profile-from-it-stops",
         "fallback-to-it-stops",
         "unrelated-task-launches",
+        "edited-profiles-stop-its-profile",
+        "edited-profiles-spare-an-unrelated-task",
+        "a-local-fallback-into-it-stops",
+        "unpinned-local-fallback-into-it-stops",
+        "unpinned-edited-profiles-spare-an-unrelated-task",
+        "a-fallback-into-a-disabled-addon-is-the-files-mistake",
     ],
 )
-def test_a_missing_pin_the_task_does_not_read_does_not_stop_it(home, fields, stops):
+def test_a_missing_pin_the_task_does_not_read_does_not_stop_it(home, damage, pinned, fields, stops):
     """An escalation or a review of an item that pinned `release` reads nothing
-    from it: its store being gone is no reason to refuse them."""
+    from it: its store being gone, or its `profiles.yaml` edited after it was
+    written, is no reason to refuse them, even beside a `harnesses.yaml`
+    profile that falls back into it. One disabled on purpose is not damage: a
+    fallback naming it is the file's mistake, as it always was."""
     repo, config_dir, addons_dir = home
     pins = _resolved(config_dir, addons_dir, "mine").addons
-    drop_store(load.installed(config_dir, addons_dir)[0].root)
-    gone = {"release": {**pins["release"], "digest": "sha256:" + "0" * 64}}
+    store = load.installed(config_dir, addons_dir)[0].root
+    harnesses = yaml.safe_load((config_dir / "harnesses.yaml").read_text()) or {}
+    harnesses["profiles"] = {**(harnesses.get("profiles") or {}), "fast": _FAST}
+    (config_dir / "harnesses.yaml").write_text(yaml.safe_dump(harnesses))
+    if damage == "gone":
+        drop_store(store)
+        pins = {"release": {**pins["release"], "digest": "sha256:" + "0" * 64}}
+    elif damage == "edited":
+        edit_store(store, "profiles.yaml", "profiles: {deep: {model: {codex: evil}}}\n")
+    else:
+        edit_addons_yaml(config_dir, lambda w: w["addons"].update({ID: False}))
 
     if stops:
-        with pytest.raises(agent.HarnessUnavailable, match="could not be read"):
-            _launch(gone, **fields)
+        with pytest.raises(agent.HarnessUnavailable, match=stops):
+            _launch(pins if pinned else None, **fields)
     else:
-        assert _launch(gone, **fields).harness
+        assert _launch(pins if pinned else None, **fields).harness
 
 
 def test_every_launch_is_handed_the_items_pins(home):
@@ -314,27 +369,61 @@ async def test_an_unrestorable_pin_stops_the_launch_and_says_why(home):
     assert "could not be fetched" in str(stop.value)
 
 
+_VIA = {
+    "tasks": {"base": AGENT},
+    "nodes": {f"via_{n}": _node(f"{n}:base") for n in ("release", "tools")},
+}
+
+
+def _store_of(config_dir, addons_dir, namespace):
+    return next(a.root for a in load.installed(config_dir, addons_dir) if a.namespace == namespace)
+
+
+def _task(extends):
+    return {"id": "x", "tasks": [{"id": "t", "extends": extends}]}
+
+
 @pytest.mark.parametrize(
-    "extends, pinned",
-    [("release:base", ["release"]), ("tools:base", ["release", "tools"])],
-    ids=["through-a-pinned-addon", "through-an-addon-not-touched-yet"],
+    "added, pinned, disable",
+    [
+        ({"id": "x", "extends": "via_release"}, ["release"], False),
+        ({"id": "x", "extends": "via_tools"}, ["release", "tools"], False),
+        ({"id": "x", "extends": "release:stage"}, ["release"], False),
+        (_task("release:base"), ["release"], False),
+        (_task("tools:base"), ["release", "tools"], False),
+        ({"id": "x", "extends": "release:stage"}, ["release"], True),
+        ({"id": "x", "extends": "release:stage"}, ["release"], "edited"),
+    ],
+    ids=[
+        "through-a-pinned-addon",
+        "through-an-addon-not-touched-yet",
+        "added-node-extends-an-addon",
+        "added-task-extends-an-addon",
+        "added-task-extends-an-addon-not-touched-yet",
+        "pinned-addon-disabled-since",
+        "another-addons-store-edited-since",
+    ],
 )
-def test_a_revision_resolves_against_pinned_addons(home, extends, pinned):
-    """A node a revision adds runs on the versions the item runs on; an add-on
-    the item had not read from yet joins its pins at the lock's version."""
+def test_a_revision_resolves_against_pinned_addons(home, added, pinned, disable):
+    """A node a revision adds runs on the versions the item runs on, whether it
+    names an add-on's component or a local one that does; an add-on the item
+    had not read from yet joins its pins at the lock's version. An add-on the
+    item pinned stays loaded for it after it is disabled, as at launch, and
+    another add-on's store edited since the library loaded is left out, not
+    the revision."""
     repo, config_dir, addons_dir = home
-    library = {
-        "tasks": {"base": AGENT},
-        "nodes": {"extra": {"kind": "exec", "tasks": [{"id": "t", "extends": extends}]}},
-    }
-    (config_dir / "library.yaml").write_text(json.dumps(library))
+    (config_dir / "library.yaml").write_text(json.dumps(_VIA))
     snapshot = MaterializedChain.from_json(_stored(_resolved(config_dir, addons_dir, "mine")))
     newer = _release("1.1.0", "o3")
     newer["library"]["tasks"]["base"]["prompt"] = "the 1.1.0 prompt"
     publish(repo, "release", **newer)
     _update(config_dir, addons_dir, [ID])
+    if disable is True:
+        edit_addons_yaml(config_dir, lambda w: w["addons"].update({ID: False}))
     live = TemplateLibrary.from_yaml_dir(config_dir, addons=load.installed(config_dir, addons_dir))
-    add = Add(after="n", node=AddedNode(id="x", extends="extra"), evidence="e")
+    if disable == "edited":
+        edit_store(_store_of(config_dir, addons_dir, "tools"), "library.yaml", "tasks: {}\n")
+    add = Add(after="n", node=AddedNode.model_validate(added), evidence="e")
 
     revised = revise(snapshot, ChangeSet(rationale="r", add=[add]), at=None, library=live)
 
@@ -342,3 +431,178 @@ def test_a_revision_resolves_against_pinned_addons(home, extends, pinned):
     assert revised.chain.chain.nodes[1].tasks[0].prompt == AGENT["prompt"]
     assert sorted(revised.chain.addons) == pinned
     assert revised.chain.addons["release"]["version"] == "1.0.0"
+
+
+@pytest.mark.parametrize("gone", ["disabled", "pinned-version-gone", "store-edited-since"])
+def test_a_revision_cannot_add_from_an_addon_that_is_not_loaded(home, gone):
+    """Refused with the resolver's message, never resolved against another
+    version, and never a library error (a 500) for a store edited since."""
+    repo, config_dir, addons_dir = home
+    snapshot = MaterializedChain.from_json(_stored(_resolved(config_dir, addons_dir, "mine")))
+    if gone == "disabled":
+        edit_addons_yaml(config_dir, lambda w: w["addons"].update({"tools@acme": False}))
+        added = _task("tools:base")
+    elif gone == "pinned-version-gone":
+        old = load.installed(config_dir, addons_dir)[0].root
+        publish(repo, "release", **_release("1.1.0", "o3"))
+        _update(config_dir, addons_dir, [ID])
+        drop_store(old)
+        added = {"id": "x", "extends": "release:stage"}
+    live = TemplateLibrary.from_yaml_dir(config_dir, addons=load.installed(config_dir, addons_dir))
+    if gone == "store-edited-since":
+        edit_store(_store_of(config_dir, addons_dir, "tools"), "library.yaml", "tasks: {}\n")
+        added = _task("tools:base")
+    add = Add(after="n", node=AddedNode.model_validate(added), evidence="e")
+
+    with pytest.raises(RevisionError, match=r"extends no (node|task) named"):
+        revise(snapshot, ChangeSet(rationale="r", add=[add]), at=None, library=live)
+
+
+#: A repo library's default `library.yaml` holds the task `base` and no node.
+_DIRECT = AddedNode(id="x", tasks=[{"id": "t", "extends": "app:base"}])
+
+
+@pytest.mark.parametrize(
+    "node, repo_id",
+    [
+        pytest.param(AddedNode(id="x", extends="via_app"), "app", id="own-repo"),
+        pytest.param(AddedNode(id="x", extends="via_app"), "web", id="another-repo"),
+        pytest.param(_DIRECT, "web", id="another-repo-direct"),
+        pytest.param(_DIRECT, None, id="no-repo"),
+    ],
+)
+def test_a_revision_adds_only_from_the_items_own_repo_library(home, tmp_path, node, repo_id):
+    """`app:base` is in app's repo library: an added node reads it only for
+    an item in app, whether through a local node or directly."""
+    repo, config_dir, addons_dir = home
+    accept_repo_library(config_dir, addons_dir, repo_with_library(tmp_path), "app")
+    repos = yaml.safe_load((config_dir / "repos.yaml").read_text())
+    repos["repos"].append({"path": "/web", "id": "web"})
+    (config_dir / "repos.yaml").write_text(yaml.safe_dump(repos))
+    via = {"kind": "exec", "tasks": [{"id": "t", "extends": "app:base"}]}
+    library = {"tasks": {"base": AGENT}, "nodes": {"via_app": via}}
+    (config_dir / "library.yaml").write_text(json.dumps(library))
+    snapshot = MaterializedChain.from_json(_stored(_resolved(config_dir, addons_dir, "mine")))
+    live = TemplateLibrary.from_yaml_dir(config_dir, addons=load.installed(config_dir, addons_dir))
+    changes = ChangeSet(rationale="r", add=[Add(after="n", node=node, evidence="e")])
+
+    if repo_id == "app":
+        revised = revise(snapshot, changes, at=None, library=live, repo_id=repo_id)
+        assert sorted(revised.chain.addons) == ["app", "release"]
+        return
+    with pytest.raises(RevisionError, match="visible only to items in app"):
+        revise(snapshot, changes, at=None, library=live, repo_id=repo_id)
+
+
+@pytest.fixture
+def two_repos(home, tmp_path):
+    """`home`, plus `app`'s repo library (skill `notes`, profile `deep`)
+    accepted, and `web` connected with no library. The pin of a chain that
+    read app's library, for an item filed before the scope rule."""
+    repo, config_dir, addons_dir = home
+    deep = {"profiles": {"deep": {"model": {"codex": "gpt-5"}}}}
+    app = repo_with_library(
+        tmp_path,
+        skills={"notes": "the app method"},
+        extra={".kraft/profiles.yaml": yaml.safe_dump(deep)},
+    )
+    store = accept_repo_library(config_dir, addons_dir, app, "app")
+    repos = yaml.safe_load((config_dir / "repos.yaml").read_text())
+    repos["repos"].append({"path": "/web", "id": "web"})
+    (config_dir / "repos.yaml").write_text(yaml.safe_dump(repos))
+    (library,) = [p for p in load.installed(config_dir, addons_dir) if p.repo_id == "app"]
+    return {"app": library.pin}, store, config_dir
+
+
+_SCOPED = "visible only to items in app"
+
+
+@pytest.mark.parametrize(
+    "fields, pinned, repo_id, read, stops",
+    [
+        pytest.param(
+            {"skill": "app:notes"}, False, "app", "the app method", None, id="own-repo-skill"
+        ),
+        pytest.param({"skill": "app:notes"}, False, "web", None, _SCOPED, id="another-repos-skill"),
+        pytest.param(
+            {"profile": "app:deep"}, False, "web", None, _SCOPED, id="another-repos-profile"
+        ),
+        pytest.param(
+            {"skill": "app:notes"},
+            True,
+            "web",
+            "the app method",
+            None,
+            id="pinned-before-the-change",
+        ),
+        pytest.param(
+            {"skill": "web:notes"},
+            False,
+            "app",
+            None,
+            "repository 'web' has no accepted repo library",
+            id="reserved-id-not-delegated",
+        ),
+        pytest.param(
+            {"skill": "superpowers:brainstorm"},
+            False,
+            "app",
+            "Follow the superpowers:brainstorm skill",
+            None,
+            id="another-tools-plugin",
+        ),
+        pytest.param(
+            {"profile": "app:deep"},
+            False,
+            "app",
+            None,
+            "profiles.yaml does not match its digest",
+            id="own-repo-edited-store",
+        ),
+        pytest.param(
+            {"skill": "kraft:spec"}, False, "app", "name: spec", None, id="kraft-id-is-not-reserved"
+        ),
+        pytest.param(
+            {"profile": "fast"}, False, "web", None, _SCOPED, id="fallback-into-another-repo"
+        ),
+        pytest.param({}, False, "web", "", None, id="unrelated-task-beside-that-fallback"),
+        pytest.param({}, False, None, "", None, id="instance-table-beside-that-fallback"),
+    ],
+)
+def test_a_launch_reads_only_its_own_repos_library(
+    request, two_repos, fields, pinned, repo_id, read, stops
+):
+    """Another repository's library, and a connected id with none, stop the
+    launch with that library's own reason, never delegated as another tool's
+    plugin. An own-repo store edited after it was accepted stops with the
+    digest's reason, never the scope's (D13). `kraft` or an add-on's namespace
+    as a repo id (set by hand, or minted before ids skipped them) reserves
+    nothing, and a `harnesses.yaml` fallback into another repository's library
+    stops only the launch that walks into it."""
+    pins, store, config_dir = two_repos
+    case = request.node.callspec.id
+    if stops and "digest" in stops:
+        edit_store(store, "profiles.yaml", "profiles: {deep: {model: {codex: evil}}}\n")
+    if case == "kraft-id-is-not-reserved":
+        repos = yaml.safe_load((config_dir / "repos.yaml").read_text())
+        repos["repos"].append({"path": "/kraft", "id": "kraft"})
+        (config_dir / "repos.yaml").write_text(yaml.safe_dump(repos))
+    if "fallback" in case:
+        fast = {"model": {"codex": "gpt-5"}, "fallback": [{"profile": "app:deep"}]}
+        harnesses = yaml.safe_load((config_dir / "harnesses.yaml").read_text()) or {}
+        harnesses["profiles"] = {**(harnesses.get("profiles") or {}), "fast": fast}
+        (config_dir / "harnesses.yaml").write_text(yaml.safe_dump(harnesses))
+    task = AgentTask.model_validate({"id": "t", **AGENT, **fields})
+
+    def launch():
+        return agent.resolve_agent_task(
+            task, None, steering={}, addons=pins if pinned else None, repo_id=repo_id
+        )
+
+    if read is not None:
+        assert read in (launch().method_text or "")
+        return
+    with pytest.raises((SkillError, agent.HarnessUnavailable)) as stop:
+        launch()
+    assert stops in str(stop.value)
+    assert (_SCOPED in str(stop.value)) == (stops == _SCOPED)

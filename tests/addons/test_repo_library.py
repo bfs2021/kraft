@@ -8,6 +8,8 @@ import yaml
 from support.addons import (
     AGENT,
     chain,
+    edit_addons_yaml,
+    edit_store,
     install,
     instance,
     make_collection,
@@ -166,14 +168,25 @@ def test_accept_writes_the_store_and_the_lock(app, home):
     assert repo_library.check(app, "app", *home).outcome == "current"
 
 
-def test_a_change_is_reviewed_against_the_accepted_version(app, home):
+@pytest.mark.parametrize("edited", [False, True], ids=["unchanged", "store-edited"])
+def test_a_change_is_reviewed_against_the_accepted_version(app, home, edited):
+    """A store edited since it was accepted is never what the change is
+    diffed against: the review says it could not compare."""
     _library(app)
-    repo_library.accept(repo_library.check(app, "app", *home), *home)
+    accepted = repo_library.check(app, "app", *home)
+    repo_library.accept(accepted, *home)
+    if edited:
+        store = home[1] / "store" / accepted.digest.removeprefix("sha256:")
+        edit_store(store, "library.yaml", "tasks: {base: {kind: agent, prompt: new words}}\n")
     _library(app, library={"tasks": {"base": {**AGENT, "prompt": "new words"}}})
 
     found = repo_library.check(app, "app", *home)
 
     assert found.outcome == "waiting"
+    if edited:
+        unread = "the accepted version's files could not be read to compare with"
+        assert found.review.reach[0] == unread
+        return
     assert found.review.old_version is not None
     assert found.review.old_version != found.review.new_version
     assert any("base" in line for line in (*found.review.reach, *found.review.content))
@@ -222,17 +235,25 @@ def test_a_repo_library_is_refused_for_what_an_addon_is(app, home, library, chai
     assert any(why in problem for problem in found.problems), found.problems
 
 
+def _alias_pending(home):
+    """An `as:` in addons.yaml that no update has applied yet."""
+    edit_addons_yaml(home[0], lambda c: c["addons"].update({"release@acme": {"as": "rel"}}))
+
+
 @pytest.mark.parametrize(
-    "repo_id, why",
+    "repo_id, why, prepare",
     [
-        pytest.param("kraft", "Kraft's own namespace", id="reserved"),
-        pytest.param("release", "add-on release@acme", id="an-addons-namespace"),
-        pytest.param("a" * 65, "longer than 64", id="too-long"),
+        pytest.param("kraft", "Kraft's own namespace", None, id="reserved"),
+        pytest.param("release", "add-on release@acme", None, id="an-addons-namespace"),
+        pytest.param("a" * 65, "longer than 64", None, id="too-long"),
+        pytest.param("rel", "add-on release@acme", _alias_pending, id="a-pending-alias"),
     ],
 )
-def test_an_id_that_cannot_be_a_namespace_is_refused(tmp_path, app, home, repo_id, why):
+def test_an_id_that_cannot_be_a_namespace_is_refused(tmp_path, app, home, repo_id, why, prepare):
     collection = make_collection(tmp_path, {"release": {"library": {"tasks": {"base": AGENT}}}})
     install(*home, collection, "release")
+    if prepare:
+        prepare(home)
     _library(app)
     repos = {"repos": [{"path": str(app), "id": repo_id}]}
 
@@ -252,6 +273,48 @@ def test_a_local_chain_through_the_library_is_in_the_review(app, home):
     found = repo_library.check(app, "app", *home)
 
     assert any(line.startswith("mine.") for line in found.review.reach), found.review.reach
+
+
+@pytest.mark.parametrize(
+    "named_by, refused",
+    [
+        pytest.param("local-chain", "chains/mine.yaml", id="local-chain"),
+        pytest.param("another-repos-entry", "repos.yaml: repos[web]", id="another-repos-entry"),
+        pytest.param("an-addons-skill", "notes@acme: library.yaml", id="an-addons-skill"),
+        pytest.param("its-own-entry", None, id="its-own-entry"),
+    ],
+)
+def test_a_first_accept_is_refused_while_something_outside_names_it(
+    tmp_path, app, home, named_by, refused
+):
+    """A connected id is reserved from connect onward; the first accept
+    names everything outside the repository that already reads it, rather
+    than silently capturing it. Its own entry is only reach."""
+    config_dir, addons_dir = home
+    _library(app, skills={"notes": "# notes\n"})
+    repos = read_yaml(config_dir / "repos.yaml")
+    if named_by == "local-chain":
+        write(config_dir, "chains/mine.yaml", yaml.safe_dump(chain("app:base")))
+    elif named_by == "another-repos-entry":
+        repos["repos"].append(
+            {"path": str(make_repo(tmp_path, "web")), "id": "web", "default_chain": "app:ship"}
+        )
+    elif named_by == "an-addons-skill":
+        task = {**AGENT, "skill": "app:notes"}
+        collection = make_collection(tmp_path, {"notes": {"library": {"tasks": {"t": task}}}})
+        install(config_dir, addons_dir, collection, "notes")
+    else:
+        repos["repos"][0]["default_chain"] = "app:ship"
+    write_yaml(config_dir / "repos.yaml", repos)
+
+    found = repo_library.check(app, "app", *home, repos=repos)
+
+    if refused is None:
+        assert found.outcome == "waiting", found.problems
+        assert any("is now read from this repo library" in r for r in found.review.reach)
+        return
+    assert found.outcome == "refused"
+    assert any(p.startswith(refused) for p in found.problems), found.problems
 
 
 def test_an_accept_after_the_lock_moved_writes_nothing(app, home):

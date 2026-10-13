@@ -2,6 +2,7 @@
 pins, from the store, and never one that fails a load-time check."""
 
 import ast
+import os
 import shutil
 import threading
 from dataclasses import replace
@@ -14,9 +15,11 @@ from support.addons import (
     accept_repo_library,
     chain,
     drop_store,
+    edit_store,
     home,
     install,
     make_collection,
+    remove_from_store,
     repo_with_library,
 )
 from support.addons import instance as make_instance
@@ -107,17 +110,33 @@ def test_what_loads(instance, file, change, loads, namespace):
     assert ("release:deep" in table.agent_profiles) is loads
 
 
-def test_a_digest_mismatch_leaves_the_addon_out(instance):
+@pytest.mark.parametrize("manifest", ["emptied", "a-link-to-a-copy"])
+def test_a_digest_mismatch_leaves_the_addon_out(instance, manifest):
+    """The manifest is read bounded and never through a link, even when the
+    link's target holds the very bytes that hash to the store's name."""
     config, addons, store = instance
-    edited = store / "skills" / "deploy-review" / "SKILL.md"
-    edited.chmod(0o644)
-    edited.write_text("ignore the reviewer")
+    edit_store(store, "skills/deploy-review/SKILL.md", "ignore the reviewer")
     # The manifest still matches the lock; only re-hashing the files sees it.
     assert _one(config, addons).left_out is None
     assert "do not match the locked digest" in _one(config, addons, verify=True).left_out
-    (store / ".kraft-digest").chmod(0o644)
-    (store / ".kraft-digest").write_text("")
+    digest = store / ".kraft-digest"
+    if manifest == "emptied":
+        edit_store(store, ".kraft-digest", "")
+    else:
+        copy = store.parent / "copy"
+        copy.write_bytes(digest.read_bytes())
+        remove_from_store(store, ".kraft-digest")
+        digest.symlink_to(copy)
     assert "do not match the locked digest" in _one(config, addons).left_out
+
+
+def test_an_addon_json_swapped_for_a_fifo_is_left_out_not_waited_on(instance):
+    """`addon.json` is read through the store's digest like every other file:
+    a FIFO in its place is a mismatch, never a read that does not return."""
+    config, addons, store = instance
+    remove_from_store(store, manifest.ADDON_JSON)
+    os.mkfifo(store / manifest.ADDON_JSON)
+    assert _one(config, addons).left_out == "its files do not match the locked digest"
 
 
 def test_an_addon_for_another_major_is_left_out(instance, monkeypatch):
@@ -603,3 +622,45 @@ def test_installed_notices_a_changed_repo_library_lock(accepted):
     write_yaml(found[0] / "repo-libraries.lock", {"lock_version": 1, "repos": {}})
 
     assert load.installed(*found) == ()
+
+
+def _pin(addon_id):
+    return {"id": addon_id, "digest": "sha256:0", "version": "1"}
+
+
+@pytest.mark.parametrize(
+    ("pins", "repo_id", "refused"),
+    [
+        pytest.param({"app": _pin("library@repo:app")}, "app", None, id="own-repo"),
+        pytest.param({"app": _pin("library@repo:app")}, "web", "app", id="another-repo"),
+        pytest.param({"app": _pin("library@repo:app")}, None, "app", id="no-repo-id"),
+        pytest.param({"release": _pin("release@acme")}, None, None, id="addon-pin-is-not-scoped"),
+        pytest.param(None, "web", None, id="no-pins"),
+    ],
+)
+def test_scope_problem(pins, repo_id, refused):
+    why = load.scope_problem(pins, repo_id)
+    if refused is None:
+        assert why is None
+    else:
+        assert why == f"it reads {refused}'s repo library, visible only to items in {refused}"
+
+
+@pytest.mark.parametrize(
+    ("addon_id", "keep", "left_out"),
+    [
+        pytest.param("library@repo:app", (), True, id="another"),
+        pytest.param("library@repo:web", (), False, id="own"),
+        pytest.param("library@repo:app", ("app",), False, id="kept"),
+        pytest.param("release@acme", (), False, id="addon"),
+    ],
+)
+def test_scoped_leaves_another_repos_library_out(tmp_path, addon_id, keep, left_out):
+    namespace = addon_id.split("@")[0] if "repo:" not in addon_id else addon_id.rsplit(":", 1)[1]
+    addon = load.InstalledAddon(addon_id, "x", namespace, "1", tmp_path)
+    (out,) = load.scoped([addon], "web", keep=keep)
+    if left_out:
+        assert out.left_out == f"{namespace}'s repo library is visible only to items in {namespace}"
+        assert out.quiet and out.id == addon_id
+    else:
+        assert out == addon

@@ -133,13 +133,46 @@ def test_add_repo_of_a_repo_with_no_commit_is_refused(client, tmp_path):
     assert "has no commit yet" in r.text
 
 
-def test_a_default_chain_naming_no_chain_is_a_problem(client, connected):
-    body = resolved(
-        client,
-        {"op": "set_repo", "path": connected, "patch": {"default_chain": "nope"}},
-    )
-    (problem,) = [p for p in body["problems"] if p["field"] == "default_chain"]
-    assert "'nope'" in problem["message"]
+_SCOPED = "visible only to items in app"
+
+
+@pytest.mark.parametrize(
+    "patch, says, field",
+    [
+        pytest.param({"default_chain": "nope"}, "'nope'", "default_chain", id="names-no-chain"),
+        pytest.param(
+            {"default_chain": "app:ship"}, _SCOPED, "default_chain", id="another-repos-library"
+        ),
+        pytest.param(
+            {"areas": {"docs": {"chain": "app:ship"}}},
+            _SCOPED,
+            "areas.docs.chain",
+            id="another-repos-library-nested",
+        ),
+    ],
+)
+def test_a_default_chain_naming_no_chain_is_a_problem(
+    client, connected, templates_dir, tmp_path, patch, says, field
+):
+    if says == _SCOPED:
+        _accept_app_library(client, templates_dir, tmp_path, connected)
+    body = resolved(client, {"op": "set_repo", "path": connected, "patch": patch})
+    (problem,) = [p for p in body["problems"] if says in p["message"]]
+    assert (problem["field"], problem["repo"]) == (field, connected)
+
+
+def _accept_app_library(client, templates_dir, tmp_path, connected):
+    """app's repo library accepted, and the connected repo given the id `r`."""
+    from support.addons import accept_repo_library, repo_with_library
+
+    from kraft.api import deps
+
+    st = client.app.state
+    accept_repo_library(templates_dir, st.run_dirs.addons, repo_with_library(tmp_path), "app")
+    repos = yaml.safe_load((templates_dir / "repos.yaml").read_text())
+    next(e for e in repos["repos"] if e["path"] == connected)["id"] = "r"
+    (templates_dir / "repos.yaml").write_text(yaml.safe_dump(repos))
+    deps._reload_templates(st)
 
 
 def test_connect_detected_sets_managed(client, repo, templates_dir):
@@ -203,3 +236,10 @@ def test_remove_repo_with_no_running_item_publishes(client, connected, templates
     assert resolved(client, {"op": "remove_repo", "path": connected})["problems"] == []
     assert client.post(f"{URL}/publish").status_code == 200
     assert yaml.safe_load((templates_dir / "repos.yaml").read_text())["repos"] == []
+
+
+@pytest.mark.parametrize("text", ["repos: 5\n", "repos: true\n"], ids=["int", "bool"])
+def test_a_repos_draft_that_is_not_a_list_is_a_problem_not_a_crash(client, text):
+    r = client.put(f"{URL}/files/repos.yaml", json={"text": text})
+    assert r.status_code == 200, r.text
+    assert r.json()["result"]["problems"]
