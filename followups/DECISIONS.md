@@ -58,3 +58,22 @@ Decisions made while running the four follow-ups (repo id vs add-on namespace, S
 - **D19. Final PR label: `release::minor`, with one combined `## Changelog` line.** *Why:* add-ons (#700) and repo libraries are in no tag (v2.0.0 predates 041216a), so nothing released breaks and `major` is wrong. Item 3 is a new capability, which is `minor`. `release::none` would drop the children's lines from the notes, and D6/D9 gathered those lines for this PR. The bump is the same as #700's alone. The user merges and can relabel.
 - **Merged:** #754 (item 4) at 266725e. Its CI was green on 9b60a85, and this session re-ran the B1, B2 and N1 mutations: each failed exactly its rows. A connected id with no library counts as "known" in the B2 skip too, because `repo_id` is read from the `library@repo:` id. Child 4 is doing the D16 follow-up (four test and label nits) from its restarted branch.
 - **Integration head 266725e:** main has not moved since f024b41, so there is no conflict. lint ok, intent 412/412, check-tests ok, and check_removals against origin/main passes on the final PR body.
+
+## Final PR #756 (integration branch → main)
+
+- **Opened** after #755 merged (34d11bc). Labelled `release::minor` (D19). Subscribed.
+- **CodeQL py/path-injection (high)** at `config.connected_entry`: item 4 moved main's `api/deps.py` path lookup there, so CodeQL counted the lines as new. Fixed in 596f72e with `os.path.realpath(os.path.expanduser(path))` instead of `Path.resolve()`. It gives the same string (probed on a symlink, a trailing `/`, `..` and `~`). The path is only compared, never opened. The repo's practice (#710) is to change the code, not dismiss the alert. CodeQL is green since.
+- **Review of the combined diff by three agents.** Fixed, each with a row whose mutation fails it:
+  - **R1-1:** an add-on left out by a fault (edited or gone store) broke the whole profile table when a `harnesses.yaml` fallback named it, stopping every launch. Such an add-on is now known, like an out-of-scope repo library, and a launch that reads it stops even unpinned. A fallback into a *disabled* add-on (quiet) stays the file's mistake.
+  - **R2-1:** `with_addons` raised `TemplateLibraryError` out of `revise` for a store edited since load: a 500 or a walk exception. It now leaves that add-on out with why.
+  - **R2-2:** a repos draft with a scalar `repos:` gave a 500. Fixed in `connected_ids` and in the draft's pre-existing `_changes`.
+  - **R1-2:** a FIFO swapped in for `.kraft/addon.json` hung `load.installed()`. `addon.json` is now read through `open_store`.
+  - **R1-3:** a skill name outside the add-on layout (`release:Deploy`) is no skill on any filesystem. Before, on APFS, lint passed and every launch reported tampering.
+  - **R1-4:** a plain file at `store/<digest>` is replaced.
+  - **R3:** frontend: no Copy to my library on a repo library's content. The `AddNodeMenu` typed-id check is restored. The trigger door is pinned to the visibility REQ. `a-launch-stops-only-for-an-addon-it-reads` now says "pinned or loaded and edited since", plus the harnesses fallback.
+  - **R3 docs** (13 pages, by an agent): `12.addons` plugin exception and refusal list, the addon-problems row, the repo-libraries message forms, the doctor row for a changed store, the HTTP API 422/409 reasons, the draft-ops copy refusal, the Templates badge, the full store-message forms, and the workspaces, how-it-runs, security and source-map nits.
+- **D20. Left as is, with why:**
+  - **R1-5** (a symlink swapped in between `is_symlink()` and `chmod`): whoever can write `run/addons/store` already controls Kraft's state, and the race only makes a target 0o755.
+  - **R2 hot path** (`repos.yaml` parsed three times per permission check): correct, and small next to the request.
+  - **R3 test-shape nits** (setup branching on the row id in two pin tests): the style of the tests they extend. Rewriting them is outside a fix.
+  - **R3 pin note:** `a-repo-id-is-never-another-tools-plugin` also pins the launch rows (`reserved-id-not-delegated`), not only the install refusal.
