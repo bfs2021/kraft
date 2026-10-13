@@ -48,3 +48,11 @@ Decisions made while running the four follow-ups (repo id vs add-on namespace, S
   - **B1:** `connected_ids`, `scope_problems` and `repository_steering` reserve every repos.yaml id, including `kraft` and ids that equal an add-on's namespace. Such ids can exist from before item 1, or be set by hand. A `kraft` id then stops every shipped `kraft:*` task.
   - **B2:** a harnesses.yaml fallback naming another repo's library profile makes `HarnessProfileTable.from_mapping` raise "not defined". That breaks every launch outside that repo and makes policy.yaml load as invalid. The spec says such config is reported, not enforced in the resolver.
 - **D18. A test gap a review mutation exposes on the core door is fixed in the same PR, not deferred as a nit.** In #754, `dispatch.py` passing `repo_id=None` survived the whole suite. *Why:* without that row, nothing proves the feature is wired at its main launch site; D16 is for polish. The other nits go to a follow-up PR (D16): the steering-preview test, nested-key labels, the multi-trigger tick, and wiring rows for the other launch sites.
+- **#754 fixes, re-review (9b60a85):** each fix is in the diff.
+  - B1: `connected_ids` leaves out `kraft` and `held_namespaces`; it is the one helper behind the reservation, `scope_problems` and `repository_steering`. One row per exclusion, each failing alone.
+  - B2: `from_mapping` skips the fallback check for a left-out repo library only. Three rows.
+  - N1: the dispatch wiring row (`repo_id=None` fails only `[own-repo-item]`).
+  - N2: docs.
+  - Checked: `scope_problems` passing `{}` for a non-Mapping `source` matches the old `_repo_entries`.
+  - Merges on green CI.
+- **D19. Final PR label: `release::minor`, with one combined `## Changelog` line.** *Why:* add-ons (#700) and repo libraries are in no tag (v2.0.0 predates 041216a), so nothing released breaks and `major` is wrong. Item 3 is a new capability, which is `minor`. `release::none` would drop the children's lines from the notes, and D6/D9 gathered those lines for this PR. The bump is the same as #700's alone. The user merges and can relabel.
