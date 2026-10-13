@@ -77,3 +77,6 @@ Decisions made while running the four follow-ups (repo id vs add-on namespace, S
   - **R2 hot path** (`repos.yaml` parsed three times per permission check): correct, and small next to the request.
   - **R3 test-shape nits** (setup branching on the row id in two pin tests): the style of the tests they extend. Rewriting them is outside a fix.
   - **R3 pin note:** `a-repo-id-is-never-another-tools-plugin` also pins the launch rows (`reserved-id-not-delegated`), not only the install refusal.
+- **#756 at 930fc25:** every check is green (tests on 3.12, 3.13 and 3.14, e2e, playwright, frontend, ui contract, vscode, lint, CodeQL, removals, release impact). There is no conflict with main and no open thread. GitHub reports it `blocked` only on review: `.github/CODEOWNERS` assigns `*` to @itsOmidKarami, so the owner's approval is what remains. This session does not approve or merge it.
+- **D21. The handoff branch is kept until #756 merges** (not deleted at PR open, as D14 first said). *Why:* it holds this log, the only full record of the batch's decisions, and a reviewer may want it while #756 is open. Delete `ccr-143df22f-uetbpy-handoff` after the merge.
+- The four child sessions are done and idle. They are left unarchived for the user to look at.
