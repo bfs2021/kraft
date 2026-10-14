@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_cfc34f98e0b0252c_forks_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-13 17:33 +0000
+            created at 2026-10-14 12:54 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -327,20 +327,22 @@
     <p class="run run2"><span class="n"><a id="t245" href="#t245">245</a></span><span class="t">        <span class="fst">f&quot;</span><span class="fst">AND status NOT IN (</span><span class="op">{</span><span class="nam">in_list</span><span class="op">(</span><span class="nam">CAP_SWEEP_LEAVES</span><span class="op">)</span><span class="op">}</span><span class="fst">)</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t246" href="#t246">246</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t247" href="#t247">247</a></span><span class="t">    <span class="nam">args</span> <span class="op">=</span> <span class="op">(</span><span class="nam">work_item_id</span><span class="op">,</span> <span class="nam">node_id</span><span class="op">,</span> <span class="op">*</span><span class="nam">hook_points</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t248" href="#t248">248</a></span><span class="t">    <span class="nam">capped</span> <span class="op">=</span> <span class="nam">conn</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span><span class="fst">f&quot;</span><span class="fst">SELECT id FROM worker_sessions WHERE </span><span class="op">{</span><span class="nam">where</span><span class="op">}</span><span class="fst">&quot;</span><span class="op">,</span> <span class="nam">args</span><span class="op">)</span><span class="op">.</span><span class="nam">fetchall</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t249" href="#t249">249</a></span><span class="t">    <span class="nam">conn</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t250" href="#t250">250</a></span><span class="t">        <span class="fst">f&quot;</span><span class="fst">UPDATE worker_sessions SET status = &#x27;capped_out&#x27;, exited_at = ? WHERE </span><span class="op">{</span><span class="nam">where</span><span class="op">}</span><span class="fst">&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t">        <span class="op">(</span><span class="nam">_now</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="op">*</span><span class="nam">args</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t252" href="#t252">252</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">    <span class="com"># The SPA only learns session status from worker_session_* events + hydrate;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">    <span class="com"># without this the chip stays on its last live status until the reconcile.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t255" href="#t255">255</a></span><span class="t">    <span class="key">for</span> <span class="nam">row</span> <span class="key">in</span> <span class="nam">capped</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t">        <span class="nam">events</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t">            <span class="nam">conn</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">            <span class="nam">work_item_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">            <span class="nam">SessionEvent</span><span class="op">.</span><span class="nam">WORKER_SESSION_EXITED</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">            <span class="op">{</span><span class="str">&quot;session_id&quot;</span><span class="op">:</span> <span class="nam">row</span><span class="op">[</span><span class="str">&quot;id&quot;</span><span class="op">]</span><span class="op">,</span> <span class="str">&quot;status&quot;</span><span class="op">:</span> <span class="str">&quot;capped_out&quot;</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t248" href="#t248">248</a></span><span class="t">    <span class="nam">capped</span> <span class="op">=</span> <span class="nam">conn</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t249" href="#t249">249</a></span><span class="t">        <span class="fst">f&quot;</span><span class="fst">SELECT id FROM worker_sessions WHERE </span><span class="op">{</span><span class="nam">where</span><span class="op">}</span><span class="fst"> ORDER BY rowid</span><span class="fst">&quot;</span><span class="op">,</span> <span class="nam">args</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t250" href="#t250">250</a></span><span class="t">    <span class="op">)</span><span class="op">.</span><span class="nam">fetchall</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t">    <span class="nam">conn</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t252" href="#t252">252</a></span><span class="t">        <span class="fst">f&quot;</span><span class="fst">UPDATE worker_sessions SET status = &#x27;capped_out&#x27;, exited_at = ? WHERE </span><span class="op">{</span><span class="nam">where</span><span class="op">}</span><span class="fst">&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">        <span class="op">(</span><span class="nam">_now</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="op">*</span><span class="nam">args</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t255" href="#t255">255</a></span><span class="t">    <span class="com"># The SPA only learns session status from worker_session_* events + hydrate;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t">    <span class="com"># without this the chip stays on its last live status until the reconcile.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t">    <span class="key">for</span> <span class="nam">row</span> <span class="key">in</span> <span class="nam">capped</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">        <span class="nam">events</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">            <span class="nam">conn</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">            <span class="nam">work_item_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">            <span class="nam">SessionEvent</span><span class="op">.</span><span class="nam">WORKER_SESSION_EXITED</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">            <span class="op">{</span><span class="str">&quot;session_id&quot;</span><span class="op">:</span> <span class="nam">row</span><span class="op">[</span><span class="str">&quot;id&quot;</span><span class="op">]</span><span class="op">,</span> <span class="str">&quot;status&quot;</span><span class="op">:</span> <span class="str">&quot;capped_out&quot;</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -350,7 +352,7 @@
             <a class="nav" href="z_cfc34f98e0b0252c_forks_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-13 17:33 +0000
+            created at 2026-10-14 12:54 +0000
         </p>
     </div>
 </footer>
