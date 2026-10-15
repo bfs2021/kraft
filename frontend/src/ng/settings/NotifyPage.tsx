@@ -7,8 +7,13 @@ import type { Notify } from "../../types";
 import { Inspector } from "../graph/Inspector";
 import { useResizable, useWidth } from "../graph/useResizable";
 import { HeaderActions } from "../shell/HeaderActions";
+import { SavedCue } from "./parts";
+import { SAVED } from "./savedWords";
+import { ALLOW, browserActive as browserIsActive, BROWSER_OFF, BROWSER_WHY, channelState, CHANNELS, CHECK_AGAIN, CLEAR_URL, CLEAR_URL_TEXT, CLEAR_URL_TITLE, eventMeaning, evLine, PERMISSION_LEAD, PERMISSION_SHORT, permissionNow, PROGRESS_NOTE, toggled, webhookActive as webhookOn, type Channel, type Permission } from "./notifyWords";
 import { Head, Kv, Note } from "../templates/panes/controls";
 import { Button } from "../ui/Button";
+import { useReason } from "../ui/Reason";
+import { WEBHOOK_OFF } from "../ui/reasons";
 import { Dialog } from "../ui/Dialog";
 import { Switch } from "../ui/Switch";
 import { showToast } from "../ui/Toast";
@@ -17,27 +22,33 @@ import "./notify.css";
 import "./settings.css";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-type Permission = NotificationPermission | "unsupported";
-const permissionNow = (): Permission => (typeof Notification === "undefined" ? "unsupported" : Notification.permission);
 
-const PERMISSION_TEXT: Record<Permission, string> = {
-  granted: "Allowed in this browser.",
-  default: "This browser has not been asked yet.",
-  denied: "Blocked in the browser's site settings. Allow notifications for this site there to use it.",
-  unsupported: "This browser has no notifications.",
+/** Whether a webhook URL has an http(s) scheme, the one thing worth refusing before the server does. */
+const isHttpUrl = (v: string) => {
+  try {
+    return /^https?:$/.test(new URL(v).protocol);
+  } catch {
+    return false;
+  }
 };
-const PERMISSION_SHORT: Record<Permission, string> = { granted: "allowed", default: "not asked yet", denied: "blocked", unsupported: "not supported" };
 
-type Channel = "webhook" | "browser";
+/** Send a test: with the reason beside it while it cannot send. On a card the reason sits above the button.
+ *  `quiet` keeps the reason for screen readers (a resting state); `describedBy` points the button at text
+ *  already on the page instead of repeating it. */
+function TestButton({ card, busy, why, quiet, describedBy, onClick }: { card?: string; busy?: boolean; why: string | null; quiet?: boolean; describedBy?: string; onClick: () => void }) {
+  const r = useReason(describedBy ? null : why, { quiet });
+  const attrs = describedBy && why ? { "aria-describedby": describedBy } : r.attrs;
+  const button = <Button className={card ? "nt-test" : undefined} aria-label={card ? `Send a test, ${card}` : undefined} disabled={busy || !!why} {...attrs} onClick={onClick}><Send size={12} aria-hidden /> Send a test</Button>;
+  return card ? <span className="nt-test-box">{r.note}{button}</span> : <>{button}{r.note}</>;
+}
+
 type Tab = "overview" | "config" | "yaml";
 
-const evLine = (ids: string[]) => (ids.length ? ids.join(", ") : "nothing");
-const toggled = (ids: string[], id: string) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
 
 /** Settings › Notifications (AreaNotifications): the two channels as cards, the
- *  selected one in the side pane. Switches and event toggles save on change; the
- *  webhook URL and link back are typed in the pane and sent with Save. The
- *  webhook is the install's; browser alerts are this browser's. */
+ *  selected one in the side pane. Everything saves on change: switches and event
+ *  toggles at once, the webhook URL and link back when their field is left or
+ *  Enter is pressed. The webhook is the install's; browser alerts are this browser's. */
 export function NotifyPage() {
   const [notify, setNotify] = useState<Notify | null>(null);
   const [errors, setErrors] = useState<Record<string, string | null>>({});
@@ -45,6 +56,7 @@ export function NotifyPage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [paneOpen, setPaneOpen] = useState(true);
   const [url, setUrl] = useState("");
+  const [urlBad, setUrlBad] = useState<string | null>(null);
   const [base, setBase] = useState<string | null>(null);
   const [browserOn, setBrowserOn] = useState(isEnabled);
   const [browserEvents, setBrowserEventsState] = useState(enabledEvents);
@@ -73,21 +85,28 @@ export function NotifyPage() {
     }
   };
   const link = base ?? notify.base_url ?? "";
-  const dirty = !!url.trim() || (base !== null && base.trim() !== (notify.base_url ?? ""));
-  const save = async () => {
-    const body: Parameters<typeof api.putNotify>[0] = {};
-    if (url.trim()) body.url = url.trim();
-    if (base !== null && base.trim() !== (notify.base_url ?? "")) body.base_url = base.trim();
-    if (await put("save", body)) {
-      setUrl("");
-      setBase(null);
-      showToast("Saved · writes notify.yaml");
-    }
+  const saved = (key: "url" | "base") => (ok: boolean) => {
+    if (!ok) return;
+    if (key === "url") setUrl("");
+    else setBase(null);
+    showToast("Saved · writes notify.yaml");
   };
-  const discard = () => {
-    setUrl("");
-    setBase(null);
-    err("save", null);
+  const commitUrl = async () => {
+    const v = url.trim();
+    if (!v) return setUrlBad(null);
+    if (!isHttpUrl(v)) return setUrlBad("Start it with http:// or https://");
+    setUrlBad(null);
+    saved("url")(await put("urlField", { url: v }));
+  };
+  const commitBase = async () => {
+    if (base === null || base.trim() === (notify.base_url ?? "")) return setBase(null);
+    const v = base.trim();
+    if (v && !isHttpUrl(v)) return err("baseField", "Start it with http:// or https://");
+    err("baseField", null);
+    saved("base")(await put("baseField", { base_url: v }));
+  };
+  const onEnter = (commit: () => Promise<void>) => (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") void commit();
   };
   const sendTest = async () => {
     setTesting(true);
@@ -103,8 +122,10 @@ export function NotifyPage() {
     }
   };
 
-  const webhookActive = notify.enabled && notify.url_set;
-  const browserActive = browserOn && permission === "granted";
+  const webhookActive = webhookOn(notify);
+  const browserActive = browserIsActive(browserOn, permission);
+  const webhookWhy = webhookActive ? null : WEBHOOK_OFF(notify.url_set, !!url.trim());
+  const browserWhy = browserActive ? null : !browserOn && permission === "granted" ? BROWSER_OFF : BROWSER_WHY[permission];
   const test = notify.last_test;
   const lastTest = test
     ? test.error
@@ -121,6 +142,7 @@ export function NotifyPage() {
     setBrowserEventsState(next);
   };
   const ask = async () => setPermission(await requestPermission());
+  const recheck = () => setPermission(permissionNow());
   const testBrowser = () => {
     try {
       const text = notificationText(NOTIFY_EVENTS[0], "Test alert");
@@ -151,18 +173,19 @@ export function NotifyPage() {
     ...notify.events.map((e) => `  - ${e}`),
   ].join("\n");
 
-  const channels: { id: Channel; icon: ReactNode; name: string; sub: string; active: boolean; events: string[]; extra: string; extraBad?: boolean; testing: boolean; canTest: boolean; test: () => void }[] = [
+  const typing = !!url.trim();
+  const channels: { id: Channel; icon: ReactNode; name: string; sub: string; active: boolean; events: string[]; extra: string; extraBad?: boolean; testing: boolean; why: string | null; quiet: boolean; test: () => void }[] = [
     {
-      id: "webhook", icon: <Webhook size={15} />, name: "Webhook", active: webhookActive, events: notify.events,
+      id: "webhook", icon: <Webhook size={15} />, name: CHANNELS.webhook, active: webhookActive, events: notify.events,
       sub: notify.url_set ? `URL stored · links to ${link || "no address"}` : "No URL set",
       extra: notify.url_set ? (test ? (test.error ? `last attempt ${ago(test.at)} failed` : `last sent ${ago(test.at)} · ${test.status} OK`) : "never sent") : "nothing can be sent",
-      extraBad: !notify.url_set || !!test?.error, testing, canTest: webhookActive, test: () => void sendTest(),
+      extraBad: !notify.url_set || !!test?.error, testing, why: webhookWhy, quiet: !typing, test: () => void sendTest(),
     },
     {
-      id: "browser", icon: <Monitor size={15} />, name: "This browser", active: browserActive, events: browserEvents,
-      sub: permission === "granted" ? "Alerts while this tab is in the background. This device only." : `${PERMISSION_TEXT[permission]} This device only.`,
+      id: "browser", icon: <Monitor size={15} />, name: CHANNELS.browser, active: browserActive, events: browserEvents,
+      sub: "Alerts while this tab is in the background. This device only.",
       extra: permission === "granted" ? (browserTest ? browserTestLine.replace(/^last /, "") : "") : PERMISSION_SHORT[permission],
-      extraBad: permission === "denied" || !!browserTest?.error, testing: false, canTest: browserActive, test: testBrowser,
+      extraBad: permission === "denied" || !!browserTest?.error, testing: false, why: browserWhy, quiet: true, test: testBrowser,
     },
   ];
 
@@ -180,7 +203,7 @@ export function NotifyPage() {
       </div>
     );
   };
-  const state = (on: boolean) => <span className={on ? "nt-on" : "nt-off"}>{on ? "active" : "inactive"}</span>;
+  const state = (on: boolean) => <span className={on ? "nt-on" : "nt-off"}>{channelState(on)}</span>;
 
   const overview = sel === "webhook" ? (
     <>
@@ -196,7 +219,7 @@ export function NotifyPage() {
     <>
       <Head>Status</Head>
       <Kv k="status" v={state(browserActive)} />
-      <Kv k="permission" v={PERMISSION_SHORT[permission]} />
+      {permission !== "granted" && <Kv k="permission" v={PERMISSION_SHORT[permission]} />}
       <Head>Notifies</Head>
       <Kv k="events" v={evLine(browserEvents)} mono />
       <Head>A notification looks like</Head>
@@ -221,8 +244,8 @@ export function NotifyPage() {
     <ul className="set-events nt-events">
       {NOTIFY_EVENTS.map((e) => (
         <li key={e.id} className="set-event">
-          <span className="set-event-text"><code>{e.id}</code><span className="set-hint">{e.label}</span></span>
-          <Switch label={`${e.id} (${who})`} checked={on.includes(e.id)} onChange={() => toggle(e.id)} />
+          <span className="set-event-text"><span>{eventMeaning(e.label)}</span><code className="set-hint is-mono">{e.id}</code></span>
+          <Switch label={`${eventMeaning(e.label)} (${who})`} checked={on.includes(e.id)} onChange={() => toggle(e.id)} />
         </li>
       ))}
     </ul>
@@ -233,53 +256,66 @@ export function NotifyPage() {
     <>
       <Head>Status</Head>
       <div className="nt-line">
-        <span className="set-event-text"><span>{notify.enabled ? "Active" : "Inactive"}</span><span className="set-hint">Kraft POSTs to the webhook when a run stops</span></span>
+        <span className="set-event-text"><span>{channelState(webhookActive)}</span><span className="set-hint">Kraft POSTs to the webhook when a run stops</span></span>
         <Switch label="Webhook notifications" checked={notify.enabled} onChange={(v) => void put("enabled", { enabled: v })} />
       </div>
       {problem("enabled")}
       <Head>Notifies</Head>
       {eventRows(notify.events, (id) => void put("events", { events: toggled(notify.events, id) }), "webhook")}
       {problem("events")}
-      <Note>Progress events are deliberately not offered. A notifier that fires on progress gets muted, and a muted channel is the same as no channel at all.</Note>
+      <Note>{PROGRESS_NOTE}</Note>
       <Head>Webhook URL</Head>
-      <input className="tpl-pf-input is-mono nt-input" type="password" autoComplete="off" aria-label="Webhook URL" placeholder={notify.url_set ? "•••••••• (unchanged)" : "https://ntfy.sh/your-topic"} value={url} onChange={(e) => setUrl(e.target.value)} />
-      <Note>{notify.url_set ? "A webhook URL is set. It is never shown again, because it usually carries a token. Kept in notify.yaml, 0600. Typing a new one replaces it." : "Usually carries a token in its path, so Kraft stores it 0600 and never displays it."}</Note>
+      <input className="tpl-pf-input is-mono nt-input" type="password" autoComplete="off" aria-label="Webhook URL" aria-invalid={!!urlBad} aria-describedby={urlBad ? "nt-url-bad" : undefined} placeholder={notify.url_set ? "•••••••• (unchanged)" : "https://ntfy.sh/your-topic"} value={url} onChange={(e) => { setUrl(e.target.value); setUrlBad(null); }} onBlur={() => void commitUrl()} onKeyDown={onEnter(commitUrl)} />
+      {urlBad && <p className="set-error" id="nt-url-bad">{urlBad}</p>}
+      {problem("urlField")}
+      <Note>{notify.url_set ? "A webhook URL is set. It is never shown again, because it usually carries a token. Kept in notify.yaml, 0600. Typing a new one replaces it. Saves when you leave the field." : "Usually carries a token in its path, so Kraft stores it 0600 and never displays it."}</Note>
       <Head>Link back</Head>
-      <input className="tpl-pf-input is-mono nt-input" aria-label="Link back" placeholder="http://192.168.1.20:8765" value={link} onChange={(e) => setBase(e.target.value)} />
+      <input className="tpl-pf-input is-mono nt-input" aria-label="Link back" placeholder="http://192.168.1.20:8765" value={link} onChange={(e) => setBase(e.target.value)} onBlur={() => void commitBase()} onKeyDown={onEnter(commitBase)} />
       <Note>What the notification links to. Kraft only knows its bind address, 0.0.0.0 on the LAN, so set the address your phone can reach.</Note>
-      {problem("save")}
+      {problem("baseField")}
       <Head>Test</Head>
       <div className="nt-line">
-        <Button disabled={testing || !webhookActive} onClick={() => void sendTest()}><Send size={12} aria-hidden /> Send a test</Button>
-        <span className="set-hint">{webhookActive ? lastTest : notify.url_set ? "set the channel active first" : "set a webhook URL first"}</span>
+        <TestButton busy={testing} why={webhookWhy} quiet={!url.trim()} onClick={() => void sendTest()} />
+        {webhookActive && <span className="set-hint">{lastTest}</span>}
       </div>
       {problem("test")}
       {notify.url_set && (
         <>
-          <div className="nt-gap"><Button variant="danger" onClick={() => setClearing(true)}>Clear URL</Button></div>
-          <Note>Removes the stored webhook and stops all sends.</Note>
+          <div className="nt-gap"><Button variant="danger" onClick={() => setClearing(true)}>{CLEAR_URL}</Button></div>
+          <Note>{CLEAR_URL_TEXT}</Note>
           {problem("url")}
         </>
       )}
     </>
   );
+  const lead = PERMISSION_LEAD[permission];
   const browserConfig = (
     <>
-      <Head>Status</Head>
-      <div className="nt-line">
-        <span className="set-event-text"><span>{browserOn ? "Active" : "Inactive"}</span><span className="set-hint">alerts on this device only</span></span>
-        <Switch label="Alerts on this device" checked={browserOn} disabled={permission === "unsupported"} onChange={toggleBrowser} />
+      <Head>Permission</Head>
+      <div id="nt-perm">
+        <p className="nt-lead">{lead.title}</p>
+        <p className="set-hint">{lead.text}</p>
+        {lead.steps && <ol className="nt-steps">{lead.steps.map((t) => <li key={t}>{t}</li>)}</ol>}
       </div>
-      <Note>{PERMISSION_TEXT[permission]} While this tab is in the background.</Note>
-      {permission === "default" && <div className="nt-gap"><Button onClick={() => void ask()}>Allow notifications</Button></div>}
-      <Head>Notifies</Head>
-      {eventRows(browserEvents, toggleBrowserEvent, "this browser")}
-      <Note>Independent of the webhook. Kept in this browser, so it saves at once and has no Save button.</Note>
-      <Head>Test</Head>
-      <div className="nt-line">
-        <Button disabled={!browserActive} onClick={testBrowser}><Send size={12} aria-hidden /> Send a test</Button>
-        <span className="set-hint">{browserTestLine}</span>
-      </div>
+      {permission === "default" && <div className="nt-gap"><Button onClick={() => void ask()}>{ALLOW}</Button></div>}
+      {permission === "denied" && <div className="nt-gap"><Button onClick={recheck}>{CHECK_AGAIN}</Button></div>}
+      {permission !== "unsupported" && (
+        <>
+          <Head>Alerts</Head>
+          <div className="nt-line">
+            <span className="set-event-text"><span>{channelState(browserActive)}</span><span className="set-hint">alerts on this device only</span></span>
+            <Switch label="Alerts on this device" checked={browserOn} disabled={permission !== "granted"} aria-describedby={permission === "granted" ? undefined : "nt-perm"} onChange={toggleBrowser} />
+          </div>
+          <Head>Notifies</Head>
+          {eventRows(browserEvents, toggleBrowserEvent, "this browser")}
+          <Note>Independent of the webhook. Kept in this browser, so it saves at once and has no Save button.</Note>
+          <Head>Test</Head>
+          <div className="nt-line">
+            <TestButton why={browserWhy} describedBy={permission === "granted" ? undefined : "nt-perm"} quiet onClick={testBrowser} />
+            {!browserWhy && <span className="set-hint">{browserTestLine}</span>}
+          </div>
+        </>
+      )}
     </>
   );
 
@@ -290,13 +326,13 @@ export function NotifyPage() {
     </>
   ) : tab === "config" ? (sel === "webhook" ? webhookConfig : browserConfig) : overview;
   const tabs = [{ value: "overview", label: "Overview" }, ...(sel ? [{ value: "config", label: "Config" }] : []), ...(sel !== "browser" ? [{ value: "yaml", label: "YAML" }] : [])];
-  const title = sel === "webhook" ? "Webhook" : sel === "browser" ? "This browser" : "notifications";
-  const sub = sel === "webhook" ? `notify.yaml · ${webhookActive ? "active" : "inactive"}` : sel === "browser" ? `this device only · ${browserActive ? "active" : "inactive"}` : "notify.yaml · saved on change";
+  const title = sel ? CHANNELS[sel] : "notifications";
+  const sub = sel === "webhook" ? "notify.yaml" : sel === "browser" ? "this device only" : `notify.yaml · ${SAVED.change}`;
 
   return (
     <div className="tpl-page" ref={frame}>
       <HeaderActions>
-        <span className="saved-note">saved on change</span>
+        <SavedCue word={SAVED.change} />
         <Button aria-pressed={!sel && tab === "yaml" && paneOpen} onClick={openYaml}>YAML</Button>
       </HeaderActions>
       <div className="tpl-area">
@@ -314,11 +350,11 @@ export function NotifyPage() {
                     <span className="nt-chips">{c.events.map((id) => <span key={id} className="nt-chip">{id}</span>)}</span>
                   </span>
                   <span className="nt-state">
-                    <span className="nt-status"><span className="nt-dot" aria-hidden />{c.active ? "active" : "inactive"}</span>
+                    <span className="nt-status"><span className="nt-dot" aria-hidden />{channelState(c.active)}</span>
                     {c.extra && <span className={`nt-extra${c.extraBad ? " is-bad" : ""}`}>{c.extra}</span>}
                   </span>
                 </button>
-                <Button className="nt-test" aria-label={`Send a test, ${c.name}`} disabled={c.testing || !c.canTest} onClick={c.test}><Send size={12} aria-hidden /> Send a test</Button>
+                <TestButton card={c.name} busy={c.testing} why={c.why} quiet={c.quiet} onClick={c.test} />
               </div>
             ))}
           </div>
@@ -336,18 +372,17 @@ export function NotifyPage() {
           onTab={(t) => setTab(t as Tab)}
           onCollapse={() => setPaneOpen(false)}
           onExpand={() => setPaneOpen(true)}
-          footer={sel === "webhook" && tab === "config" ? <><Button disabled={!dirty} onClick={discard}>Discard</Button><span className="bp-gap" /><Button variant="primary" disabled={!dirty} onClick={() => void save()}>Save</Button></> : undefined}
         >
           {body}
         </Inspector>
       </div>
       {clearing && (
         <Dialog
-          title="Clear the webhook URL?"
+          title={CLEAR_URL_TITLE}
           onClose={() => setClearing(false)}
-          footer={<><Button onClick={() => setClearing(false)}>Cancel</Button><Button variant="danger" onClick={() => { setClearing(false); void put("url", { url: "" }); }}>Clear URL</Button></>}
+          footer={<><Button onClick={() => setClearing(false)}>Cancel</Button><Button variant="danger" onClick={() => { setClearing(false); void put("url", { url: "" }); }}>{CLEAR_URL}</Button></>}
         >
-          <p>Removes the stored webhook and stops all sends.</p>
+          <p>{CLEAR_URL_TEXT}</p>
         </Dialog>
       )}
     </div>

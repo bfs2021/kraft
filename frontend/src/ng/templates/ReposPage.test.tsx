@@ -51,10 +51,12 @@ beforeEach(() => {
 const row = (name: string) => screen.getByRole("option", { name: new RegExp(`^${name},`) });
 
 describe("Repos page: the table", () => {
-  it("lists the repos with chain, steering, tests and state, the open count and the detected ones", async () => {
+  it("lists the repos with chain, whether each can run work, tests and state, the open count and the detected ones", async () => {
     vi.mocked(d.getDraft).mockImplementation(() => ok(reposView({ changes: [{ path: "/src/platform", kind: "change", summary: "policy", fields: ["policy"] }, { path: "/src/docs-site", kind: "add", summary: "" }] }, true)));
     mount();
     await screen.findByRole("listbox", { name: "Repos" });
+    // With repos listed, neither empty line shows.
+    expect(screen.queryByText(/No repos connected yet/)).toBeNull();
     // Open, not running: the server counts every item not ended, and the board's Running group is only some of them.
     expect(row("platform")).toHaveTextContent("enabled · 1 open");
     expect(row("platform")).not.toHaveTextContent("running");
@@ -64,9 +66,14 @@ describe("Repos page: the table", () => {
     expect(row("docs-site").querySelector(".rp-mark.is-add")).not.toBeNull();
     expect(row("product_root").querySelector(".rp-mark")).toBeNull();
     // A cell cut to one line carries the whole text in its title and is on the ellipsis allowlist.
-    const steer = within(row("product_root")).getByText("project-standards");
-    expect(steer).toHaveAttribute("title", "project-standards");
-    expect(steer).toHaveAttribute("data-allow-ellipsis");
+    const tests = within(row("product_root")).getByText("make test");
+    expect(tests).toHaveAttribute("title", "make test");
+    expect(tests).toHaveAttribute("data-allow-ellipsis");
+    // A repo with no setup command does not read as healthy: its fixture declares none.
+    const ready = within(row("product_root")).getByText("No setup");
+    expect(ready).toHaveClass("is-no");
+    expect(ready).toHaveAttribute("title", expect.stringContaining("first work item stops"));
+    expect(screen.queryByText("Steering")).toBeNull();
     expect(screen.getByRole("region", { name: "Detected, not connected" })).toHaveTextContent("plugins");
     expect(screen.getByText("DRAFT · 2 CHANGES")).toBeInTheDocument();
   });
@@ -78,7 +85,9 @@ describe("Repos page: the table", () => {
     expect(screen.queryByRole("region", { name: "Detected, not connected" })).toBeNull();
     expect(screen.queryByRole("option", { name: /^platform,/ })).toBeNull();
     await userEvent.type(screen.getByLabelText("Search repos"), "zzz");
-    expect(screen.getByText("No repo matches.")).toBeInTheDocument();
+    expect(screen.getByText("No match for “docszzz”.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(screen.getByLabelText("Search repos")).toHaveValue("");
   });
 
   it("opens the repo in the URL and moves the selection with a click", async () => {
@@ -280,6 +289,10 @@ describe("Repos page: connecting", () => {
 });
 
 describe("Repos page: the Config rows", () => {
+  /** Opens every group's "N defaults · show" line. */
+  const showDefaults = async () => {
+    for (const b of screen.queryAllByRole("button", { name: /defaults? · show/ })) await userEvent.click(b);
+  };
   const cleanPreview = () => vi.mocked(d.postOps).mockImplementation(() => ok({ ...reposView({}, true), ops: [] }));
 
   it("checks an edit with ?preview=1 first and sends it only when nothing new is wrong", async () => {
@@ -300,6 +313,7 @@ describe("Repos page: the Config rows", () => {
     vi.mocked(d.postOps).mockImplementation((_a, _k, _o, preview) => ok({ ...reposView({ problems: preview ? [problemAt("/src/platform", "allowed_tools", "'allowed_tools' cannot widen the inherited safety ceiling ['Read']; ['Bash'] is not allowed")] : [] }, true), ops: [] }));
     mount();
     await screen.findByRole("listbox", { name: "Repos" });
+    await showDefaults();
     await userEvent.click(screen.getByRole("button", { name: /^allowed tools, not set/ }));
     await userEvent.type(screen.getByRole("textbox", { name: "allowed tools" }), "Bash{Enter}");
     expect(await screen.findByText(/Refused: 'allowed_tools' cannot widen the inherited safety ceiling/)).toBeInTheDocument();
@@ -311,6 +325,7 @@ describe("Repos page: the Config rows", () => {
     cleanPreview();
     mount();
     await screen.findByRole("listbox", { name: "Repos" });
+    await showDefaults();
     const none = screen.getByRole("checkbox", { name: "No setup needed" });
     expect(none).not.toBeChecked();
     await userEvent.click(none);
@@ -328,10 +343,23 @@ describe("Repos page: the Config rows", () => {
     vi.mocked(d.getDraft).mockImplementation(() => ok(reposView({ resolved: { repos, detected: DETECTED } as never })));
     mount();
     await screen.findByRole("listbox", { name: "Repos" });
-    expect(screen.getByRole("button", { name: /^setup command, ""/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^setup command, none/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("checkbox", { name: "No setup needed" }));
     await waitFor(() => expect(d.postOps).toHaveBeenCalledTimes(2));
     expect(vi.mocked(d.postOps).mock.calls[0][2]).toEqual([{ op: "set_repo", path: "/src/platform", patch: { setup_command: null } }]);
+  });
+
+  it("groups the rows, folds those at their default into one line per group, and shows the YAML-only keys", async () => {
+    mount();
+    await screen.findByRole("listbox", { name: "Repos" });
+    const agents = screen.getByRole("region", { name: "Agents" });
+    expect(within(agents).queryByRole("button", { name: /^allowed tools/ })).toBeNull();
+    await userEvent.click(within(agents).getByRole("button", { name: /defaults? · show/ }));
+    expect(within(agents).getByRole("button", { name: /^allowed tools, not set/ })).toBeInTheDocument();
+    const yaml = screen.getByRole("region", { name: "Edited in YAML" });
+    expect(within(yaml).getByText("sandbox")).toBeInTheDocument();
+    await userEvent.click(within(yaml).getByRole("button", { name: "Edit sandbox in YAML" }));
+    expect(await screen.findByText(/Read-only\. Edit the whole file/)).toBeInTheDocument();
   });
 
   it("says a repo whose test command is \"\" has no tests and passes verify, where clearing it would stop its items", async () => {
@@ -348,6 +376,17 @@ describe("Repos page: the Config rows", () => {
     expect(vi.mocked(d.postOps).mock.calls[0][2]).toEqual([{ op: "set_repo", path: "/src/platform", patch: { test_command: null } }]);
   });
 
+  it("highlights the forge the entry names, `fake` included, not the first choice", async () => {
+    cleanPreview();
+    const repos = REPOS.map((r) => (r.name === "platform" ? { ...r, entry: { ...r.entry, forge: "fake" } } : r));
+    vi.mocked(d.getDraft).mockImplementation(() => ok(reposView({ resolved: { repos, detected: DETECTED } as never })));
+    mount();
+    await screen.findByRole("listbox", { name: "Repos" });
+    const forge = screen.getByRole("radiogroup", { name: "forge" });
+    expect(within(forge).getByRole("radio", { name: "fake" })).toBeChecked();
+    expect(within(forge).getByRole("radio", { name: "gitlab" })).not.toBeChecked();
+  });
+
   it("clears a value this repo sets with Reset, which sends null", async () => {
     cleanPreview();
     mount();
@@ -361,6 +400,7 @@ describe("Repos page: the Config rows", () => {
     cleanPreview();
     mount();
     await screen.findByRole("listbox", { name: "Repos" });
+    await showDefaults();
     await userEvent.click(screen.getByRole("button", { name: /^tasks running cap \(min\), 60/ }));
     await userEvent.clear(screen.getByLabelText("tasks running cap (min)"));
     await userEvent.type(screen.getByLabelText("tasks running cap (min)"), "45{Enter}");

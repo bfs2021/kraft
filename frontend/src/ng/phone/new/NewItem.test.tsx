@@ -40,8 +40,20 @@ describe("the new work item screen (G)", () => {
     mount();
     expect(await screen.findByRole("button", { name: "Create paused" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create paused" })).toHaveAccessibleDescription("Add a title to create it.");
+    // Not drawn on a fresh screen; drawn once the title was visited and left empty.
+    expect(screen.getByText("Add a title to create it.")).toHaveClass("ph-visually-hidden");
+    await userEvent.click(title());
+    await userEvent.tab();
+    expect(screen.getByText("Add a title to create it.")).not.toHaveClass("ph-visually-hidden");
     await userEvent.type(title(), "Add retry budget");
     expect(screen.getByRole("button", { name: "Create paused" })).toBeEnabled();
+  });
+
+  it("makes Create paused the primary button, with Create and start beside it", async () => {
+    mount();
+    expect(await screen.findByRole("button", { name: "Create paused" })).toHaveClass("ph-btn-primary");
+    expect(screen.getByRole("button", { name: "Create and start" })).not.toHaveClass("ph-btn-primary");
   });
 
   it("Create paused and Create and start send the same body except autostart", async () => {

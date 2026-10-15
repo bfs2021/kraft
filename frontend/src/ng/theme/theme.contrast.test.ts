@@ -80,6 +80,8 @@ describe("theme.css", () => {
       for (const r of ["--text", "--text-sub", "--text-muted"]) at(r, g, 4.5);
       at("--text-faint", g, 3);
     }
+    // Placeholders and chips sit on the raised --surface-2 (search kind chip, .item-input).
+    at("--text-muted", "--surface-2", 4.5);
     for (const g of ["--bg", "--surface"]) {
       at("--accent", g, 4.5);
       at("--stroke", g, 3);
@@ -113,5 +115,27 @@ describe("ui.css .btn-danger", () => {
   it.each(combos)("%s %s %s accent %s: the label clears 4.5 on the tinted pane", (s, m, a, x) => {
     const t = tokens(s, m, a, x);
     for (const g of ["--bg", "--side", "--surface"]) expect(contrast(t["--text"], over(t["--bad"], t[g]))).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe("draft and changed marks", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const base = readFileSync(join(here, "base.css"), "utf-8");
+  // The pair reads the two neutrals the floors above already hold to 4.5:1 (ink) and 3:1 (line).
+  it("--mark-change is the secondary text colour and --mark-change-line the stroke", () => {
+    expect(base).toContain("--mark-change: var(--text-sub); --mark-change-line: var(--stroke);");
+  });
+  // Amber is only "needs a human": a draft or changed selector never reads --warn.
+  it.each([
+    ["library/library.css", /^\.lib-(draft|filter-dot|mark\.is-change)\b/],
+    ["harnesses/harnesses.css", /^\.hn-(draft|field-help\.is-changed|input\.is-changed)\b/],
+    ["settings/policy/policy.css", /^\.pol-chip\.is-changed\b/],
+    ["settings/intake/intake.css", /^\.ink-chip\.is-changed\b/],
+    ["templates/panes/panes.css", /^\.cfg-(chip|dot)\.is-draft\b/],
+    ["shell/shell.css", /^\.ng-side-dot\.is-draft\b/],
+  ])("%s draft rules do not use --warn", (file, rule) => {
+    const lines = readFileSync(join(here, "..", file), "utf-8").split("\n").filter((l) => rule.test(l));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) expect(l).not.toContain("--warn");
   });
 });

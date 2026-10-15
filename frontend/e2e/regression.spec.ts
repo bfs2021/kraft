@@ -77,8 +77,6 @@ test("policy: a cap edited and published", async ({ page }) => {
 
 test("auto-intake: the interval edited and published", async ({ page }) => {
   await page.goto("/settings/auto-intake");
-  // The pane starts on its rail.
-  await page.getByRole("button", { name: "Expand bd ready" }).click();
   const before = (await (await page.request.get("/api/intake")).json()).interval_s;
   const minutes = before === 420 ? 6 : 7;
   await editCell(page, /^check every, minutes, \d+ min\. Edit$/, String(minutes));
@@ -103,7 +101,8 @@ test("notifications: send a test reports a result", async ({ page }) => {
   const pane = page.getByRole("complementary", { name: "Webhook pane" });
   // Nothing listens on port 9: the result is a failure with its reason.
   await pane.getByRole("textbox", { name: "Webhook URL" }).fill("http://127.0.0.1:9/hook");
-  await pane.getByRole("button", { name: "Save" }).click();
+  // The URL saves when the field is left.
+  await pane.getByRole("textbox", { name: "Link back" }).click();
   await expect.poll(async () => (await (await page.request.get("/api/notify")).json()).url_set).toBe(true);
   const on = pane.getByRole("switch", { name: "Webhook notifications" });
   if ((await on.getAttribute("aria-checked")) !== "true") await on.click();

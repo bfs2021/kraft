@@ -3,9 +3,9 @@ import { ValueCell } from "../../templates/draft/ValueCell";
 import { KEYS, SEVERITIES, SEVERITY_KEY, STUCK_KEY } from "./keys";
 import { PolicyCell, setValue, was } from "./PolicyCell";
 import { problemAt, type Ctx } from "./ctx";
-import { parse, raw, show } from "./units";
-
-const SOURCE: Record<string, string> = { loop: "the loop's own", node: "its node", chain: "its chain", defaults: "defaults:", maxima: "maxima:", loops: "loops:", default: "default:" };
+import { SectionHead } from "./SectionHead";
+import { LOOP_WINS } from "./sections";
+import { parse, raw, show, sourceWord } from "./units";
 
 /** Loops (Decisions §12): fix-loop defaults and maxima, which findings start another cycle, and what happens when an item is stuck. */
 export function Loops({ ctx }: { ctx: Ctx }) {
@@ -31,7 +31,7 @@ export function Loops({ ctx }: { ctx: Ctx }) {
 
   return (
     <>
-      <p className="pol-intro">Defaults for every fix loop that doesn&apos;t set its own, which findings start another cycle, and what happens when an item stops making progress.</p>
+      <SectionHead id="loops">Defaults for every fix loop that doesn&apos;t set its own, which findings start another cycle, and what happens when an item stops making progress.</SectionHead>
       <section className="pol-card" aria-label="Fix loops">
         <div className="pol-grid has-used">
           <span /><span className="pol-colh">default</span><span className="pol-colh">maximum</span><span className="pol-colh">used by</span>
@@ -48,10 +48,11 @@ export function Loops({ ctx }: { ctx: Ctx }) {
             <span className="pol-help">{live.length ? `all ${live.length} ${live.length === 1 ? "loop" : "loops"} in published chains · a chain or node may set its own` : "—"}</span>
           </div>
         </div>
+        <p className="pol-note">{LOOP_WINS}</p>
       </section>
 
       <section className="pol-card" aria-label="Every fix loop">
-        <h2 className="pol-h2">Every fix loop</h2>
+        <h3 className="pol-h2">Every fix loop</h3>
         <div className="pol-loops">
           <div className="pol-loop is-default" role="group" aria-label="Loops without their own entry">
             <span className="pol-k">every loop without its own entry</span>
@@ -64,11 +65,11 @@ export function Loops({ ctx }: { ctx: Ctx }) {
               <span className="pol-k" title={l.key}>{l.node} <span className="pol-chain">{l.chain}</span></span>
               <span className="pol-cell">
                 <ValueCell label={`${l.node} attempts`} value={raw("count", l.attempts.value)} display={show("count", l.attempts.value)} onCommit={(t) => setLoop(l.key, "max_attempts", t, "count")} />
-                <span className="pol-from">{SOURCE[l.attempts.source ?? ""] ?? l.attempts.source}</span>
+                <span className="pol-from">{sourceWord(l.attempts.source)}</span>
               </span>
               <span className="pol-cell">
                 <ValueCell label={`${l.node} wall clock`} value={raw("s-as-min", l.wall_clock_s.value)} display={show("s-as-min", l.wall_clock_s.value)} onCommit={(t) => setLoop(l.key, "wall_clock_s", t, "s-as-min")} />
-                <span className="pol-from">{SOURCE[l.wall_clock_s.source ?? ""] ?? l.wall_clock_s.source}</span>
+                <span className="pol-from">{sourceWord(l.wall_clock_s.source)}</span>
               </span>
               {entry(l.key)
                 ? <button type="button" className="pol-link" aria-label={`Remove the loops entry for ${l.node}`} onClick={() => void draft.ops([{ op: "remove_loop", key: l.key }])}>Remove entry</button>
@@ -78,7 +79,7 @@ export function Loops({ ctx }: { ctx: Ctx }) {
         </div>
         {stray.length > 0 && (
           <>
-            <h2 className="pol-h2">Not a loop in any chain</h2>
+            <h3 className="pol-h2">Not a loop in any chain</h3>
             <div className="pol-loops">
             {stray.map((e) => (
               <div key={e.key} className="pol-loop is-stray" role="group" aria-label={`Entry ${e.key}`}>
@@ -107,7 +108,7 @@ export function Loops({ ctx }: { ctx: Ctx }) {
       </section>
 
       <section className="pol-card" aria-label="When an item is stuck">
-        <h2 className="pol-h2">When an item is stuck</h2>
+        <h3 className="pol-h2">When an item is stuck</h3>
         <div className="pol-one">
           <span className="pol-k">auto-escalate</span>
           <span className="pol-chips" role="group" aria-label="Auto-escalate on stuck">

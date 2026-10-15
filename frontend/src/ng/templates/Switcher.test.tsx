@@ -59,6 +59,10 @@ describe("chain switcher", () => {
     expect(def.querySelector(".sw-dot")).toBeNull();
     await userEvent.type(screen.getByRole("textbox", { name: "Search chains" }), "quick");
     expect(within(list).getAllByRole("option")).toHaveLength(1);
+    await userEvent.type(screen.getByRole("textbox", { name: "Search chains" }), "zzz");
+    expect(within(list).getByText("No match for “quickzzz”.")).toBeInTheDocument();
+    await userEvent.click(within(list).getByRole("button", { name: "Clear" }));
+    expect(screen.getByRole("textbox", { name: "Search chains" })).toHaveValue("");
   });
 
   it("switches by keyboard with no draft open, without asking", async () => {
@@ -143,7 +147,7 @@ describe("chain settings footer", () => {
     const { unmount } = mount();
     const del = await screen.findByRole("button", { name: "Delete chain" });
     expect(del).toBeDisabled();
-    expect(del).toHaveAttribute("title", "Can't delete: /code/kraft default to it");
+    expect(del).toHaveAccessibleDescription("Can't delete: kraft default to it.");
     unmount();
 
     vi.mocked(d.getDraft).mockImplementation(() => ok(view(false)));

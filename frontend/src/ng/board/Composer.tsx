@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type InputHTMLAttributes } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import * as api from "../../api";
 import { repoName } from "../../format";
-import { humanSize } from "../../sizes";
+import { countedAgainst } from "../settings/storageWords";
 import { useStore } from "../../store";
 import type { ChainNode, Repo, SearchResult, TemplateSummary } from "../../types";
 import { chainsForRepo } from "../library/types";
@@ -14,6 +14,8 @@ import { Popover } from "../ui/Popover";
 import { showToast } from "../ui/Toast";
 import { Ticks } from "./Ticks";
 import { mod, sendOnModEnter } from "../keys";
+import { useReason } from "../ui/Reason";
+import { ADD_TITLE, CHOOSE_REPO } from "../ui/reasons";
 import { tip } from "../ui/Tooltip";
 
 type Kind = "spec" | "plan";
@@ -41,7 +43,7 @@ export function sayIfFiledPaused(autostart: boolean, body: Created): void {
   if (!autostart || (body.status !== "paused" && body.status !== "queued")) return;
   const held = body.slots?.storage;
   if (body.status === "queued" && held) {
-    showToast(`Queued: worktrees use ${humanSize(held.used_bytes)} of the ${humanSize(held.limit_bytes)} storage limit. It starts when space frees.`, 8000);
+    showToast(`Queued: ${countedAgainst(held.used_bytes, held.limit_bytes)}. It starts when space frees.`, 8000);
     return;
   }
   const s = body.slots;
@@ -63,7 +65,7 @@ const looksLikePath = (s: string) => /[/.]/.test(s) && !/\s/.test(s.trim());
 
 /** The composer at the top of the board (Decisions §7b, AreaBoard 37–62):
  *  title, a line of brief, repo, chain, an optional spec or plan, and a tick
- *  preview of what will run from the server's dry run. ⌘↵ creates and starts. */
+ *  preview of what will run from the server's dry run. ⌘↵ creates paused. */
 export function Composer({ repoFilter, onClose, onCreated }: { repoFilter: string; onClose: () => void; onCreated: (id: string) => void }) {
   const navigate = useNavigate();
   /** The enabled repos, null until read: an empty list is no repo to file to. */
@@ -75,6 +77,9 @@ export function Composer({ repoFilter, onClose, onCreated }: { repoFilter: strin
   const [preview, setPreview] = useState<{ run: DryRun } | { error: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const [tried, setTried] = useState(false);
+  useEffect(() => { if (d.title.trim()) setTried(false); }, [d.title]);
   const set = (p: Partial<Draft>) => setD((x) => ({ ...x, ...p }));
   const dirty = !!(d.title.trim() || d.brief.trim());
 
@@ -142,13 +147,19 @@ export function Composer({ repoFilter, onClose, onCreated }: { repoFilter: strin
   const gates = run ? run.gates.length : full.filter((n) => n.kind === "gate").length;
   const repo = repos?.find((r) => r.path === d.repo);
   const ok = !!d.title.trim() && !!d.repo && !busy && !(preview && "error" in preview);
+  // Quiet until a create is refused: a fresh composer shows its reassurance, not a complaint.
+  const why = useReason(busy || ok || (preview && "error" in preview) || (repos && repos.length === 0) ? null : !d.title.trim() ? ADD_TITLE : CHOOSE_REPO, { quiet: !tried });
+  const refuse = () => {
+    setTried(true);
+    if (!d.title.trim()) titleRef.current?.focus();
+  };
 
   return (
-    <section className="composer" aria-label="New work item" onKeyDown={sendOnModEnter(() => create(true), !busy)}>
+    <section className="composer" aria-label="New work item" onKeyDown={sendOnModEnter(() => create(false), ok, refuse)}>
       <div className="composer-row">
         <NodeGlyph kind="slot" size="sm" mark="add" />
-        <input className="composer-title" aria-label="Title" placeholder="Title" autoFocus value={d.title} onChange={(e) => set({ title: e.target.value })} />
-        <span className="composer-hint">{mod("↵")} create and start</span>
+        <input ref={titleRef} className="composer-title" aria-label="Title" placeholder="Title" autoFocus value={d.title} onChange={(e) => set({ title: e.target.value })} />
+        <span className="composer-hint">{mod("↵")} create paused</span>
       </div>
       <div className="composer-indent">
         <textarea className="composer-brief" aria-label="Brief" placeholder="A line of brief. Every node reads it." rows={1} value={d.brief} onChange={(e) => set({ brief: e.target.value })} />
@@ -195,7 +206,8 @@ export function Composer({ repoFilter, onClose, onCreated }: { repoFilter: strin
             </span>
             <button type="button" className="board-select-all" title="Continue on the full page" onClick={() => more(false)}>More options ⤢</button>
             <button type="button" className="board-select-all" onClick={leave}>Cancel</button>
-            <CreateSplit disabled={!ok} onCreate={create} />
+            {why.note}
+            <CreateSplit disabled={!ok} describedBy={why.attrs["aria-describedby"]} onCreate={create} />
           </>
         )}
       </div>
@@ -207,7 +219,7 @@ export function Composer({ repoFilter, onClose, onCreated }: { repoFilter: strin
  *  The toggle opens on focus or click, and focus stays on it; Enter, Space or
  *  ↓ there opens it with focus on Create and start, as the item page's main
  *  button does. Escape hands focus back to the toggle without reopening it. */
-export function CreateSplit({ disabled, onCreate }: { disabled: boolean; onCreate: (start: boolean) => void }) {
+export function CreateSplit({ disabled, describedBy, onCreate }: { disabled: boolean; describedBy?: string; onCreate: (start: boolean) => void }) {
   const group = useRef<HTMLSpanElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -226,7 +238,7 @@ export function CreateSplit({ disabled, onCreate }: { disabled: boolean; onCreat
   };
   return (
     <span ref={group} className="composer-split">
-      <button type="button" className="btn btn-secondary composer-create" disabled={disabled} onClick={() => onCreate(false)}>Create paused</button>
+      <button type="button" className="btn btn-secondary composer-create" disabled={disabled} aria-describedby={describedBy} onClick={() => onCreate(false)}>Create paused</button>
       <button
         ref={toggle}
         type="button"
@@ -235,6 +247,7 @@ export function CreateSplit({ disabled, onCreate }: { disabled: boolean; onCreat
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
+        aria-describedby={describedBy}
         onFocus={() => (quiet.current ? (quiet.current = false) : setOpen(true))}
         onClick={() => setOpen(true)}
         onKeyDown={(e) => {

@@ -64,6 +64,14 @@ describe("Review & publish pane", () => {
     const { onFix } = mount({ result: { problems: [{ path: "lint", field: null, message: "Value error, 'steps' must not be empty", file: "f", line: 3, col: 5 }] } });
     expect(screen.getByText("✕ doesn't resolve · 1 problem block publishing")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Publish" })).toHaveAccessibleDescription("Fix the 1 problem first.");
+    // The reason is body text above the buttons, not sub-text beside them.
+    expect(screen.getByText("Fix the 1 problem first.")).toHaveClass("tpl-rv-why");
+    expect(screen.getByText("'steps' must not be empty")).toBeInTheDocument();
+    // The YAML diff has the pane to itself: the problems shrink to one line that goes back to them.
+    await userEvent.click(screen.getByRole("tab", { name: "YAML diff" }));
+    expect(screen.queryByText("'steps' must not be empty")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "See them →" }));
     expect(screen.getByText("'steps' must not be empty")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Fix →" }));
     expect(onFix).toHaveBeenCalledWith("lint", expect.objectContaining({ path: "lint" }));
@@ -128,7 +136,7 @@ describe("Review & publish pane for an area (W15)", () => {
   let toasted: ReturnType<typeof vi.spyOn>;
   beforeEach(() => void (toasted = vi.spyOn(toast, "showToast").mockImplementation(() => {})));
 
-  function mountArea(o: { result?: Partial<Result>; stale?: StaleBody | null } = {}) {
+  function mountArea(o: { result?: Partial<Result>; stale?: StaleBody | null } = {}, label?: (path: string) => string | undefined) {
     const draft = {
       view: { ...DEFAULT_VIEW, area: "intake", key: "intake", draft: true, files, published, result: { ...DEFAULT_VIEW.result, changes: [], problems: [], ...o.result } },
       stale: o.stale ?? null,
@@ -137,7 +145,7 @@ describe("Review & publish pane for an area (W15)", () => {
       discard: vi.fn(),
     } as unknown as ConfigDraft;
     const cb = { onCollapse: vi.fn(), onExpand: vi.fn(), onFix: vi.fn(), onHighlight: vi.fn(), onDone: vi.fn() };
-    render(<ReviewPane draft={draft} scope={{ area: "intake", key: "intake" }} area={AREA} published={undefined} open size={SIZE} {...cb} />);
+    render(<ReviewPane draft={draft} scope={{ area: "intake", key: "intake" }} area={{ ...AREA, label }} published={undefined} open size={SIZE} {...cb} />);
     return { draft, ...cb };
   }
 
@@ -150,6 +158,15 @@ describe("Review & publish pane for an area (W15)", () => {
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(draft.publish).toHaveBeenCalledWith({ reload: true });
     expect(toasted).toHaveBeenCalledWith("Published policy · applies now");
+  });
+
+  it("shows the area's label for a change, with the raw key as a second line", async () => {
+    const label = (k: string) => (k === "defaults.work_item.budget_usd" ? "work item dollars default" : undefined);
+    const { draft } = mountArea({ result: { changes: [{ path: "defaults.work_item.budget_usd", kind: "change", summary: "10 → 20", file: "policy.yaml" }, { path: "interval_s", kind: "change", summary: "300 → 60", file: "intake.yaml" }] } }, label);
+    expect(draft).toBeTruthy();
+    const named = screen.getByRole("button", { name: /work item dollars default/ });
+    expect(named.querySelector(".tpl-rv-key")).toHaveTextContent("defaults.work_item.budget_usd");
+    expect(screen.getByRole("button", { name: /interval_s/ }).querySelector(".tpl-rv-key")).toBeNull();
   });
 
   it("shows the YAML diff as one block per file that changed, from the published text the answer carries", async () => {

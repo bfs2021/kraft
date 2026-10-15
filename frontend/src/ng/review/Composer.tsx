@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReviewThread, ThreadLabel } from "../../types";
 import { Button } from "../ui/Button";
+import { useReason } from "../ui/Reason";
+import { COMMENT_NEEDS_TEXT } from "../ui/reasons";
 import { Markdown } from "../ui/Markdown";
 import { IconButton } from "../ui/IconButton";
-import { X } from "../icons";
+import { Check, X } from "../icons";
 import { isMixed, isOneLine, rangeName, startSideOf, type LineRange } from "./range";
 import { LABELS, codeBlock } from "./Thread";
 import { mod, sendOnModEnter } from "../keys";
@@ -68,6 +70,7 @@ export function Composer({ target, lines, onCollapse, drafts, editing, onSubmit,
   };
   const dirty = !!(d.body.trim() || d.suggest !== null);
   const ready = !!d.body.trim() && !busy;
+  const noText = useReason(d.body.trim() ? null : COMMENT_NEEDS_TEXT);
   // One ⌘↵ handler, on the wrapper, for both boxes: a second one on a box
   // would send twice before React re-renders `ready`.
   const send = sendOnModEnter(() => submit(), ready);
@@ -115,12 +118,13 @@ export function Composer({ target, lines, onCollapse, drafts, editing, onSubmit,
         }}>
           {LABELS.map(([k, text], i) => (
             <button key={text} ref={(el) => void (chips.current[i] = el)} type="button" role="radio" aria-checked={d.label === k} tabIndex={d.label === k ? 0 : -1} className={`rv-chip${d.label === k ? " is-on" : ""}`} onClick={() => set({ label: k })}>
+              {d.label === k && <Check size={12} aria-hidden />}
               {text}
             </button>
           ))}
         </span>
         <span className="rv-spacer" />
-        <button type="button" className="rv-chip" aria-pressed={preview} onClick={() => setPreview((p) => !p)}>{preview ? "Continue editing" : "Preview"}</button>
+        <button type="button" className="rv-viewed-btn" aria-pressed={preview} onClick={() => setPreview((p) => !p)}>{preview ? "Continue editing" : "Preview"}</button>
       </div>
       {preview ? (
         <div className="rv-preview"><Markdown text={d.body || "Nothing to preview"} code={codeBlock} /></div>
@@ -163,7 +167,8 @@ export function Composer({ target, lines, onCollapse, drafts, editing, onSubmit,
             <Button aria-pressed={d.suggest !== null} disabled={gap && d.suggest === null} onClick={() => set({ suggest: d.suggest === null ? lines.join("\n") : null, wrote: undefined })}>± Suggest change</Button>
           )}
           <Button onClick={() => (dirty ? setAsking(true) : cancel())}>Cancel</Button>
-          <Button variant="primary" disabled={!ready} title={d.body.trim() ? undefined : "A comment needs some text"} onClick={submit}>
+          {noText.note}
+          <Button variant="primary" disabled={!ready} {...noText.attrs} onClick={submit}>
             {editing ? "Save" : "Add to review"}
           </Button>
         </div>

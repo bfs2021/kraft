@@ -3,13 +3,15 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { detailOf, request } from "../../http";
 import { useConfigDraft, type ConfigDraft } from "../../templates/draft/useConfigDraft";
 import { problemText } from "../../templates/problems";
-import { FIELDS, FORGES, NO_TESTS, patchFor, sourceOf, valueOf, type RepoField } from "../../templates/repos/fields";
-import { setRepo } from "../../templates/repos/RepoConfig";
+import { readiness } from "../../templates/repos/evidence";
+import { FIELDS, forgeOptions, patchFor, sourceOf, valueOf, type RepoField } from "../../templates/repos/fields";
+import { setEnabled, setRepo } from "../../templates/repos/RepoConfig";
 import { harnessChoices, steeringChoices } from "../../templates/choices";
 import { useHarnessOptions } from "../../templates/panes/useHarnessOptions";
 import { useLibrary } from "../../templates/useLibrary";
 import { problemsOf, repoName, reposOf, runningOf, type RepoView } from "../../templates/repos/types";
 import { showToast } from "../../ui/Toast";
+import { NoMatch } from "../../ui/NoMatch";
 import { ConfirmSheet, useSheet } from "../nav/Sheet";
 import { AreaScreen } from "./AreaScreen";
 import { Group, useEditor, type RowSpec } from "./kit";
@@ -39,13 +41,14 @@ export function ReposList() {
       {draft.status === "error" && <p className="ph-error" role="alert">The repos could not be read.</p>}
       {error && <p className="ph-error" role="alert">{error}</p>}
       {data && data.repos.length === 0 && <p className="ph-empty">No repository is connected. Run <code>kraft repo connect</code> in a repo on the machine, or connect one from a computer.</p>}
-      {data && data.repos.length > 0 && (
+      {data && data.repos.length > 0 && !shown.length && <NoMatch className="ph-empty" query={params.get("q") ?? ""} onClear={() => { const n = new URLSearchParams(params); n.delete("q"); setParams(n, { replace: true }); }} />}
+      {data && shown.length > 0 && (
         <Group
           title="Connected"
           rows={shown.map((r): RowSpec => ({
             key: r.path, label: repoName(r), mono: true, to: url(r),
-            sub: `${r.path} · chain ${String(r.entry.default_chain ?? "default")}${r.entry.test_command === "" ? ` · ${NO_TESTS}` : r.entry.test_command ? ` · ${String(r.entry.test_command)}` : ""}`,
-            chips: [{ label: r.entry.enabled === false ? "off" : "on", tone: r.entry.enabled === false ? undefined : "ok" }, ...(running[r.path] ? [{ label: `${running[r.path]} open` }] : []), ...(problemsOf(draft.view!.result, r.path).length ? [{ label: "problem", tone: "bad" as const }] : [])],
+            sub: r.path, subCut: true, value: String(r.entry.default_chain ?? "default"),
+            chips: [{ label: readiness(r.entry).word, tone: readiness(r.entry).ok ? "ok" as const : "warn" as const }, { label: r.entry.enabled === false ? "off" : "on", tone: r.entry.enabled === false ? undefined : "ok" }, ...(running[r.path] ? [{ label: `${running[r.path]} open` }] : []), ...(problemsOf(draft.view!.result, r.path).length ? [{ label: "problem", tone: "bad" as const }] : [])],
           }))}
         />
       )}
@@ -86,7 +89,7 @@ export function RepoView() {
     const shown = (v === "" && f.empty) || f.show(f.key === "steering" ? repo!.resolved.steering : v) || f.fallback || "not set";
     const base: RowSpec = { key: f.key, label: f.label, value: shown, sub: sourceOf(repo!, f), changed: changed(f.key.replace(/^policy\./, "policy")) };
     if (f.choice) {
-      const options = (f.choice === "chain" ? chains : FORGES).map((x) => ({ value: x, label: x }));
+      const options = (f.choice === "chain" ? chains : forgeOptions(v)).map((x) => ({ value: x, label: x }));
       return { ...base, onEdit: () => edit({ kind: "choice", title: f.label, value: typeof v === "string" ? v : null, options, set: (x) => sendTo(draft, repo!, f)(x) }) };
     }
     const choices = f.choices === "steering" ? steeringChoices(library) : f.choices === "harnesses" ? harnessChoices(typeof opts === "string" ? null : opts.harnesses) : [];
@@ -111,7 +114,7 @@ export function RepoView() {
         <>
           <Group
             rows={[
-              { label: "enabled", sw: repo.entry.enabled !== false, changed: changed("enabled"), onSwitch: (on) => void setRepo(draft, repo, { enabled: on }).then((e) => e && showToast(e)) },
+              { label: "enabled", sw: repo.entry.enabled !== false, changed: changed("enabled"), onSwitch: (on) => void setEnabled(draft, repo, on).then((e) => e && showToast(e)) },
               ...(running ? [{ label: "open items", value: String(running) } as RowSpec] : []),
               ...FIELDS.map(rowOf),
             ]}

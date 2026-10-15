@@ -2,15 +2,21 @@ import { ChevronRight, Pencil, Plus, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { showToast } from "../../ui/Toast";
+import { breakable } from "../ui/breakable";
 import { notListed, unlisted } from "../../ui/Combobox";
 import { ChoiceSheet, EditSheet, useSheet, type Listed, type Option } from "../nav/Sheet";
 import "./areas.css";
+
+/** What a phone says when an area's file does not load: its YAML view is read-only here, so the repair is elsewhere. */
+export const repairElsewhere = (file: string) => `The phone's YAML view is read-only. Fix ${file} on the desktop (Settings, YAML), or in the file on the machine running Kraft.`;
 
 /** One row of an area (the prototype's row): a label with a sub line, a value, and what a tap does. */
 export interface RowSpec {
   key?: string;
   label: string;
   sub?: string;
+  /** The sub line is one truncated line (a path), whole in its title. */
+  subCut?: boolean;
   value?: string;
   mono?: boolean;
   /** The draft differs from what is published: the value turns amber, with the word for a screen reader. */
@@ -22,7 +28,7 @@ export interface RowSpec {
   /** A switch row: the whole row is the control. */
   sw?: boolean;
   onSwitch?: (on: boolean) => void;
-  chips?: { label: string; tone?: "ok" | "warn" | "bad" }[];
+  chips?: { label: string; tone?: "ok" | "warn" | "bad" | "change" }[];
   icon?: LucideIcon;
   disabled?: boolean;
   danger?: boolean;
@@ -42,15 +48,15 @@ function RowBody({ r }: { r: RowSpec }) {
       {r.lead}
       {Icon && <span className="ph-row-icon"><Icon size={15} aria-hidden="true" /></span>}
       <span className="ph-row-text">
-        <span className={`ph-row-label${r.mono ? " ph-mono" : ""}`}>{r.label}</span>
-        {r.sub && <span className="ph-row-hint">{r.sub}</span>}
+        <span className={`ph-row-label${r.mono ? " ph-mono" : ""}`}>{r.mono ? breakable(r.label) : r.label}</span>
+        {r.sub && <span className={`ph-row-hint${r.subCut ? " ph-row-cut" : ""}`} title={r.subCut ? r.sub : undefined}>{r.subCut ? breakable(r.sub) : r.sub}</span>}
         {r.error && <span className="ph-row-error" role="alert">{r.error}</span>}
       </span>
       {r.selected && <span className="ph-row-check" aria-hidden="true">✓</span>}
       {r.chips && <span className="ph-chips-end">{r.chips.map((c) => <span key={c.label} className={`ph-chipword${c.tone ? ` ph-tone-${c.tone}` : ""}`}>{c.label}</span>)}</span>}
       {r.value != null && r.value !== "" && (
         <span className={`ph-row-value${r.changed ? " ph-is-changed" : ""}${r.mono ? " ph-mono" : ""}`}>
-          {r.value}
+          {r.mono ? breakable(r.value) : r.value}
           {r.changed && <span className="ph-visually-hidden"> (changed)</span>}
         </span>
       )}

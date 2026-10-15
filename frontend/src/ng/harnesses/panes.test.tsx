@@ -14,7 +14,7 @@ describe("harness pane", () => {
     serve(view(resolved()));
     renderPage("?harness=gemini");
     const p = await pane("gemini");
-    expect(within(p).getByText("not on PATH")).toBeInTheDocument();
+    expect(within(p).getByText("Not on PATH")).toBeInTheDocument();
     expect(within(p).getByRole("switch", { name: "Disable gemini" })).toBeChecked();
     expect(within(p).getByRole("textbox", { name: "executable" })).toHaveValue("");
     expect(within(p).getByRole("textbox", { name: "default model" })).toHaveValue("");
@@ -95,7 +95,7 @@ describe("harness pane", () => {
     ]);
   });
 
-  it("a refusal is shown in the pane, and a changed harness turns its fields amber", async () => {
+  it("a refusal is shown in the pane, and a changed harness marks its fields as changed", async () => {
     serve(view(resolved(), { changes: [{ path: "harnesses.claude", kind: "change", summary: "enabled" }] }), {
       opsAnswer: () => new Response(JSON.stringify({ detail: "executable is a command name or path, or null" }), { status: 422 }),
     });
@@ -110,6 +110,8 @@ describe("harness pane", () => {
     const server = serve(view(resolved()));
     renderPage("?harness=claude");
     const p = await pane("claude");
+    expect(within(p).getByRole("heading", { name: "Who may use it" })).toBeInTheDocument();
+    expect(within(p).queryByRole("heading", { name: "Access" })).toBeNull();
     await userEvent.click(within(p).getByRole("radio", { name: "Never" }));
     await userEvent.click(within(p).getByRole("radio", { name: "Override" }));
     await waitFor(() => expect(server.ops).toHaveLength(2));
@@ -123,7 +125,7 @@ describe("harness pane", () => {
     expect(within(p).getByText(/an item or a retry override may name it/)).toBeInTheDocument();
   });
 
-  it("amber help text while the access is changed in the draft", async () => {
+  it("changed help text while the access is changed in the draft", async () => {
     serve(view(resolved(), { changes: [{ path: "access.claude", kind: "change", summary: "x" }] }));
     renderPage("?harness=claude");
     const p = await pane("claude");

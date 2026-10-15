@@ -1,8 +1,22 @@
 /* The new UI's base. Colours come from theme.css, keyed on <html>'s data attributes (applyTheme.ts). */
-:root { --font-sans: "Inter Variable", Inter, system-ui, sans-serif; --fs-meta: 13px; --fs-label: 12px; }
+:root {
+  --font-sans: "Inter Variable", Inter, system-ui, sans-serif;
+  --fs-meta: 13px; --fs-label: 12px; --fs-body: 14px;
+  --fs-h1: 20px; --fs-h2: 16px; --fs-h3: 15px;
+  /* The phone's page and tile titles, a step above the desktop headings. */
+  --fs-ph-title: 26px; --fs-ph-h1: 22px;
+  /* The item graph's labels and captions, sized for its zoom floors (graph/camera.ts). */
+  /* A draft or changed value: a neutral ink and line, never the amber that means a human is needed. */
+  --mark-change: var(--text-sub); --mark-change-line: var(--stroke);
+  /* The one column every settings page (Appearance to Auto-intake) sits in. */
+  --set-page-w: 820px;
+  --fs-graph-label: 11.5px; --fs-graph-caption: 11px;
+}
 body { margin: 0; font: 14px/1.5 var(--font-sans); background: var(--bg); color: var(--text); }
 a { color: var(--accent); }
 button, input, select, textarea { font: inherit; color: inherit; }
+/* The browser's own placeholder grey is 3.5:1; every field uses the muted text colour. */
+::placeholder { color: var(--text-muted); opacity: 1; }
 
 /* Decisions §13 and R4: one neutral 2px ring on keyboard focus, everywhere. */
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

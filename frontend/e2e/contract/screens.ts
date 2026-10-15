@@ -118,7 +118,7 @@ export const STATES: State[] = [
   // Gates and review
   { area: "gates-review", state: "gate-chain", app: (p) => app(p, item("needs-gate")) },
   { area: "gates-review", state: "gate-view", app: (p) => app(p, item("needs-gate", "/nodes/final_review")) },
-  { area: "gates-review", state: "gate-reject", app: async (p) => { await app(p, item("needs-gate", "?sel=final_review")); await click("Reject…")(p); } },
+  { area: "gates-review", state: "gate-reject", app: async (p) => { await app(p, item("needs-gate", "?sel=final_review")); await click("Request changes…")(p); } },
   { area: "gates-review", state: "gate-review", app: (p) => appReview("default", "?doc=1")(p) },
   { area: "gates-review", state: "review", app: (p) => appReview()(p) },
 
@@ -161,7 +161,7 @@ export const STATES: State[] = [
   { area: "new-item", state: "composer-filled", app: async (p) => { await app(p, "/?new=1", { ready: (pg) => pg.getByText(/nodes run ·/).waitFor() }); await p.getByRole("textbox", { name: "Title" }).fill("Design the caching layer for document search"); await p.getByRole("textbox", { name: "Brief" }).fill("Cache embeddings by content hash; invalidate on reindex."); await p.waitForTimeout(600); } },
   { area: "new-item", state: "chain-menu", app: async (p) => { await app(p, "/?new=1", { ready: (pg) => pg.getByText(/nodes run ·/).waitFor() }); await p.getByRole("button", { name: /^default/ }).click(); await p.waitForTimeout(400); } },
   { area: "new-item", state: "draft-page", app: (p) => app(p, `/work-items/new?${new URLSearchParams({ repo: "/Users/dev/code/kraft-plugins", chain: "default", title: "Design the caching layer for document search" })}`) },
-  { area: "new-item", state: "draft-node", app: async (p) => { await app(p, `/work-items/new?${new URLSearchParams({ repo: "/Users/dev/code/kraft-plugins", chain: "default", title: "Design the caching layer for document search" })}`, { ready: (pg) => pg.getByText(/nodes run ·/).first().waitFor() }); await p.waitForTimeout(500); { const n = p.getByRole("button", { name: /^verification,/ }).last(); await n.focus(); await p.keyboard.press("Enter"); } await p.waitForTimeout(600); } },
+  { area: "new-item", state: "draft-node", app: async (p) => { await app(p, `/work-items/new?${new URLSearchParams({ repo: "/Users/dev/code/kraft-plugins", chain: "default", title: "Design the caching layer for document search" })}`, { ready: (pg) => pg.getByText(/nodes run ·/).first().waitFor() }); await p.waitForTimeout(500); { const n = p.getByRole("button", { name: /^spec_approval,/ }).last(); await n.focus(); await p.keyboard.press("Enter"); } await p.waitForTimeout(600); } },
 
   // Chain / node graph (CG-): Templates › Chains, and the item's chain at the wide width
   { area: "chain-graph", state: "chains-canvas", ...appArea("/templates/chains/default", { ready: (pg) => pg.locator("main h1, .gcanvas, svg").first().waitFor() }) },

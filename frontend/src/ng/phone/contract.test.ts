@@ -56,7 +56,10 @@ const ALLOWED = [
   "templates/draft/view", // counts(), the pure helpers
   "templates/problems", // problemText
   "review/prefs", // DEFAULT_PREFS and the DiffPrefs type: the diff choices Appearance saves
+  "settings/savedWords", // what a save-on-change page says about whether it sticks, on both layouts
   "settings/accessWords", // what Access says, on both layouts
+  "settings/notifyWords", // the channels, their state words and the permission lines, on both layouts
+  "settings/storageWords", // the categories and the state note
   "settings/policy/ctx", // the policy sections' shared context type and problemAt
   "settings/policy/keys", // the set_value keys the Policy page sends
   "settings/policy/sections", // which section a key or a problem belongs to
@@ -64,6 +67,8 @@ const ALLOWED = [
   "settings/policy/units", // how a number reads and parses
   "settings/intake/checks", // the check sentence and its time
   "settings/intake/cron", // a cron in words
+  "settings/intake/pickup", // the pickup rule in one sentence
+  "settings/intake/repos", // a repo as the pickers name it
   "settings/intake/types", // the intake draft's resolve and a check row
   "settings/intake/units", // minutes on the page, seconds on the wire
   "harnesses/model", // the harnesses draft's resolve, as types and pure helpers
@@ -71,7 +76,9 @@ const ALLOWED = [
   "harnesses/useProviders", // the providers' accepted efforts and models
   "templates/repos/fields", // the Repos rows: label, parse, patch, source
   "templates/repos/types", // reposOf, runningOf, problemsOf
-  "templates/repos/RepoConfig", // setRepo only: the preview-checked set_repo
+  "templates/repos/evidence", // readiness: the list's can-run-work word, one source with the desktop
+  "templates/repos/RepoConfig", // setRepo and setEnabled: the preview-checked set_repo
+  "templates/fields", // fieldMeta labels and routeOf: a task field goes by one name on both layouts
   "templates/choices", // the steering profiles and harnesses a typed list takes, as data
   "templates/useLibrary", // the published library's components, read once
   "templates/panes/useHarnessOptions", // the harness profiles, read once

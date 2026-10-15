@@ -1,4 +1,5 @@
-import { useContext, useEffect, useId, useState, type ReactNode } from "react";
+import { useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Pencil } from "lucide-react";
 import { Combobox, notListed, unlisted, type Choice } from "../../ui/Combobox";
 import { ReadOnly } from "../addon";
 
@@ -91,8 +92,9 @@ export function PauseText({ label, value, onText, onBlur, long, rows = 3, placeh
 
 export type Option = { value: string; label: string; disabled?: boolean };
 
-/** A labelled select; `check` adds the checkbox the gate's document row has. */
-export function SelectRow({ label, value, options, onPick, sub, bad, check }: {
+/** A labelled select, edited in place like a ValueCell: the chosen option and a pencil, then the select on a click.
+ *  `check` adds the checkbox the gate's document row has; `plain` keeps the select showing, for a picker that is no edit. */
+export function SelectRow({ label, value, options, onPick, sub, bad, check, plain }: {
   label: string;
   value: string;
   options: Option[];
@@ -100,17 +102,40 @@ export function SelectRow({ label, value, options, onPick, sub, bad, check }: {
   sub?: ReactNode;
   bad?: boolean;
   check?: { label: string; on: boolean; onToggle: () => void };
+  plain?: boolean;
 }) {
   const id = useId();
+  const [editing, setEditing] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
   const readOnly = useContext(ReadOnly);
-  if (readOnly) return <Kv k={label} v={`${options.find((o) => o.value === value)?.label ?? value}${check?.on ? ` · ${check.label}` : ""}`} />;
+  const shown = options.find((o) => o.value === value)?.label ?? value;
+  if (readOnly) return <Kv k={label} v={`${shown}${check?.on ? ` · ${check.label}` : ""}`} />;
+  const close = () => {
+    setEditing(false);
+    requestAnimationFrame(() => { if (document.activeElement === document.body || !document.activeElement) button.current?.focus(); });
+  };
   return (
     <div className="tpl-pf">
       <label htmlFor={id} className="tpl-pf-label">{label}</label>
       <div className="tpl-pf-line">
-        <select id={id} className={`tpl-pf-select${bad ? " is-bad" : ""}`} value={value} onChange={(e) => onPick(e.target.value)}>
-          {options.map((o) => <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}
-        </select>
+        {plain || editing ? (
+          <select
+            id={id}
+            autoFocus={!plain}
+            className={`tpl-pf-select${bad ? " is-bad" : ""}`}
+            value={value}
+            onChange={(e) => { onPick(e.target.value); if (!plain) close(); }}
+            onBlur={plain ? undefined : () => setEditing(false)}
+            onKeyDown={plain ? undefined : (e) => { if (e.key === "Escape") { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); close(); } }}
+          >
+            {options.map((o) => <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}
+          </select>
+        ) : (
+          <button ref={button} id={id} type="button" className={`adr-val${bad ? " is-bad" : ""}`} aria-label={`${label}, ${shown}. Edit`} onClick={() => setEditing(true)}>
+            {shown}
+            <Pencil size={12} className="adr-pen" aria-hidden />
+          </button>
+        )}
         {check && (
           <label className="tpl-pf-check">
             <input type="checkbox" checked={check.on} onChange={check.onToggle} />
@@ -136,3 +161,18 @@ export function Kv({ k, v, onClick, mono, muted }: { k: string; v: ReactNode; on
 
 export const Head = ({ children }: { children: ReactNode }) => <h3 className="pane-group">{children}</h3>;
 export const Note = ({ children, bad }: { children: ReactNode; bad?: boolean }) => <p className={`pane-note${bad ? " is-bad" : ""}`}>{children}</p>;
+
+/** The rows of a group that are at their default, folded into one line ("3 defaults · show"); opening it lists them as they are. */
+export function Fold({ count, noun = "default", lead, children }: { count: number; noun?: string; /** What the line starts with, when it also names the group. */ lead?: ReactNode; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  if (!count) return null;
+  return (
+    <>
+      <button type="button" className="pane-fold" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
+        {lead}{count} {count === 1 ? noun : `${noun}s`} · {open ? "hide" : "show"}
+      </button>
+      <div id={id} hidden={!open} className="pane-fold-body">{open && children}</div>
+    </>
+  );
+}

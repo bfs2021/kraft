@@ -1,9 +1,12 @@
 import { CircleDot, FileText, Kanban, MoveRight, Search as SearchIcon } from "lucide-react";
+import { NoMatch } from "../../ui/NoMatch";
 import { useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { docTitle, repoName } from "../../../format";
 import { useStore } from "../../../store";
 import type { Bead, SearchResult, WorkItem } from "../../../types";
+import { groupOf } from "../../board/model";
+import { reasonTail } from "../../board/rowText";
 import { ROUTES } from "../../shell/routes";
 import { Doc } from "../doc/Doc";
 import { ChoiceSheet, EditSheet, useSheet } from "../nav/Sheet";
@@ -45,15 +48,16 @@ export function Search() {
   const items = useMemo(() => Object.values(byId).filter((i) => i.display_status !== "archived"), [byId]);
 
   const rows = useMemo(() => {
-    const needs = (i: WorkItem) => i.display_status === "needs_you" && i.stop?.kind === "gate" && !!i.pending_gate;
+    const needs = (i: WorkItem) => groupOf(i) === "needs";
+    const atGate = (i: WorkItem) => i.display_status === "needs_you" && i.stop?.kind === "gate" && !!i.pending_gate;
     const match = (i: WorkItem) => !query || has(i.title, query) || has(i.id, query) || has(i.bead_id ?? "", query) || has(i.repo, query);
     const itemRow = (i: WorkItem, section: "needs" | "items"): Row => ({
       id: `${section}:${i.id}`,
       section,
       title: i.title,
-      sub: [repoName(i.repo), section === "needs" ? i.pending_gate : i.display_status?.replace("_", " ")].filter(Boolean).join(" · "),
+      sub: [repoName(i.repo), reasonTail(i)].filter(Boolean).join(" · "),
       // Opens the gate: the decision is made on the review screen, never from a search result (GAP §2 #27).
-      open: () => navigate(section === "needs" ? `/work-items/${encodeURIComponent(i.id)}/review?gate=${encodeURIComponent(i.pending_gate!)}` : `/work-items/${encodeURIComponent(i.id)}`),
+      open: () => navigate(atGate(i) ? `/work-items/${encodeURIComponent(i.id)}/review?gate=${encodeURIComponent(i.pending_gate!)}` : `/work-items/${encodeURIComponent(i.id)}`),
     });
     const hits = items.filter(match);
     const needsRows = hits.filter(needs).map((i) => itemRow(i, "needs"));
@@ -121,7 +125,7 @@ export function Search() {
         {failed("Documents", docs.load)}
         {failed("Beads", beads.load)}
         {docs.load === "ok" && docs.results.length > 0 && <p className="ph-note">Documents come from a lagging index, not live state.</p>}
-        {nothing && <p className="ph-empty">Nothing matches.</p>}
+        {nothing && <NoMatch className="ph-empty" query={query} onClear={() => set({ q: "" })} />}
       </div>
       {sheet.is("source") && <ChoiceSheet title="Search in" value={f.source} options={SOURCES} onPick={(v) => sheet.closeThen(() => set({ source: v }))} onClose={sheet.close} />}
       {sheet.is("mode") && <ChoiceSheet title="Match by" value={f.mode} options={MODES} onPick={(v) => sheet.closeThen(() => set({ mode: v === "hybrid" ? "" : v }))} onClose={sheet.close} />}

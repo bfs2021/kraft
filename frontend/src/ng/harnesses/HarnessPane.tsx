@@ -8,15 +8,9 @@ import { Button } from "../ui/Button";
 import { Switch } from "../ui/Switch";
 import { useState } from "react";
 import { ModelField } from "./fields";
-import { ACCESS, type Access, type EntryView, type HarnessView, type HProblem, type Resolved } from "./model";
+import { ACCESS, ACCESS_HELP, ACCESS_SECTION, enabledHelp, enableLabel, executableWord, HARNESS_FIELD, type EntryView, type HarnessView, type HProblem, type Resolved } from "./model";
 import { entryOp, useRun } from "./ops";
 import type { ProviderStatus } from "./useProviders";
-
-const HELP: Record<Access, string> = {
-  available: "Tasks may select it. A repo can still narrow this in Repos.",
-  override: "Nothing selects it by default; an item or a retry override may name it.",
-  never: "No task, repo or override may use it.",
-};
 
 type Common = {
   draft: ConfigDraft;
@@ -88,28 +82,28 @@ function HarnessFields({ draft, h, status, changed, onYaml }: { draft: ConfigDra
   return (
     <>
       <div className="hn-field">
-        <span className="hn-field-label">enabled</span>
+        <span className="hn-field-label">{HARNESS_FIELD.enabled}</span>
         <div className="hn-switch-row">
-          <Switch checked={h.enabled} onChange={(enabled) => patch({ enabled })} label={`${h.enabled ? "Disable" : "Enable"} ${h.id}`} />
-          <span className={`hn-field-help${mark}`}>{h.enabled ? "enabled" : "disabled: a task selecting it stops for a human"}</span>
+          <Switch checked={h.enabled} onChange={(enabled) => patch({ enabled })} label={enableLabel(h.id, h.enabled)} />
+          <span className={`hn-field-help${mark}`}>{enabledHelp(h.enabled)}</span>
         </div>
       </div>
-      <ModelField label="executable" value={h.executable ?? ""} placeholder={status?.executable ?? "the provider's own"} changed={changed} clearable onCommit={(v) => patch({ executable: v || null })} />
-      <div className="hn-field"><p className="hn-field-help"><span className={`hn-chip${h.executable_found ? "" : " is-bad"}`}>{h.executable_found ? "found" : "not on PATH"}</span> provider {h.provider ?? "unknown"}</p></div>
-      <ModelField label="default model" value={h.defaults.model ?? ""} suggestions={status?.models} changed={changed} clearable onCommit={(v) => setDefault("model", v)} />
+      <ModelField label={HARNESS_FIELD.executable} value={h.executable ?? ""} placeholder={status?.executable ?? "the provider's own"} changed={changed} clearable onCommit={(v) => patch({ executable: v || null })} />
+      <div className="hn-field"><p className="hn-field-help"><span className={`hn-chip${h.executable_found ? "" : " is-bad"}`}>{executableWord(h.executable_found)}</span> {HARNESS_FIELD.provider} {h.provider ?? "unknown"}</p></div>
+      <ModelField label={HARNESS_FIELD.model} value={h.defaults.model ?? ""} suggestions={status?.models} changed={changed} clearable onCommit={(v) => setDefault("model", v)} />
       {(efforts.length > 0 || h.defaults.effort) && (
         <div className="hn-field">
-          <span className="hn-field-label">default effort</span>
+          <span className="hn-field-label">{HARNESS_FIELD.effort}</span>
           <Segmented label="Default effort" options={[{ value: "", label: "not set" }, ...efforts.map((e) => ({ value: e, label: e }))]} value={h.defaults.effort ?? ""} onChange={(v) => setDefault("effort", v)} />
         </div>
       )}
       {hasMode && (modes.length > 0 ? (
         <div className="hn-field">
-          <span className="hn-field-label">permission mode</span>
+          <span className="hn-field-label">{HARNESS_FIELD.permission_mode}</span>
           <Segmented label="Permission mode" options={[{ value: "", label: "not set" }, ...modes.map((m) => ({ value: m, label: m }))]} value={h.defaults.permission_mode ?? ""} onChange={(v) => setDefault("permission_mode", v)} />
         </div>
       ) : (
-        <ModelField label="permission mode" value={h.defaults.permission_mode ?? ""} changed={changed} clearable onCommit={(v) => setDefault("permission_mode", v)} />
+        <ModelField label={HARNESS_FIELD.permission_mode} value={h.defaults.permission_mode ?? ""} changed={changed} clearable onCommit={(v) => setDefault("permission_mode", v)} />
       ))}
       {error && <p className="hn-error" role="alert">{error}</p>}
       {onYaml && <Note><button type="button" className="hn-link" onClick={() => onYaml("harnesses.yaml")}>Edit in YAML</button> for the rest of the file.</Note>}
@@ -117,7 +111,7 @@ function HarnessFields({ draft, h, status, changed, onYaml }: { draft: ConfigDra
   );
 }
 
-/** The pane of one harness (Decisions §11 Harness selected): its fields, Access, what the provider accepts. */
+/** The pane of one harness (Decisions §11 Harness selected): who may use it, its fields, what the provider accepts. */
 export function HarnessPane({ h, lane, onLane, onProfile, onYaml, ...c }: Common & {
   h: HarnessView;
   lane: string | null;
@@ -164,18 +158,18 @@ export function HarnessPane({ h, lane, onLane, onProfile, onYaml, ...c }: Common
       onCollapse={c.onCollapse}
       onExpand={c.onExpand}
     >
-      <Head>Harness</Head>
-      <HarnessFields draft={c.draft} h={h} status={status} changed={c.changes.has(`harnesses.${h.id}`)} onYaml={onYaml} />
-
-      <Head>Access</Head>
+      <Head>{ACCESS_SECTION}</Head>
       <div className="hn-field">
         <span className="hn-field-label">tasks may</span>
-        <Segmented label="Access" options={ACCESS} value={h.state} onChange={(state) => void run({ op: "set_access", harness: h.id, state })} />
-        <p className={`hn-field-help${c.changes.has(`access.${h.id}`) ? " is-changed" : ""}`}>{HELP[h.state]}</p>
+        <Segmented label={ACCESS_SECTION} options={ACCESS} value={h.state} onChange={(state) => void run({ op: "set_access", harness: h.id, state })} />
+        <p className={`hn-field-help${c.changes.has(`access.${h.id}`) ? " is-changed" : ""}`}>{ACCESS_HELP[h.state]}</p>
       </div>
-      <Note>Written to policy.yaml as allowed_harnesses: Available is in defaults and maxima, Override in maxima only, Never in neither. Each lane on the canvas shows this as a tag.</Note>
+      <Note>Whether the CLI is installed is separate: it is shown beside this on every lane.</Note>
       {c.r.escalation_effective.harness === h.id && <Note>Escalation turns run on this harness (area pane → Escalation).</Note>}
       {error && <p className="hn-error" role="alert">{error}</p>}
+
+      <Head>Harness</Head>
+      <HarnessFields draft={c.draft} h={h} status={status} changed={c.changes.has(`harnesses.${h.id}`)} onYaml={onYaml} />
 
       <Head>Provider accepts</Head>
       <Note>effort: {status?.efforts.length ? status.efforts.join(", ") : "none"}</Note>

@@ -30,6 +30,7 @@ describe("Library: Review & publish", () => {
     mount();
     await screen.findByRole("listbox", { name: "Library components" });
     expect(screen.getByRole("button", { name: /Review & publish/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Review & publish/ })).toHaveAccessibleDescription("published nothing to publish");
   });
 
   it("lists the changes with the chains each reaches, and who the draft affects", async () => {
@@ -37,6 +38,8 @@ describe("Library: Review & publish", () => {
     draftWith({ changes: CHANGES, impact: IMPACT }, true);
     mount();
     await review(u);
+    // While reviewing, the header button says where it goes back to.
+    expect(screen.getByRole("button", { name: "Back to editing" })).not.toHaveAttribute("aria-pressed");
     expect(screen.getByRole("heading", { name: "Draft · 2 changes" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /tasks.implementer.prompt/ })).toHaveTextContent("reaches 2 chains");
     expect(screen.getByRole("button", { name: /steering.project-standards/ })).toHaveTextContent("reaches 1 chain");

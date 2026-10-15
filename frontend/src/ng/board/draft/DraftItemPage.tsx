@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import * as api from "../../../api";
 import { repoName, shortId } from "../../../format";
@@ -7,7 +7,7 @@ import type { ChainNode, Repo, TemplateSummary, Workspace } from "../../../types
 import { chainsForRepo } from "../../library/types";
 import { Inspector } from "../../graph/Inspector";
 import type { ChainNode as GraphNode } from "../../graph/layout";
-import { EDITOR_FIT } from "../../graph/camera";
+import { ITEM_FIT } from "../../graph/camera";
 import { StageGraph } from "../../graph/StageGraph";
 import { useResizable, useWidth } from "../../graph/useResizable";
 import { detailOf, jsonBody, request } from "../../http";
@@ -19,6 +19,7 @@ import { showToast } from "../../ui/Toast";
 import { Attach, CreateSplit, sayIfFiledPaused, type Created } from "../Composer";
 import { draftBody, emptyDraft, nodeOverrides, type DraftState } from "./draftBody";
 import "../board.css";
+import { coveredText } from "../../item/chainName";
 import "../../item/item.css";
 import { sendOnModEnter } from "../../keys";
 import { tip } from "../../ui/Tooltip";
@@ -137,6 +138,8 @@ export function DraftItemPage() {
     else if (/^https?:/.test(to)) window.location.assign(to);
   };
   const page = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const tagId = useId();
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       const a = (e.target as Element).closest?.("a[href]") as HTMLAnchorElement | null;
@@ -185,20 +188,20 @@ export function DraftItemPage() {
   return (
     <div className="draft-page" ref={page}>
       <HeaderActions>
-        <span className={`draft-tag${d.title.trim() ? " is-ok" : ""}`}>{d.title.trim() ? "DRAFT · NOT CREATED" : "ADD A TITLE TO CREATE"}</span>
+        <span id={tagId} className={`draft-tag${d.title.trim() ? " is-ok" : ""}`}>{d.title.trim() ? "DRAFT · NOT CREATED" : "ADD A TITLE TO CREATE"}</span>
         <button type="button" className="btn btn-secondary" onClick={() => leave("/")}>Cancel</button>
-        <CreateSplit disabled={!ok} onCreate={create} />
+        <CreateSplit disabled={!ok} describedBy={d.title.trim() ? undefined : tagId} onCreate={create} />
       </HeaderActions>
       {error && <p className="item-error" role="alert">{error}</p>}
       <h1 className="board-visually-hidden">New work item</h1>
-      <input className="draft-title" aria-label="Title" placeholder="Title" autoFocus value={d.title} onChange={(e) => set({ title: e.target.value })} />
+      <input ref={titleRef} className="draft-title" aria-label="Title" placeholder="Title" autoFocus value={d.title} onChange={(e) => set({ title: e.target.value })} />
       {d.bead && (
         <p className="draft-bead">
           Implements <code>{d.bead}</code>
           <button type="button" className="draft-bead-drop" {...tip(`Do not implement ${d.bead}`)} onClick={() => set({ bead: "" })}>×</button>
         </p>
       )}
-      <textarea className="draft-brief" aria-label="Brief" placeholder="Brief. Context, constraints, what done looks like. Every node reads it." value={d.brief} onChange={(e) => set({ brief: e.target.value })} onKeyDown={sendOnModEnter(() => create(true), ok)} />
+      <textarea className="draft-brief" aria-label="Brief" placeholder="Brief. Context, constraints, what done looks like. Every node reads it." value={d.brief} onChange={(e) => set({ brief: e.target.value })} onKeyDown={sendOnModEnter(() => create(false), ok, () => !d.title.trim() && titleRef.current?.focus())} />
       <div className="draft-chips">
         <span>Repo</span>
         <Menu
@@ -249,8 +252,10 @@ export function DraftItemPage() {
           nodes={nodes}
           selected={sel ?? undefined}
           reserve={size.overlay ? 0 : paneOpen ? size.width : 40}
-          // Opens readable, as the Chains editor does (W10 Decided 17), not at a 30% plain fit.
-          fit={EDITOR_FIT}
+          // The item page's fit: labels stay readable, Fit shows the whole chain, and its stages fold to pills (a click opens one in place).
+          fit={ITEM_FIT}
+          fold
+          foldAhead={0}
           onSelect={(id) => { setSel(id); setTab((t) => (sel === id ? t : "overview")); }}
           onOpen={(id) => { setSel(id); setPaneOpen(true); }}
           onEscape={() => setSel(null)}
@@ -375,7 +380,7 @@ function NodeOverview({ node, full, covered, skippedByYou, onToggle }: { node: C
         <div><dt>kind</dt><dd>{node.kind === "gate" ? "gate · you decide" : `exec node${node.fix_loop ? " · fix loop" : ""}`}</dd></div>
         <div><dt>after</dt><dd>{full[at - 1]?.id ?? "—"}</dd></div>
         <div><dt>then</dt><dd>{full[at + 1]?.id ?? "—"}</dd></div>
-        <div><dt>on this item</dt><dd className={covered || skippedByYou ? "draft-amber" : undefined}>{covered ? `skipped · covered by the attached ${covered}` : skippedByYou ? "skipped by you" : "will run"}</dd></div>
+        <div><dt>on this item</dt><dd className={covered || skippedByYou ? "draft-amber" : undefined}>{covered ? `skipped · ${coveredText(covered)}` : skippedByYou ? "skipped by you" : "will run"}</dd></div>
       </dl>
       <p className="item-muted">{node.kind === "gate" ? "A gate stops the run until you decide. Skip it to let the chain pass without a person." : "Click the canvas to go back to the chain."}</p>
       {!covered && <div className="item-actions"><button type="button" className="btn btn-secondary" onClick={onToggle}>{skippedByYou ? "Run this node" : "Skip on this item"}</button></div>}

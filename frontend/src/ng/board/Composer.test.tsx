@@ -74,18 +74,23 @@ describe("Composer", () => {
     expect(listed().filter((t) => t.includes(":ship"))).toEqual([expect.stringMatching(/^docs:ship/)]);
   });
 
-  it("creates and starts on ⌘↵ and creates paused from the button, sending the create body", async () => {
+  it("creates paused on ⌘↵ and from the button, and starts only from the menu, sending the create body", async () => {
     const { calls, onCreated } = mount();
     await settle();
     fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "Cache the embeddings" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Brief" }), { target: { value: "Key by content hash." } });
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Title" }), { key: "Enter", metaKey: true });
     await settle();
-    expect(creates(calls).at(-1)?.body).toEqual({ title: "Cache the embeddings", description: "Key by content hash.", repo: "/code/kraft-plugins", chain_template: "default", attachments: [], autostart: true });
+    expect(creates(calls).at(-1)?.body).toEqual({ title: "Cache the embeddings", description: "Key by content hash.", repo: "/code/kraft-plugins", chain_template: "default", attachments: [], autostart: false });
+    expect(screen.getByText(/↵ create paused/)).toBeInTheDocument();
     expect(onCreated).toHaveBeenCalledWith("new1");
     fireEvent.click(screen.getByRole("button", { name: "Create paused" }));
     await settle();
     expect((creates(calls).at(-1)?.body as { autostart: boolean }).autostart).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "More ways to create" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Create and start" }));
+    await settle();
+    expect((creates(calls).at(-1)?.body as { autostart: boolean }).autostart).toBe(true);
   });
 
   it("says so when Create and start is queued because every slot is busy, and not when it starts or was meant paused", async () => {
@@ -101,6 +106,10 @@ describe("Composer", () => {
     expect(toasts).toEqual([]);
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Title" }), { key: "Enter", metaKey: true });
     await settle();
+    expect(toasts).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "More ways to create" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Create and start" }));
+    await settle();
     expect(toasts).toEqual(["Queued: 3 of 3 slots are busy. It starts when one frees."]);
     window.removeEventListener("kraft:toast", hear);
   });
@@ -111,7 +120,7 @@ describe("Composer", () => {
     window.addEventListener("kraft:toast", hear);
     sayIfFiledPaused(true, { id: "w", status: "queued", slots: { busy: 0, limit: 3, storage: { used_bytes: 12 * 1024 ** 3, limit_bytes: 10 * 1024 ** 3 } } });
     window.removeEventListener("kraft:toast", hear);
-    expect(toasts).toEqual(["Queued: worktrees use 12G of the 10G storage limit. It starts when space frees."]);
+    expect(toasts).toEqual(["Queued: 12 GB counted against the 10 GB limit. It starts when space frees."]);
   });
 
   it("says before filing that an item on a repo with no setup command stops before its first task", async () => {
@@ -138,7 +147,18 @@ describe("Composer", () => {
     mount();
     await settle();
     expect(screen.getByRole("button", { name: "Create paused" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create paused" })).toHaveAccessibleDescription("Add a title to create it.");
+    // A fresh composer reassures; the reason is spoken but not drawn until a create is refused.
+    expect(screen.getByText(/Created paused. Nothing spends tokens/)).toBeInTheDocument();
+    expect(screen.getByText("Add a title to create it.")).toHaveClass("is-quiet");
+    // ⌘↵ on an empty title does not create; it lands on the title, whose reason is already on screen.
+    screen.getByRole("button", { name: "Cancel" }).focus();
+    fireEvent.keyDown(screen.getByRole("button", { name: "Cancel" }), { key: "Enter", metaKey: true });
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveFocus();
+    expect(screen.getByText("Add a title to create it.")).not.toHaveClass("is-quiet");
+    expect(screen.getByText(/Created paused. Nothing spends tokens/)).toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "Title" }), { target: { value: "x" } });
+    expect(screen.getByRole("button", { name: "Create paused" })).not.toHaveAccessibleDescription();
     fireEvent.keyDown(screen.getByRole("button", { name: "More ways to create" }), { key: "ArrowDown" });
     expect(screen.getByRole("menuitem", { name: "Create and start" })).toBeInTheDocument();
   });

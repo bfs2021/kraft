@@ -32,12 +32,13 @@ export const currentStage = (stages: Stage[]) => {
 
 /** The row an item's chain draws: a stage the run has passed folds to a pill, and so does every stage after the next
  *  one, which reads as what is still to come; the current stage and the next stay node by node. A stage in `open`, or
- *  holding the selected node, stays open too. */
-export function foldStages(nodes: ChainNode[], open: ReadonlySet<string>, selected?: string): RowEntry[] {
+ *  holding the selected node, stays open too. `ahead` is how many stages after the current one stay open (an item's: 1;
+ *  a draft, which has run nothing, 0). */
+export function foldStages(nodes: ChainNode[], open: ReadonlySet<string>, selected?: string, ahead = 1): RowEntry[] {
   const stages = stagesOf(nodes);
   const cur = currentStage(stages);
   return stages.flatMap((s, i): RowEntry[] => {
-    if ((i >= cur && i <= cur + 1) || open.has(s.key) || s.nodes.some((n) => n.id === selected)) return s.nodes;
+    if ((i >= cur && i <= cur + ahead) || open.has(s.key) || s.nodes.some((n) => n.id === selected)) return s.nodes;
     const words = s.gate ? gateWords(s.gate.id) : nodeWords(s.key);
     return [{ kind: "fold", key: s.key, words, nodes: s.nodes, passed: i < cur }];
   });
@@ -55,5 +56,15 @@ export function rowSeams<S extends { at: number }>(nodes: ChainNode[], row: RowE
     const a = s.at > 0 ? entry.get(nodes[s.at - 1].id) : -1;
     const b = s.at < nodes.length ? entry.get(nodes[s.at].id)! : row.length;
     return a === b ? [] : [{ ...s, at: b, node: s.at }];
+  });
+}
+
+/** The row a node view's strip draws: the stage holding the viewed node (and any in `open`) node by node, every other
+ *  stage a pill. A stage is passed once every node in it is done. */
+export function stripRow(nodes: ChainNode[], open: ReadonlySet<string>, viewing: string): RowEntry[] {
+  return stagesOf(nodes).flatMap((s): RowEntry[] => {
+    if (open.has(s.key) || s.nodes.some((n) => n.id === viewing)) return s.nodes;
+    const words = s.gate ? gateWords(s.gate.id) : nodeWords(s.key);
+    return [{ kind: "fold", key: s.key, words, nodes: s.nodes, passed: s.nodes.every((n) => n.state === "done") }];
   });
 }

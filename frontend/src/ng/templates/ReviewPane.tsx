@@ -3,6 +3,8 @@ import { Inspector } from "../graph/Inspector";
 import type { useResizable } from "../graph/useResizable";
 import { detailOf } from "../http";
 import { Button } from "../ui/Button";
+import { useReason } from "../ui/Reason";
+import { fixProblems } from "../ui/reasons";
 import { showToast } from "../ui/Toast";
 import { folded, lineDiff } from "./draft/lineDiff";
 import type { ConfigDraft } from "./draft/useConfigDraft";
@@ -37,6 +39,8 @@ export interface ReviewArea {
   files: string[];
   toast: string;
   affects: (r: Result) => ReactNode;
+  /** The label a change's raw key goes by in the area's own screen; the key stays as a second line. */
+  label?: (path: string) => string | undefined;
 }
 
 /** Review & publish's pane (Decisions §9 Publish): the draft's changes and
@@ -73,6 +77,7 @@ export function ReviewPane({ draft, scope, published, libraryPublished, area, op
   const r = view.result;
   const n = counts(r);
   const blocked = n.problems > 0;
+  const why = useReason(blocked ? fixProblems(n.problems) : null);
   const stale: StaleBody | null = draft.stale;
   const live = scopeFile(view.files, scope);
   const text = view.files[live] ?? "";
@@ -134,7 +139,8 @@ export function ReviewPane({ draft, scope, published, libraryPublished, area, op
     <>
       <Button variant="danger" onClick={() => setAsking(true)}>Discard draft</Button>
       <span className="bp-gap" />
-      <Button variant="primary" disabled={blocked} title={blocked ? `Fix the ${plural(n.problems, "problem")} first` : undefined} onClick={publish}>Publish</Button>
+      {why.text && <p className="tpl-rv-why" id={why.id}>{why.text}</p>}
+      <Button variant="primary" disabled={blocked} {...why.attrs} onClick={publish}>Publish</Button>
     </>
   );
 
@@ -178,7 +184,10 @@ export function ReviewPane({ draft, scope, published, libraryPublished, area, op
         </div>
       )}
       {r.warnings.map((w) => <Note key={w.file}>{w.file}: {w.message}.</Note>)}
-      {(problems.length > 0 || r.yaml_error) && (
+      {tab === "yaml" && (problems.length > 0 || r.yaml_error) && (
+        <p className="pane-note is-bad">{plural(problems.length + (r.yaml_error ? 1 : 0), "problem")} block publishing. <button type="button" className="tpl-rv-fix" onClick={() => setTab("changes")}>See them →</button></p>
+      )}
+      {tab === "changes" && (problems.length > 0 || r.yaml_error) && (
         <>
           <Head>Problems</Head>
           {r.yaml_error && <div className="tpl-rv-prob"><span className="tpl-rv-path">{r.yaml_error.file}, line {r.yaml_error.line}</span><span>{r.yaml_error.message}</span></div>}
@@ -200,8 +209,9 @@ export function ReviewPane({ draft, scope, published, libraryPublished, area, op
           {r.changes.map((c, i) => (
             <button key={i} type="button" className="tpl-rv-change" onClick={() => onHighlight(c.path)}>
               <span className={`tpl-rv-sign is-${c.kind}`} aria-label={c.kind}>{c.kind === "add" ? "+" : c.kind === "remove" ? "−" : "~"}</span>
-              <span className="tpl-rv-path">{c.path || "chain"}</span>
+              <span className="tpl-rv-path">{area?.label?.(c.path) ?? (c.path || "chain")}</span>
               <span className="tpl-rv-sum">{c.summary}{c.reaches?.length ? ` · reaches ${plural(c.reaches.length, "chain")}` : ""}</span>
+              {area?.label?.(c.path) && <span className="tpl-rv-key">{c.path}</span>}
             </button>
           ))}
           {joined && (

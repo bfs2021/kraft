@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ESCALATION, NEVER, NO_ENTRY, resolved, STATUS, view as hview } from "../../harnesses/testkit";
+import { executableWord, HARNESS_FIELD } from "../../harnesses/model";
 import { resetProviders } from "../../harnesses/useProviders";
 import { HarnessesList, HarnessView, ProfileView } from "./Harnesses";
 import { mountAt, posts } from "./testkit";
@@ -19,7 +20,8 @@ describe("Harnesses list (M.1)", () => {
     const hs = await screen.findByRole("region", { name: "Harnesses" });
     expect(within(hs).getByRole("link", { name: /^claude-sandbox/ })).toHaveTextContent("Override");
     expect(within(hs).getByRole("link", { name: /^cursor/ })).toHaveTextContent("Never");
-    expect(within(hs).getByRole("link", { name: /^gemini/ })).toHaveTextContent("not found on this machine");
+    expect(within(hs).getByRole("link", { name: /^gemini/ })).toHaveTextContent(executableWord(false));
+    expect(within(hs).getByRole("link", { name: /^claude-sandbox/ })).toHaveTextContent("claude · Installed");
     const ps = screen.getByRole("region", { name: "Profiles" });
     expect(within(ps).getByRole("link", { name: /^strong/ })).toHaveTextContent("claude sonnet · codex gpt-5.6-terra");
     const ts = screen.getByRole("region", { name: "Tasks" });
@@ -38,6 +40,18 @@ describe("Harnesses list (M.1)", () => {
     expect(screen.getByRole("link", { name: /^claude(?!-)/ })).toHaveTextContent("problem");
   });
 
+  it("reads an unset tool list as every tool, and choosing it again posts nothing", async () => {
+    const { calls } = list(ans(hview(resolved({ allowed_tools: null }))));
+    const row = await screen.findByRole("button", { name: /allowed tools/ });
+    expect(row).toHaveTextContent("Every tool");
+    await userEvent.click(row);
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Allowed tools" })).getByRole("button", { name: "Every tool" }));
+    await userEvent.click(screen.getByRole("button", { name: /allowed tools/ }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Allowed tools" })).getByRole("button", { name: "Restrict to a list" }));
+    expect(screen.getByLabelText("Allowed tools", { selector: "input" })).toHaveValue("");
+    expect(posts(calls)).toHaveLength(0);
+  });
+
   it("changes escalation, tools and grants through the desktop's ops", async () => {
     const { calls } = list();
     await userEvent.click(await screen.findByRole("button", { name: /escalation runs on/ }));
@@ -47,6 +61,7 @@ describe("Harnesses list (M.1)", () => {
     await waitFor(() => expect(posts(calls)).toHaveLength(1));
     expect(posts(calls)[0].body).toEqual({ ops: [{ op: "set_escalation", harness: "codex", grants: ["git-commit", "git-rebase"] }] });
     await userEvent.click(screen.getByRole("button", { name: /allowed tools/ }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Allowed tools" })).getByRole("button", { name: "Restrict to a list" }));
     const box = screen.getByLabelText("Allowed tools", { selector: "input" });
     await userEvent.clear(box);
     await userEvent.type(box, "git, shell{Enter}");
@@ -77,15 +92,24 @@ describe("a harness (M.1, R65)", () => {
 
   it("edits Access only, with set_access, and shows its own fields read-only", async () => {
     const { calls } = open("claude");
-    await userEvent.click(await screen.findByRole("button", { name: /^access/ }));
-    const sheet = screen.getByRole("dialog", { name: "Access" });
+    await userEvent.click(await screen.findByRole("button", { name: /^who may use it/ }));
+    const sheet = screen.getByRole("dialog", { name: "Who may use it" });
     expect(within(sheet).getAllByRole("radio").map((r) => r.textContent?.replace("✓", ""))).toEqual(["Available", "Override", "Never"]);
     await userEvent.click(within(sheet).getByRole("radio", { name: "Never" }));
     await waitFor(() => expect(posts(calls)).toHaveLength(1));
     expect(posts(calls)[0].body).toEqual({ ops: [{ op: "set_access", harness: "claude", state: "never" }] });
-    expect(screen.getByText("permission_mode")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^permission_mode|^provider|^executable|^enabled/ })).toBeNull();
+    expect(screen.getByText(HARNESS_FIELD.permission_mode)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^permission mode|^provider|^executable/ })).toBeNull();
     expect(screen.getByText(/edited in YAML on a computer/)).toBeInTheDocument();
+  });
+
+  it("has an enabled switch, sent as the desktop sends it", async () => {
+    const { calls } = open("claude");
+    const row = await screen.findByRole("switch", { name: new RegExp(`^${HARNESS_FIELD.enabled}`) });
+    expect(row).toHaveAttribute("aria-checked", "true");
+    await userEvent.click(row);
+    await waitFor(() => expect(posts(calls)).toHaveLength(1));
+    expect(posts(calls)[0].body).toEqual({ ops: [{ op: "set_harness", id: "claude", patch: { enabled: false } }] });
   });
 
   it("names the problems about it and its tasks", async () => {
