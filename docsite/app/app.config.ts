@@ -30,8 +30,11 @@ export default defineAppConfig({
     // groups never fold. A slot string here replaces Docus's, it does not
     // merge, and that is what brings the chevron back: ms-auto is the theme's
     // own value for the slot.
+    // A group's name is in IBM Plex Mono (assets/css/type.css says why), at
+    // 13px: at 14px "Customize and automate", one level down, wrapped.
     contentNavigation: {
       slots: {
+        trigger: 'font-mono font-medium text-[0.8125rem]',
         linkTitle: 'whitespace-normal!',
         listWithChildren: 'ms-2.5',
         linkTrailing: 'ms-auto',
@@ -51,12 +54,32 @@ export default defineAppConfig({
         linkText: 'whitespace-normal! break-words',
       },
     },
+    // The "or" between "Edit this page" and "Report an issue" is a separator
+    // that holds two links, and a separator's role takes no interactive child
+    // (axe nested-interactive). Every separator on the site is a rule or a
+    // word beside one, so all are decorative: Reka then gives them role=none
+    // and the text stays in the reading order.
+    separator: {
+      defaultVariants: {
+        decorative: true,
+      },
+    },
     // A search result is one line, cut with an ellipsis: on a 390px phone
     // "Events > Chain and nodes ...ished.node_id node_skipped" ended before
     // the word that was searched for. Two lines.
     commandPalette: {
       slots: {
         itemLabel: 'line-clamp-2 whitespace-normal! break-words',
+      },
+    },
+    // The error page's title was in sans beside the mono h1 of every docs
+    // page (and drawn at 700, which type.css's .font-bold rule now caps).
+    // Mono like that h1, and the status code in mono like the 404.html
+    // nuxt.config.ts bakes.
+    error: {
+      slots: {
+        statusCode: 'font-mono',
+        statusMessage: 'font-mono tracking-tight',
       },
     },
     // The page body is a size container, so a table can ask how wide the text

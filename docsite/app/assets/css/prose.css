@@ -11,15 +11,18 @@
     radial-gradient(farthest-side at 100% 50%, color-mix(in oklab, var(--ui-text) 30%, transparent), transparent) right / 0.75rem 100% no-repeat scroll;
 }
 
-/* The landscape diagrams (public/diagrams/*.svg, 1100 to 1650px wide) shrank
+/* The landscape diagrams (public/diagrams/*.svg, 1100 to 1650px wide; only a
+   release up to v2.0.0 still has them, and its build takes them from the tag:
+   main's diagrams are markup, Diagram*.vue, which fit a phone) shrank
    to 343px on a phone, 4 to 5px text. Under 640px they keep a width where
    the text can be read and scroll sideways inside their own box,
    .diagram-scroll (ProseImg.vue wraps the image in it; structure.svg and
    everything in diagrams/portrait/ are portrait, fit as they were, and have
-   no box). The SVGs state no pixel width, so the overlay cannot show them
-   larger than the screen; the tap is switched off, as the diagram is already
-   readable here. The diagrams have no background of their own, so they read
-   on the dark theme too (docs-diagrams in the justfile).
+   no box; LandingShot.vue's wide screenshots use the same box, so it stays
+   after the old diagrams go). The SVGs state no pixel width, so the overlay
+   cannot show them larger than the screen; the tap is switched off, as the
+   diagram is already readable here. The diagrams have no background of their
+   own; on the dark theme each is a white card (the rule after this comment).
 
    Nothing showed that the diagram goes on to the right. The table's edge
    shadow (.scroll-hint) is a background of the scrolling box, and the
@@ -39,6 +42,17 @@
    and the caption is not shown. */
 .diagram-hint {
   display: none;
+}
+
+/* Dark mode: the diagram on a white card, drawn as on the light page. An
+   <img> SVG cannot see the site's .dark class, so its one set of colours is
+   for a light page: on the dark one a subgraph's title and a sequence
+   diagram's message labels read as outlined text (their 4px light halo), and
+   lines leaving a subgraph faded into the background (Kraft-z6nly). */
+.dark img[src*='/diagrams/'] {
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background: #fff;
 }
 @media (max-width: 639px) {
   @keyframes diagram-edge {
@@ -384,8 +398,35 @@ main pre code {
   min-width: 100%;
   margin-inline-end: -1rem;
 }
-main div:not(:has(> div)) > pre code .line:first-child {
-  padding-inline-end: 3rem;
+@media (min-width: 1024px) {
+  main div:not(:has(> div)) > pre code .line:first-child {
+    padding-inline-end: 3rem;
+  }
+}
+
+/* Below 1024px the button is always showing (Nuxt UI hides it until hover from
+   there up), and over a block it covered the command: `curl -s
+   http://127.0.0.1:8765/api/health` was cut by it at 390px. Padding on the
+   first line only clears it once the line is scrolled to its end, so here the
+   button leaves the block: it sits on a row of its own above it, at the right,
+   with the block's own margin taken back so the pair is not taller than it
+   must be. A block with a title keeps it in the title bar. */
+@media (max-width: 1023px) {
+  main div:not(:has(> div)):has(> pre) > button {
+    position: static;
+    display: flex;
+    margin: 0 0 0.25rem auto;
+  }
+  main div:not(:has(> div)):has(> pre) {
+    margin-block-start: 0.75rem;
+  }
+}
+
+/* Reference tables are read by scanning down a column, and Nuxt UI's cell
+   padding (12px above and below) made a one-line row 51px tall. */
+main :is(td, th) {
+  padding-block: 0.375rem;
+  padding-inline: 0.75rem;
 }
 
 /* In a table that is a table, a name in the first
