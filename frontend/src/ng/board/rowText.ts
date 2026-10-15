@@ -68,6 +68,23 @@ function fallbackName(to: unknown): string {
   return typeof model === "string" && model ? model : typeof harness === "string" ? harness : "";
 }
 
+export type StopCue = "failed" | "paused" | "gate" | "question" | "limit" | "other";
+
+/** Which kind of stop a Needs you row is, for a cue that is not colour: an icon and a weight beside the reason. */
+export function stopCueOf(i: Pick<Row, "display_status" | "stop">): StopCue {
+  if (i.display_status === "failed") return "failed";
+  if (i.display_status === "paused") return "paused";
+  switch (i.stop?.kind) {
+    case "gate": return "gate";
+    case "question": return "question";
+    case "cap": case "budget": return "limit";
+    default: return "other";
+  }
+}
+
+/** A row's action button: a gate is decided in its review, so it stays outlined; retry, resume and the rest are the filled one. */
+export const actionVariant = (a: Pick<RowAction, "kind">): "primary" | "secondary" => (a.kind === "gate" ? "secondary" : "primary");
+
 export type RowAction =
   | { label: string; kind: "gate"; gate: string }
   | { label: string; kind: "peek"; tab: "overview" | "config"; budget?: boolean }

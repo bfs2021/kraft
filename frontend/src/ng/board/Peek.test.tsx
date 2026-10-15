@@ -50,7 +50,7 @@ describe("Peek", () => {
   it("shows the card the item page would: the gate banner, a failure, a question, a pause", async () => {
     mount({ status: "needs_human", display_status: "needs_you", stop: stop("gate"), pending_gate: "plan_approval" });
     expect(await screen.findByText(/Waiting for your approval at/)).toBeInTheDocument();
-    fireEvent.click(within(document.querySelector<HTMLElement>(".item-banner")!).getByRole("button", { name: "Review changes" }));
+    fireEvent.click(within(document.querySelector<HTMLElement>(".item-banner")!).getByRole("button", { name: "Review and decide" }));
     expect(screen.getByTestId("where")).toHaveTextContent("/work-items/w1/review?gate=plan_approval&doc=1");
   });
 
@@ -176,11 +176,24 @@ describe("Peek", () => {
     expect(screen.getByTestId("where")).toHaveTextContent("/work-items/w1");
   });
 
-  it("archives a done item from the footer", async () => {
+  it("names the header's full-page button for what it does", async () => {
+    mount({ display_status: "running" });
+    fireEvent.click(await screen.findByRole("button", { name: /Full page/ }));
+    expect(screen.getByTestId("where")).toHaveTextContent("/work-items/w1");
+  });
+
+  it("archives a done item from its card, the footer repeating none of it", async () => {
     const calls = mount({ status: "completed", display_status: "done" });
     fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
     await act(async () => {});
     expect(calls.find((c) => c.method === "POST")).toMatchObject({ path: "/work-items/w1/archive" });
+  });
+
+  // One primary per state, as on the item page: the card carries Retry on Overview; the footer holds it where no card is on screen.
+  it.each([["overview", 1], ["activity", 1]] as const)("a failed item has a single Retry on %s", async (start, n) => {
+    mount({ status: "needs_human", display_status: "failed", stop: stop("failed") }, { start });
+    await screen.findByRole("button", { name: "Open item ↗" });
+    expect(screen.getAllByRole("button", { name: /^Retry/ })).toHaveLength(n);
   });
 
   it("lists Activity newest first and pages back with before_seq; a node's line opens the item there", async () => {

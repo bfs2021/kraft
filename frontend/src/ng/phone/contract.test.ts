@@ -36,6 +36,7 @@ const ALLOWED = [
   "item/draft/applied", // appliedRows: what an applied draft set, as the desktop's Config lists it (R14b-04)
   "item/draft/useApplied", // the applied drafts, folded from the whole event log
   "item/draft/view", // lines(): the draft's changes as the desktop's Start dialog lists them (R10b-12)
+  "analytics/shared", // the range choices, the gate rows and the disclosure text: one definition for both layouts
   "board/model",
   "board/counts", // the board's counts, one definition for every screen that shows one
   "board/rowText",
@@ -79,6 +80,7 @@ const ALLOWED = [
   "shell/useDraftCounts", // the draft dots of More
   "apply/store", // the apply state; Restart has one call site, behind the phone's own confirm
   "shell/routes", // the list of pages, as data: Search's Go to rows
+  "board/cue", // the stop-kind icon of a Needs you reason, drawn the same on the card and the row
   "shell/health", // olderServer and useHealth: the restart banner over the board, one test for both layouts
 ];
 

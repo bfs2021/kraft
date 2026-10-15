@@ -66,8 +66,8 @@ export function Title({ id, title, onSaved }: { id: string; title: string; onSav
   );
 }
 
-/** The brief: two lines, "more · edit"; edit is a field in the same spot (Decisions §2). */
-export function Brief({ id, brief, onSaved }: { id: string; brief: string; onSaved: () => void }) {
+/** The brief: two lines, "more · edit"; edit is a field in the same spot (Decisions §2). An ended item's brief is read-only: the API refuses the patch. */
+export function Brief({ id, brief, ended = false, onSaved }: { id: string; brief: string; ended?: boolean; onSaved: () => void }) {
   const [more, setMore] = useState(false);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(brief);
@@ -104,11 +104,11 @@ export function Brief({ id, brief, onSaved }: { id: string; brief: string; onSav
     );
   return (
     <div className="item-brief">
-      {brief ? <p ref={p} className={more ? "item-brief-text is-open" : "item-brief-text"}>{more ? brief : plainMarkdown(brief)}</p> : <p className="item-brief-text item-muted">No brief.</p>}
+      {brief ? <p ref={p} className={more ? "item-brief-text is-open" : "item-brief-text"}>{more ? brief : plainMarkdown(brief)}</p> : null}
       <div className="item-brief-links">
         {(long || more) && <button type="button" className="item-link" aria-expanded={more} onClick={() => setMore((m) => !m)}>{more ? "less" : "more"}</button>}
-        {(long || more) && <span aria-hidden> · </span>}
-        <button type="button" className="item-link" onClick={() => setEditing(true)}>edit</button>
+        {(long || more) && !ended && <span aria-hidden> · </span>}
+        {!ended && <button type="button" className="item-link" onClick={() => setEditing(true)}>{brief ? "edit" : "Add a brief"}</button>}
       </div>
     </div>
   );
@@ -151,8 +151,9 @@ export function useOpenThreads(id: string, version: string): number {
 }
 
 /** `N files +A −D · K open threads · Review changes` (the prototype's diff
- *  line), the threads only when there are some; hidden with no diff. */
-export function DiffLine({ id, version, files }: { id: string; version: string; files: DiffFile[] | null }) {
+ *  line), the threads only when there are some; hidden with no diff.
+ *  `review` is false where a banner or card already offers the review. */
+export function DiffLine({ id, version, files, review = true }: { id: string; version: string; files: DiffFile[] | null; review?: boolean }) {
   const threads = useOpenThreads(id, version);
   if (!files?.length) return null;
   const { add, del } = totals(files);
@@ -160,8 +161,7 @@ export function DiffLine({ id, version, files }: { id: string; version: string; 
     <p className="item-diffline">
       {files.length} {files.length === 1 ? "file" : "files"} <span className="item-add">+{add}</span> <span className="item-del">−{del}</span>
       {threads > 0 && <><span aria-hidden> · </span>{threads} open {threads === 1 ? "thread" : "threads"}</>}
-      <span aria-hidden> · </span>
-      <Link className="item-link is-strong" to={`/work-items/${encodeURIComponent(id)}/review`}>Review changes</Link>
+      {review && <><span aria-hidden> · </span><Link className="item-link is-strong" to={`/work-items/${encodeURIComponent(id)}/review`}>Review changes</Link></>}
     </p>
   );
 }

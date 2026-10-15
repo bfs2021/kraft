@@ -2,8 +2,9 @@ import type { KeyboardEvent, MouseEvent } from "react";
 import { ago, repoName, shortId } from "../../format";
 import type { WorkItem } from "../../types";
 import { NodeGlyph } from "../graph/NodeGlyph";
+import { CUE_ICON } from "./cue";
 import { chainOf, groupOf } from "./model";
-import { admittedRowAction, glyphOf, reasonTail, ticksOf, type RowAction } from "./rowText";
+import { actionVariant, admittedRowAction, glyphOf, reasonTail, stopCueOf, ticksOf, type RowAction } from "./rowText";
 import { Ticks } from "./Ticks";
 
 export interface RowProps {
@@ -29,6 +30,8 @@ export function Row({ item, selected, checked, offline, now, error, onSelect, on
   const act = own ? null : admittedRowAction(item);
   const id = item.bead_id || shortId(item.id);
   const hot = groupOf(item) === "needs";
+  const cue = hot ? stopCueOf(item) : null;
+  const Cue = cue ? CUE_ICON[cue] : null;
   // A row's action is named by what it does ("Review to approve") and described by its item:
   // five alike in a row read the same to a screen reader without it (R8b-11).
   const titleId = `board-title-${item.id}`;
@@ -57,14 +60,17 @@ export function Row({ item, selected, checked, offline, now, error, onSelect, on
           <span className="board-sep" aria-hidden>·</span>
           <span className="board-meta-age">{own?.age ?? ago(item.updated_at, now)}</span>
           <span className="board-sep" aria-hidden>·</span>
-          <span className={`board-meta-tail${hot ? " is-hot" : ""}`}>{own?.tail ?? reasonTail(item, now)}</span>
+          <span className={`board-meta-tail${hot ? " is-hot" : ""}${cue ? ` is-${cue}` : ""}`}>
+            {Cue && <Cue size={12} aria-hidden className="board-cue" />}
+            <span className="board-tail-text">{own?.tail ?? reasonTail(item, now)}</span>
+          </span>
         </span>
       </button>
       <Ticks ticks={ticksOf(item)} />
       <span className="board-act">
         {own && <button type="button" className="btn btn-secondary board-act-btn" aria-describedby={titleId} disabled={offline} onClick={own.run}>{own.label}</button>}
         {act && (
-          <button type="button" className={`btn ${act.kind === "gate" ? "btn-secondary" : "btn-primary"} board-act-btn`} aria-describedby={titleId} disabled={offline} onClick={() => onAction(item, act)}>
+          <button type="button" className={`btn btn-${actionVariant(act)} board-act-btn`} aria-describedby={titleId} disabled={offline} onClick={() => onAction(item, act)}>
             {act.label}
           </button>
         )}

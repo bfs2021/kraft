@@ -88,6 +88,23 @@ describe("Brief", () => {
     expect(writes(calls)).toEqual([{ method: "PATCH", path: "/work-items/w1", body: { description: "Cache embeddings. Bounded." } }]);
   });
 
+  it("offers one clear way in when empty: an Add a brief button, no bare edit", async () => {
+    render(<Brief id="w1" brief="" onSaved={() => {}} />);
+    expect(screen.queryByText("No brief.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "edit" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Add a brief" }));
+    expect(screen.getByRole("textbox", { name: "Brief" })).toBeInTheDocument();
+  });
+
+  it("offers no way in on an ended item, which the API refuses to patch", () => {
+    const { unmount } = render(<Brief id="w1" brief="" ended onSaved={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Add a brief" })).toBeNull();
+    unmount();
+    render(<Brief id="w1" brief="Cache embeddings." ended onSaved={() => {}} />);
+    expect(screen.queryByRole("button", { name: "edit" })).toBeNull();
+    expect(screen.getByText("Cache embeddings.")).toBeInTheDocument();
+  });
+
   it("saves on ⌘↵, a plain ↵ starting a new line", async () => {
     const calls = stubFetch(WRITES);
     const onSaved = vi.fn();
@@ -123,7 +140,7 @@ describe("Brief", () => {
 });
 
 /** The line as the item page draws it: the diff read once, handed down. */
-const Line = ({ version, gone }: { version: string; gone?: boolean }) => <DiffLine id="w1" version={version} files={useDiffFiles("w1", version, gone)} />;
+const Line = ({ version, gone, review }: { version: string; gone?: boolean; review?: boolean }) => <DiffLine id="w1" version={version} files={useDiffFiles("w1", version, gone)} review={review} />;
 
 describe("DiffLine", () => {
   it("counts each path once across landed and in-flight changes, and hides with no diff", async () => {
@@ -146,6 +163,13 @@ describe("DiffLine", () => {
     stubFetch({ "GET /work-items/w1/diff": [200, { files: [{ path: "a.py", insertions: 2, deletions: 1 }] }], "GET /work-items/w1/threads": [200, threads] });
     render(<MemoryRouter><Line version="v" /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText(/1 file/)).toHaveTextContent(text));
+  });
+
+  it("leaves out Review changes where a banner already offers the review", async () => {
+    stubFetch({ "GET /work-items/w1/diff": [200, { files: [{ path: "a.py", insertions: 2, deletions: 1 }] }], "GET /work-items/w1/threads": [200, []] });
+    render(<MemoryRouter><Line version="v" review={false} /></MemoryRouter>);
+    expect(await screen.findByText(/1 file/)).toHaveTextContent(/^1 file \+2 −1$/);
+    expect(screen.queryByRole("link", { name: "Review changes" })).toBeNull();
   });
 
   // R12b-11: an archived item's page asked anyway, and the 404 went to the console on every load.
