@@ -38,6 +38,14 @@ describe("ng CSS", () => {
     expect(bad).toEqual([]);
   });
 
+  it("draws a gate waiting on you amber: the gate's own rule for it comes after the gate's base rule, which resets the border", () => {
+    const css = readFileSync(join(here, "graph/graph.css"), "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const base = css.indexOf(".glyph-gate .glyph-box {");
+    const amber = css.search(/\.glyph-gate \.glyph-box\.is-amber\s*{[^}]*border-color:\s*var\(--warn\)/);
+    expect(base).toBeGreaterThan(-1);
+    expect(amber).toBeGreaterThan(base);
+  });
+
   it("shrinks the repo crumb before the work item title", () => {
     const css = readFileSync(join(here, "shell/shell.css"), "utf-8");
     const shrink = (sel: string) => Number(new RegExp(`${sel}\\s*{[^}]*flex-shrink:\\s*(\\d+)`).exec(css)?.[1]);
@@ -144,7 +152,7 @@ describe("round 4 layout pins", () => {
   const rules: [string, string, RegExp][] = [
     ["BD-13: a probe's name keeps the mono face once it has a result", "shell/first-run.css", /\.fr-probes li > span:first-child\s*{[^}]*font-family:\s*ui-monospace/],
     ["ST-6: two hints in one block read as two lines", "settings/settings.css", /(?:^|\n)\.set-hint\s*{[^}]*display:\s*block/],
-    ["GR-12: the review toolbar wraps rather than clip Diff settings", "review/review.css", /\.rv-toolbar\s*{[^}]*flex-wrap:\s*wrap/],
+    ["GR-12: the review toolbar wraps rather than clip Display", "review/review.css", /\.rv-toolbar\s*{[^}]*flex-wrap:\s*wrap/],
     ["GR-12: the toolbar's right-hand controls wrap together and stay at the right end", "review/review.css", /\.rv-tools\s*{[^}]*margin-left:\s*auto/],
     ["LV-10: follow and copy move as one unit", "item/item.css", /\.ip-follow-copy\s*{[^}]*white-space:\s*nowrap/],
   ];

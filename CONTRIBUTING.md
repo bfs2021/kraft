@@ -341,7 +341,12 @@ Page rules:
   paragraph must carry on from it, not say it again. Delete a paragraph that
   only restates it. `dev/check_docs_ledes.py` fails the `lint` job when
   65% or more of the content words in the paragraph's first sentence are
-  already in the description.
+  already in the description. The same check fails a description with a
+  backtick in it: the lede, the search result and the meta tags show it as
+  one.
+- A code block that lists commands to pick from, not to run in order, is
+  fenced ` ```bash each `: every line gets its own copy button, where the
+  block's one button would copy them all as a single paste.
 - When you move or rename a page, or a heading that something links to, add
   an entry to `docsite/content/redirects.yml` in the same pull request. The
   file shows the two forms: an old page to its new address, and an old
@@ -427,7 +432,11 @@ default at the next stable release. There is nothing else to do. Link to
 
 A section that is new since the last release says so with an "Added in"
 note, which the release turns into the version that shipped it (see
-[User-facing docs](#user-facing-docs) above).
+[User-facing docs](#user-facing-docs) above). The `/next/` build also lists
+those notes on an Unreleased page, linked from its version banner and marked
+in the sidebar: `dev/gen_docs_unreleased.py` writes it at build time, so there
+is no list to keep. A release stamps every note into a number, which leaves
+that page nothing to list, so a released site has none.
 
 `dev/docs_versions.py` picks the tags from the repo's tags, so nothing is
 configured: `/` is the highest `vX.Y.Z` tag, and each lower major with a
