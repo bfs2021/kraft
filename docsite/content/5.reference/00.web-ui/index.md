@@ -16,6 +16,9 @@ waiting items move along their chains on their own, and stop at each gate for
 you to answer. What you do there changes the items until you reload the page,
 and nothing is saved.
 
+Its corner badge opens five things to try, each with a Show me that takes you
+to where it is done.
+
 ## In this section
 
 - [Sidebar, search, and keyboard](/reference/web-ui/sidebar-search-and-keyboard): the sidebar, search, vector search and the shortcuts every screen shares.
