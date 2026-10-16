@@ -681,7 +681,7 @@ export function mockServer(S: Scenario, opts: MockOptions = {}): MockServer {
     if ((m = p.match(/^\/steering\/([^/]+)$/))) return method === "DELETE" ? json({ deleted: m[1] }) : json(st.steeringBody(decodeURIComponent(m[1])));
     if (p === "/intake/checks" && opts.areas) return json(areas.checks());
     if (p === "/intake/checks") return json([
-      { id: 3, at: new Date(Date.now() - 60_000).toISOString(), ready: 2, started: ["w-2"], skipped: [{ bead_id: "B-9", reason: "max_concurrent" }] },
+      { id: 3, at: new Date(Date.now() - 60_000).toISOString(), ready: 2, started: ["w-2"], skipped: [{ bead: "B-9", reason: "max_concurrent" }] },
       { id: 2, at: new Date(Date.now() - 360_000).toISOString(), ready: 0, started: [], skipped: [] },
     ]);
     if (p === "/apply" || p === "/apply/reload") {
