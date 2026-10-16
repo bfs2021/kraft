@@ -1,13 +1,13 @@
 import { useEffect, useRef } from "react";
 import type { Connection } from "../store";
-import { useStore } from "../store";
+import { offlineIn, useStore } from "../store";
 
 /** The one offline state both trees read: the list read failed, or the event
  *  socket is reconnecting. Nothing page-specific, so every page can say it. */
 export function useOffline() {
   const loadError = useStore((s) => s.loadError);
-  const connection = useStore((s) => s.connection);
-  return { offline: loadError !== null || connection === "reconnecting", loadError };
+  const offline = useStore(offlineIn);
+  return { offline, loadError };
 }
 
 /** The sidebar's cue: "live" only while the socket is open and the last list read worked. */
