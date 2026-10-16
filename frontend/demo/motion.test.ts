@@ -4,6 +4,7 @@ import { mockServer, type Answer, type MockOptions } from "../e2e/contract/mocks
 import { FRESH_TITLES } from "../e2e/contract/mocks/motion";
 import { NG_NOW } from "../e2e/contract/mocks/ngItems";
 import { RESUME_PROMPT, type Ev } from "../e2e/contract/mocks/transitions";
+import { recent } from "../src/ng/item/events";
 import { budgetRaise } from "../src/ng/item/status";
 
 /** The demo's live motion (motion.ts), on fake timers: what one tick does to the board's running items. */
@@ -312,24 +313,29 @@ describe("after the visitor", () => {
 });
 
 describe("the clock and the purse", () => {
-  it.each<[string, (it: any) => void, unknown[], Record<string, unknown>]>([
+  /** `n` more relaunches the rate-limit poller wrote on verification, after the sample's own two. */
+  const relaunched = (b: Scenario["bundles"][string], n: number) => {
+    for (let k = 0; k < n; k++) b.events.push({ ...b.events.at(-1)!, seq: b.events.at(-1)!.seq + 1, type: "work_item_retried", node_id: "verification", payload: { node_id: "verification", loop: null, steer: RESUME_PROMPT, escalated: false, seeded: false } });
+  };
+  it.each<[string, (b: Scenario["bundles"][string]) => void, unknown[], Record<string, unknown>]>([
     // kraft-e410 is a rate limit: its poller counts the retry and retries it on its node (`rate_limit_retry.py`).
     ["a rate limit is retried on its node, its count up", () => {}, [
       ["work_item_retried", { node_id: "verification", loop: null, steer: RESUME_PROMPT, escalated: false, seeded: false }],
       ["node_started", { node_id: "verification" }], ["worker_session_created", expect.anything()], ["worker_session_started", expect.anything()],
     ], { status: "active", display_status: "running", retry_at: null, stop: null, rate_limit: null }],
-    ["a rate limit past its retries stops for a person", (it) => { it.rate_limit = { count: 5, cap: 5 }; }, [
+    // Its counter is its relaunches: the sample's two and three more make five, the policy's retries.
+    ["a rate limit past its retries stops for a person", (b) => relaunched(b, 3), [
       ["work_item_needs_human", { node_id: "verification", reason: "rate_limit retries exhausted after 5 attempt(s)", kind: "cap" }],
     ], { status: "needs_human", display_status: "needs_you", stop: expect.objectContaining({ kind: "cap" }), rate_limit: null }],
     // A CI wait is re-entered with no event of its own (`waits.py`, `store.mark_reentered`).
-    ["a CI wait is re-entered", (it) => { Object.assign(it, { status: "waiting", stop: { ...it.stop, kind: "wait" } }); }, [
+    ["a CI wait is re-entered", ({ item: it }) => { Object.assign(it, { status: "waiting", stop: { ...it.stop, kind: "wait" } }); }, [
       ["node_started", { node_id: "verification" }], ["worker_session_created", expect.anything()], ["worker_session_started", expect.anything()],
     ], { status: "active", display_status: "running", retry_at: null, stop: null }],
   ])("once its retry time passes, %s", (_, setup, want, item) => {
     let at = NG_NOW;
     const { S, ticks } = started(undefined, () => at);
     const id = board(S, WAITING);
-    setup(S.bundles[id].item);
+    setup(S.bundles[id]);
     expect(ticks(2, id)).toEqual([]);
     at = "2026-09-13T10:13:43.000Z";
     expect(ticks(1, id)).toEqual(want);
@@ -384,6 +390,56 @@ describe("the clock and the purse", () => {
     await call("POST", `/work-items/${id}/budget/raise`, { budget_usd: 8 });
     expect(S.bundles[id].events.filter((e) => e.type === "work_item_retried").at(-1)?.payload.steer).toBeNull();
     expect(types(ticks(1, id))).toEqual(["node_started", "worker_session_created", "worker_session_started"]);
+  });
+});
+
+describe("an escalation turn", () => {
+  it.each([
+    // The sample's turn is running when the demo opens; it is stuck on verification, which is not a failure kind.
+    ["the escalated sample's", ESCALATED, null, "verification", "needs_you", "The repair rounds keep fixing what code_review reports"],
+    ["a visitor's, on a failed item", FAILED, "why does the forge refuse the token?", "merge_request", "failed", "open_draft fails the same way on every attempt"],
+    // A question is answered by a resume that carries the answer, and a gate is decided: neither is retried.
+    ["a visitor's, on an item stopped on its agent's question", "kraft-a3f0", "which way should this go?", "verification", "needs_you", "waiting on the question its agent asked", "Answer it by resuming the item with your answer as the steer", "I read why verification stopped"],
+    ["a visitor's, at a gate", GATED, "is this ready?", "final_review", "needs_you", "The document at this gate reads complete", "Approve or reject it when you are ready", "I read the document at final_review and the change it is about."],
+  ])("%s ends on its own on the second tick that sees it, as its agent finishing ends it", async (_, bead, message, node, shown, found, next = `Retry ${node} when you are ready`, read = `I read why ${node} stopped, its last attempt's log, and the branch.`) => {
+    const { S, ticks, call } = started();
+    const id = board(S, bead);
+    if (message) expect((await call("POST", `/work-items/${id}/escalate`, { message })).status).toBe(200);
+    const b = S.bundles[id];
+    const s = b.sessions.find((x) => x.hook_point === "escalation" && x.status === "running")!;
+    expect(ticks(1, id)).toEqual([]);
+    // `store.session_exited`: done, with the usage it reported and the summary it wrote in its thread's folder.
+    const ref = `items/${id}/sessions/escalation-1/out/summary.md`;
+    expect(ticks(1, id)).toEqual([["worker_session_exited", { session_id: s.id, status: "done", wall_ms: expect.any(Number), model: "claude-sonnet-4-5", tokens_in: 28_000, tokens_cache_write: 0, tokens_cache_read: 0, tokens_out: 3_000, cost_usd: 0.04 }]]);
+    expect(s).toMatchObject({ status: "done", exited_at: NG_NOW, session_summary_ref: ref, cost_usd: 0.04 });
+    // The item stays as it stopped, its thread ended with its turn.
+    expect((await call("GET", `/work-items/${id}`)).body).toMatchObject({ status: "needs_human", display_status: shown, escalation_threads: [{ thread: 1, session_id: s.id, status: "done", ended_at: NG_NOW }] });
+    // The indexer files the summary as the item's document, the one the task's Output links by its path.
+    const docs = (await call("GET", `/work-items/${id}/documents`)).body.documents;
+    expect(docs).toEqual([expect.objectContaining({ path: ref, title: `Escalation reply on ${node}`, kind: "sessions", source_kind: "session_summary", node_id: node, hook_point: "escalation", worker_session_id: s.id, session_status: "done" })]);
+    const doc = (await call("GET", `/documents/${docs[0].document_id}`)).body;
+    expect([doc.title, doc.metadata, doc.source_created_at, doc.source_updated_at]).toEqual([`Escalation reply on ${node}`, {}, null, null]);
+    for (const words of [`# Escalation reply on ${node}\n`, read, found, next]) expect(doc.content).toContain(words);
+    if (next !== `Retry ${node} when you are ready`) expect(doc.content).not.toContain("Retry");
+    // Recent tells it, and the thread takes a reply: the next turn of the same thread, the answered one's summary its own again.
+    expect(recent(b.events as any).map((l) => l.line)).toContain("escalation answered");
+    // The thread's turns so far: kraft-a3f0's had two before the visitor's.
+    const turns = b.sessions.filter((x) => x.hook_point === "escalation").length;
+    expect((await call("POST", `/work-items/${id}/escalate`, { message: "go on" })).status).toBe(200);
+    expect([s.session_summary_ref, b.events.filter((e) => e.type === "escalation_message").at(-1)?.payload]).toEqual([`items/${id}/sessions/${s.id}/out/summary.md`, expect.objectContaining({ thread: 1, turn: turns + 1 })]);
+    ticks(2, id);
+    // That turn's summary is filed at the thread's path again: one document, the newest turn's.
+    expect((await call("GET", `/work-items/${id}/documents`)).body.documents).toEqual([expect.objectContaining({ document_id: docs[0].document_id, path: ref, worker_session_id: b.sessions.at(-1)!.id })]);
+  });
+
+  it("a turn the visitor stopped (Stop agent) is not ended again", async () => {
+    const { S, ticks, call } = started();
+    const id = board(S, ESCALATED);
+    const s = S.bundles[id].sessions.find((x) => x.hook_point === "escalation" && x.status === "running")!;
+    ticks(1, id);
+    expect((await call("POST", `/work-items/${id}/escalate/stop`)).status).toBe(200);
+    expect(ticks(3, id)).toEqual([]);
+    expect([s.status, s.session_summary_ref, S.docs[id]]).toEqual(["paused", null, []]);
   });
 });
 
@@ -455,17 +511,21 @@ describe("what never moves", () => {
   it.each([
     ["motion: false", false],
     ["motion left out, as the contract suite calls the mock", "omit"],
-  ] as const)("nothing, in a mock with %s, however long it runs", (_, motion) => {
-    const { S, serve, ticks } = started(motion);
+  ] as const)("nothing, in a mock with %s, however long it runs: an escalation turn runs on", async (_, motion) => {
+    const { S, serve, ticks, call } = started(motion);
+    // The sample's turn, and one the visitor starts.
+    expect((await call("POST", `/work-items/${board(S, FAILED)}/escalate`, { message: "help" })).status).toBe(200);
     const before = JSON.stringify(S.bundles);
     expect([serve.motion, ticks(20)]).toEqual([null, []]);
     expect(JSON.stringify(S.bundles)).toBe(before);
+    expect([ESCALATED, FAILED].map((bead) => S.bundles[board(S, bead)].item.display_status)).toEqual(["escalated", "escalated"]);
   });
 
-  it("a board item that is not active: the escalated row, its turn running", () => {
+  it("a board item that is not active: the escalated row, once its turn answered", () => {
     const { S, ticks } = started();
     const b = S.bundles[board(S, ESCALATED)];
-    expect([b.item.status, b.item.display_status]).toEqual(["needs_human", "escalated"]);
+    ticks(2);
+    expect([b.item.status, b.item.display_status]).toEqual(["needs_human", "needs_you"]);
     const before = JSON.stringify(b);
     ticks(6);
     expect(JSON.stringify(b)).toBe(before);

@@ -3,7 +3,8 @@ import { buildScenario, type ItemBundle, type Scenario } from "../e2e/contract/m
 import { mockServer, type Answer } from "../e2e/contract/mocks/mockApi";
 import { ngDryRun } from "../e2e/contract/mocks/ngBoard";
 import { NG_NOW } from "../e2e/contract/mocks/ngItems";
-import { displayStatus, escalationThreads, transitions, type Ev, type Transitions } from "../e2e/contract/mocks/transitions";
+import { recent } from "../src/ng/item/events";
+import { displayStatus, escalationThreads, RESUME_PROMPT, transitions, type Ev, type Transitions } from "../e2e/contract/mocks/transitions";
 
 /** The mock's item transitions (transitions.ts): what each door changes, the events it appends, the words it refuses in. */
 
@@ -61,6 +62,13 @@ const forked = (...gates: string[]): Want[] => [
   ["cap_counters_reset", { by: "human", counters: {} }],
 ];
 
+/** What an escalation turn's start writes (`escalate.dispatch`): its message, then its session, born and launched. */
+const turnStarted = (message: Record<string, unknown> = {}, node?: string, attempt = 1): Want[] => [
+  ["escalation_message", message, node],
+  ["worker_session_created", { hook_point: "escalation", round: 0, attempt, thread: message.thread ?? 1 }, node],
+  ["worker_session_started", { hook_point: "escalation", round: 0, attempt, thread: message.thread ?? 1 }, node],
+];
+
 describe("transitions", () => {
   it.each<[string, string, Act, Record<string, unknown>, Want[]]>([
     ["approve clears the gate and runs on", "needs-gate", (T, id) => T.approve(id, "final_review"), { status: "active", display_status: "running", pending_gate: null, stop: null },
@@ -87,15 +95,15 @@ describe("transitions", () => {
     ["a cancelled rewind is not honoured", "failed", (T, id) => (T.append(id, "rewind_requested", { review_id: "r1", target: "implementation", note: "redo it" }), T.append(id, "rewind_cancelled", { review_id: "r1" }), T.retry(id)), { current_node_id: "merge_request" },
       [["rewind_requested"], ["rewind_cancelled"], ["work_item_retried", { node_id: "merge_request", steer: null }], ...forked()]],
     ["escalate, retry, pause and resume: the retry stops the turn", "failed", (T, id) => (T.escalate(id, "look"), T.retry(id), T.pause(id), T.resume(id)), { status: "active", display_status: "running", escalation_threads: [expect.objectContaining({ status: "paused" })] },
-      [["escalation_message"], ["worker_session_paused"], ["work_item_retried"], ...forked(), ["pause_requested", { sessions: [] }], ["work_item_resumed"]]],
+      [...turnStarted(), ["worker_session_paused"], ["work_item_retried"], ...forked(), ["pause_requested", { sessions: [] }], ["work_item_resumed"]]],
     ["escalate at a gate, approve, pause and resume: the approval stops the turn", "needs-gate", (T, id) => (T.escalate(id, "look"), T.approve(id, "final_review"), T.pause(id), T.resume(id)), { status: "active", display_status: "running", escalation_threads: [expect.objectContaining({ status: "paused" })] },
-      [["escalation_message"], ["pause_requested", { sessions: [expect.any(String)] }], ["worker_session_paused"], ["gate_approved"], ["node_completed"], ["pause_requested", { sessions: [] }], ["work_item_resumed"]]],
+      [...turnStarted(), ["pause_requested", { sessions: [expect.any(String)] }], ["worker_session_paused"], ["gate_approved"], ["node_completed"], ["pause_requested", { sessions: [] }], ["work_item_resumed"]]],
     ["escalate at a gate, then reject: the rejection stops the turn", "needs-gate", (T, id) => (T.escalate(id, "look"), T.reject(id, "final_review", "no")), { status: "active", escalation_threads: [expect.objectContaining({ status: "paused" })] },
-      [["escalation_message"], ["pause_requested"], ["worker_session_paused"], ["gate_rejected"]]],
+      [...turnStarted(), ["pause_requested"], ["worker_session_paused"], ["gate_rejected"]]],
     ["a thread no session stands for holds nothing up, and goes", "paused", (T, id, b) => ((b.item.escalation_threads = [{ thread: 1, session_id: "f".repeat(32), turns: 1, status: "running", ended_at: null }]), T.resume(id)), { status: "active", escalation_threads: [] },
       [["work_item_resumed"]]],
     ["an end stops an escalation turn on another node too", "failed", (T, id, b) => (T.escalate(id, "look"), (b.item.current_node_id = "summary"), T.end(id, "cancel", "dup")), { status: "abandoned", escalation_threads: [expect.objectContaining({ status: "paused" })] },
-      [["escalation_message"], ["worker_session_paused"], ["work_item_cancelled", { node_id: "summary" }], ["work_item_abandoned"]]],
+      [...turnStarted(), ["worker_session_paused"], ["work_item_cancelled", { node_id: "summary" }], ["work_item_abandoned"]]],
     ["abandon twice reclaims again with no second event", "failed", (T, id) => (T.abandon(id), T.abandon(id)), { status: "abandoned" }, [["work_item_abandoned", {}, null]]],
     ["retry runs a stopped item on its node", "failed", (T, id) => T.retry(id, "use the new token"), { status: "active", display_status: "running", stop: null, current_node_id: "merge_request" },
       [["work_item_retried", { node_id: "merge_request", steer: "use the new token", escalated: false }, "merge_request"], ...forked()]],
@@ -116,11 +124,11 @@ describe("transitions", () => {
     ["raise budget lifts the cap and retries", "kraft-58e2", (T, id) => T.raiseBudget(id, 8), { status: "active", display_status: "running", stop: null, budget_cap: expect.objectContaining({ cap_usd: 8, source: "item" }) },
       [["budget_raised", { budget_usd: 8 }, null], ["work_item_retried", { node_id: "verification" }, "verification"], ...forked()]],
     ["escalate starts a turn in a new thread", "failed", (T, id) => T.escalate(id, "look at the token", true), { status: "needs_human", display_status: "escalated" },
-      [["escalation_message", { message: "look at the token", auto: false, thread: 1, turn: 1 }, "merge_request"]]],
+      turnStarted({ message: "look at the token", auto: false, thread: 1, turn: 1 }, "merge_request")],
     ["stop escalation ends the turn, the item as it stopped", "failed", (T, id) => (T.escalate(id, "look"), T.stopEscalation(id)), { status: "needs_human", display_status: "failed" },
-      [["escalation_message", { turn: 1 }, "merge_request"], ["worker_session_paused", { session_id: expect.any(String) }, null]]],
+      [...turnStarted({ turn: 1 }, "merge_request"), ["worker_session_paused", { session_id: expect.any(String) }, null]]],
     ["a stopped escalation takes the next turn", "failed", (T, id) => (T.escalate(id, "look"), T.stopEscalation(id), T.escalate(id, "again")), { display_status: "escalated" },
-      [["escalation_message", { turn: 1 }], ["worker_session_paused"], ["escalation_message", { message: "again", thread: 1, turn: 2 }]]],
+      [...turnStarted({ turn: 1 }), ["worker_session_paused"], ...turnStarted({ message: "again", thread: 1, turn: 2 }, undefined, 2)]],
     ["a title edit", "running", (T, id) => T.patch(id, { title: "Cache embeddings by hash" }), { title: "Cache embeddings by hash", display_status: "running" },
       [["work_item_title_edited", { title: "Cache embeddings by hash" }, null]]],
     ["a description edit", "running", (T, id) => T.patch(id, { description: "Bound the cache." }), { description: "Bound the cache." },
@@ -194,6 +202,53 @@ describe("transitions", () => {
     act(T, id);
     const other = into === "ngBoard" ? S.ngArchived : S.ngBoard;
     expect([S[into].at(where), other.includes(id)]).toEqual([id, false]);
+  });
+});
+
+describe("the rate-limit poller's count", () => {
+  /** `n` relaunches the poller wrote on `node`. */
+  const relaunched = (T: Transitions, id: string, n: number, node = "verification") => {
+    for (let k = 0; k < n; k++) T.append(id, "work_item_retried", { node_id: node, loop: null, steer: RESUME_PROMPT, escalated: false, seeded: false });
+  };
+  const stopped = (n: number) => ({ type: "work_item_needs_human", payload: { node_id: "verification", reason: `rate_limit retries exhausted after ${n} attempt(s)`, kind: "cap" } });
+  // Each row's cap is the count it should read, so the poll stops and its reason says the count.
+  it.each<[string, (T: Transitions, id: string) => void, number]>([
+    // kraft-e410's row says 2 of 5: the two relaunches its events hold.
+    ["the sample's two relaunches", () => {}, 2],
+    ["more relaunches on its node, read off its events", (T, id) => relaunched(T, id, 3), 5],
+    // The counter is never reset: a stop past the retries is a bump too, and a person's retry is none.
+    ["a stop past its retries, then a person's retry", (T, id) => {
+      relaunched(T, id, 3);
+      T.append(id, "work_item_needs_human", { node_id: "verification", reason: "rate_limit retries exhausted after 5 attempt(s)", kind: "cap" });
+      T.append(id, "work_item_retried", { node_id: "verification", loop: null, steer: "try again", escalated: false, seeded: false });
+    }, 6],
+    ["another node's relaunches", (T, id) => relaunched(T, id, 5, "implementation"), 2],
+  ])("%s", (_name, setup, count) => {
+    const { S, T } = fresh();
+    const id = idOf(S, "kraft-e410");
+    const it = S.bundles[id].item;
+    expect(it.rate_limit).toEqual({ count: 2, cap: 5 });
+    setup(T, id);
+    it.rate_limit.cap = count;
+    expect(T.rateLimitRetry(id).status).toBe(200);
+    expect(S.bundles[id].events.at(-1)).toMatchObject(stopped(count));
+    // Shown only while it is rate limited.
+    expect(it.rate_limit).toBeNull();
+  });
+
+  it("goes up by one a poll, so the sample stops on the fourth: past its 2 of 5", () => {
+    const { S, T } = fresh();
+    const id = idOf(S, "kraft-e410");
+    const it = S.bundles[id].item;
+    const polls: string[] = [];
+    for (let k = 0; k < 6 && it.status !== "needs_human"; k++) {
+      // Limited again on the same node, as the relaunch it was given would be.
+      Object.assign(it, { status: "rate_limited", retry_at: AT });
+      T.rateLimitRetry(id);
+      polls.push(S.bundles[id].events.at(-1)!.type);
+    }
+    expect(polls).toEqual(["work_item_retried", "work_item_retried", "work_item_retried", "work_item_needs_human"]);
+    expect(S.bundles[id].events.at(-1)).toMatchObject(stopped(5));
   });
 });
 
@@ -373,6 +428,34 @@ describe("samples and answers as the server shapes them", () => {
     expect(b.events.filter((e) => e.type === "work_item_needs_human").at(-1)?.payload).toEqual({ node_id: "verification", reason: "Spend cap reached · $5.00 of $5.00", kind: "budget", budget: { scope: "work_item", spent_usd: 5, cap_usd: 5 } });
     const cost = b.sessions.reduce((a, s) => a + s.cost_usd, 0);
     expect([Math.abs(cost - 5) < 0.01, Math.abs(b.item.usage.total.cost_usd - 5) < 0.01, b.item.budget_cap.spent_usd]).toEqual([true, true, 5]);
+    // A spend cap interrupts nothing: the session that spent the last of it ran to its end, then the walk stopped.
+    expect(b.sessions.filter((s) => s.status !== "done")).toEqual([]);
+    const last = b.sessions.at(-1);
+    expect([last.hook_point, last.attempt, last.session_summary_ref, b.item.stop.task, b.item.stop.attempt]).toEqual(["verification.review.code_review", 2, `.engineering/sessions/${last.id}.md`, "verification.review.code_review", 2]);
+  });
+
+  it.each([
+    // A time cap stops its session (`session_exited`, capped_out); a spend cap, a stuck fix loop and a question let the
+    // attempt finish first. Each exit reports the agent's usage.
+    ["kraft-7d21, stopped by its running-time cap", "kraft-7d21", "capped_out"],
+    ["kraft-58e2, stopped by its spend cap", "kraft-58e2", "done"],
+    ["kraft-2c77, stuck, its fix loop making no progress", "kraft-2c77", "done"],
+    ["kraft-a3f0, stopped on its agent's question", "kraft-a3f0", "done"],
+  ])("%s: its last attempt's exit is on the timeline before the stop, and Recent has it ended", (_name, bead, status) => {
+    const { S } = server();
+    const b = S.bundles[idOf(S, bead)];
+    const last = b.sessions.filter((s) => s.hook_point === "verification.review.code_review").at(-1);
+    const exit = b.events.find((e) => e.type === "worker_session_exited" && e.payload.session_id === last.id)!;
+    const stop = b.events.filter((e) => e.type === "work_item_needs_human").at(-1)!;
+    expect(last.status).toBe(status);
+    expect(exit.payload).toEqual({ session_id: last.id, status, wall_ms: last.wall_ms, model: "claude-sonnet-4-5", tokens_in: last.tokens_in, tokens_cache_write: 0, tokens_cache_read: 0, tokens_out: last.tokens_out, cost_usd: last.cost_usd });
+    expect([last.exited_at, exit.seq < stop.seq]).toEqual([exit.created_at, true]);
+    expect(recent(b.events as any).map((l) => l.line)).not.toContain("a session is running on verification");
+  });
+
+  it("kraft-a3f0's escalation turns count their attempts as `store.create_session` does", () => {
+    const { S } = server();
+    expect(S.bundles[idOf(S, "kraft-a3f0")].sessions.filter((s) => s.hook_point === "escalation").map((s) => s.attempt)).toEqual([1, 2]);
   });
 });
 

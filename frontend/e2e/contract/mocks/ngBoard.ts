@@ -29,6 +29,14 @@ function spendCapped(i: any, b: ItemBundle) {
   const sum = (ss: any[]) => Math.round(ss.reduce((a, s) => a + (s.cost_usd ?? 0), 0) * 10_000) / 10_000;
   i.usage = { ...i.usage, total: { ...i.usage.total, cost_usd: sum(b.sessions) }, by_node: i.usage.by_node.map((r: any) => ({ ...r, cost_usd: sum(b.sessions.filter((s) => s.node_id === r.node)) })) };
   i.budget_cap = { ...i.budget_cap, spent_usd: 5 };
+  // A spend cap interrupts nothing: the session that spent the last of it ran to its end (done, its summary written,
+  // its usage on its `worker_session_exited` as `store.session_exited` writes it), and the walk stopped before the next
+  // agent task launched (`dispatch.over_budget`). No session is capped out: that is a time cap's or a loop's mark.
+  for (const s of b.sessions.filter((x) => x.status === "capped_out")) {
+    Object.assign(s, { status: "done", session_summary_ref: `.engineering/sessions/${s.id}.md`, tokens_cache_write: 0, tokens_cache_read: 0 });
+    const exit = b.events.find((e) => e.type === "worker_session_exited" && e.payload.session_id === s.id)!;
+    exit.payload = { session_id: s.id, status: "done", wall_ms: s.wall_ms, model: s.model, tokens_in: s.tokens_in, tokens_cache_write: 0, tokens_cache_read: 0, tokens_out: s.tokens_out, cost_usd: s.cost_usd };
+  }
 }
 
 const ROWS: Row[] = [
