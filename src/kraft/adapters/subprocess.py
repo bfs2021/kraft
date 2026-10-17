@@ -509,6 +509,25 @@ def _rate_limit_rejection(log_path: Path, *, reader: str | None) -> _usage.RateL
     return _usage.READERS[reader].rate_limit(log_path)
 
 
+async def uncancellable(awaitable):
+    """Await `awaitable` to its end through any cancel, then raise the cancel:
+    a clean-up cut short is the mid-operation state it was there to undo."""
+    task = asyncio.ensure_future(awaitable)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+        except BaseException:  # noqa: BLE001 - read from `task` below
+            pass
+    if cancelled:
+        if not task.cancelled() and task.exception() is not None:
+            logger.warning("clean-up after a cancel failed: %r", task.exception())
+        raise asyncio.CancelledError
+    return task.result()
+
+
 async def _kill_group(pgid: int, grace: float, reap: Callable[[], object] | None = None) -> None:
     """SIGTERM `pgid` (again at the first liveness check), then SIGKILL
     whatever is still there after `grace` seconds. `frontend/e2e/serve.py`'s
@@ -1048,17 +1067,97 @@ async def run_task(
     )
     watcher.start()
     oom: _backends.OomKill | None = None
+    started = False
+
+    async def wind_down() -> None:
+        """The `finally` below, past stopping the watcher: every way out of the
+        poll loop ends with it."""
+        nonlocal oom
+        # A paused row means a human interrupted this session and `_terminate`
+        # SIGINT'd it rather than SIGTERM'ing it, so the agent CLI would flush
+        # the result envelope that carries its cost (Kraft-s7c04.18). The wait
+        # has to be here and not in the pause route: `_kill_group` below
+        # SIGTERMs the whole group the moment this loop leaves, which on a
+        # cancel is milliseconds after the SIGINT, and a sleep in the route
+        # would run concurrently and protect nothing. The group leader is the
+        # `/bin/sh` wrapper, not the agent, so `proc.poll()` reaping the
+        # wrapper says nothing about whether the agent has finished writing.
+        # `db.write` for a SELECT is deliberate, not a slip: the pause is
+        # written by the API route concurrently with this coroutine, and
+        # `db.write` queues onto the serialized writer so it observes that
+        # write. `db.read` goes to the separate `_reader` connection, whose
+        # snapshot may predate the pause -- which would skip the flush wait
+        # and lose exactly the cost this fix exists to keep.
+        paused = (
+            await db.write(lambda c: store.session_status(c, session_id, work_item_id=work_item_id))
+            == SessionStatus.PAUSED
+        )
+        # Only a session that started was ever sent the SIGINT this waits on.
+        if paused and started and flush_grace:
+            await _flush_sleep(flush_grace)
+        # Same cancellation as above: without this inside `finally`, a pause
+        # or skip propagates CancelledError past the kill calls entirely, and
+        # a sandboxed session's container -- parented by the docker daemon,
+        # not `pgid`'s process group -- keeps running against the bind-mounted
+        # worktree with nothing left to stop it (Kraft-rki). The container
+        # kill gets its own nested `finally` so a `_kill_group` failure (a
+        # dead pgid can still raise -- PermissionError, not just
+        # ProcessLookupError, once its last member is gone) can't shadow it.
+        try:
+            await _kill_group(pgid, group_kill_grace, reap=proc.poll)
+        finally:
+            # Nested so neither a collect nor a close that raises skips what
+            # follows it: the session's commits are published whatever became
+            # of its result file.
+            try:
+                if backend is not None:
+                    # Everything below reads the result file: bring it home
+                    # before the sandbox holding it goes -- and whether its
+                    # memory limit killed the session, which goes with it.
+                    try:
+                        await backend.collect(session_id, result_path, work_item_id=work_item_id)
+                        oom = await backend.oom_killed(session_id, work_item_id=work_item_id)
+                    finally:
+                        # The worker, then its route out (spec §4).
+                        try:
+                            await backend.close(session_id, work_item_id=work_item_id)
+                        finally:
+                            if network:
+                                await close_egress(backend, session_id, work_item_id=work_item_id)
+            finally:
+                if refs:
+                    await _sync_refs(db, backend, refs, work_item_id, session_id)
+        if paused:
+            # The cancelled path never reaches `session_exited`, so Task 6's
+            # hook inside it never fires. Idempotent with that hook for the
+            # pause that was not cancelled: both write the same numbers and
+            # both are guarded on the row still being paused.
+            await db.write(
+                lambda c: store.record_pause_usage(
+                    c,
+                    session_id,
+                    _usage.read(log_path, result_path, reader),
+                    reader,
+                    work_item_id=work_item_id,
+                )
+            )
 
     try:
         try:
             pid_start_time = psutil.Process(proc.pid).create_time()
         except psutil.Error:
             pid_start_time = None
-        await db.write(
+        started = await db.write(
             lambda c: store.session_running(
                 c, session_id, proc.pid, pid_start_time, work_item_id=work_item_id
             )
         )
+        if not started:
+            # The pre-launch check above, one step later: a pause landed
+            # between it and here, while the row still had no pid for the
+            # pause to signal. The `finally` below stops the child just
+            # launched, as it does for a pause that cancels the poll loop.
+            return SessionStatus.PAUSED
 
         # Poll instead of `await asyncio.to_thread(proc.wait)`: a blocked thread is
         # uncancellable, so on SIGTERM the executor task's cancel() could not
@@ -1107,73 +1206,15 @@ async def run_task(
         # this function leaves the loop.
         stop.set()
         watcher.join(timeout=2)
-        # A paused row means a human interrupted this session and `_terminate`
-        # SIGINT'd it rather than SIGTERM'ing it, so the agent CLI would flush
-        # the result envelope that carries its cost (Kraft-s7c04.18). The wait
-        # has to be here and not in the pause route: `_kill_group` below
-        # SIGTERMs the whole group the moment this loop leaves, which on a
-        # cancel is milliseconds after the SIGINT, and a sleep in the route
-        # would run concurrently and protect nothing. The group leader is the
-        # `/bin/sh` wrapper, not the agent, so `proc.poll()` reaping the
-        # wrapper says nothing about whether the agent has finished writing.
-        # `db.write` for a SELECT is deliberate, not a slip: the pause is
-        # written by the API route concurrently with this coroutine, and
-        # `db.write` queues onto the serialized writer so it observes that
-        # write. `db.read` goes to the separate `_reader` connection, whose
-        # snapshot may predate the pause -- which would skip the flush wait
-        # and lose exactly the cost this fix exists to keep.
-        paused = (
-            await db.write(lambda c: store.session_status(c, session_id, work_item_id=work_item_id))
-            == SessionStatus.PAUSED
-        )
-        if paused and flush_grace:
-            await _flush_sleep(flush_grace)
-        # Same cancellation as above: without this inside `finally`, a pause
-        # or skip propagates CancelledError past the kill calls entirely, and
-        # a sandboxed session's container -- parented by the docker daemon,
-        # not `pgid`'s process group -- keeps running against the bind-mounted
-        # worktree with nothing left to stop it (Kraft-rki). The container
-        # kill gets its own nested `finally` so a `_kill_group` failure (a
-        # dead pgid can still raise -- PermissionError, not just
-        # ProcessLookupError, once its last member is gone) can't shadow it.
-        try:
-            await _kill_group(pgid, group_kill_grace, reap=proc.poll)
-        finally:
-            # Nested so neither a collect nor a close that raises skips what
-            # follows it: the session's commits are published whatever became
-            # of its result file.
-            try:
-                if backend is not None:
-                    # Everything below reads the result file: bring it home
-                    # before the sandbox holding it goes -- and whether its
-                    # memory limit killed the session, which goes with it.
-                    try:
-                        await backend.collect(session_id, result_path, work_item_id=work_item_id)
-                        oom = await backend.oom_killed(session_id, work_item_id=work_item_id)
-                    finally:
-                        # The worker, then its route out (spec §4).
-                        try:
-                            await backend.close(session_id, work_item_id=work_item_id)
-                        finally:
-                            if network:
-                                await close_egress(backend, session_id, work_item_id=work_item_id)
-            finally:
-                if refs:
-                    await _sync_refs(db, backend, refs, work_item_id, session_id)
-        if paused:
-            # The cancelled path never reaches `session_exited`, so Task 6's
-            # hook inside it never fires. Idempotent with that hook for the
-            # pause that was not cancelled: both write the same numbers and
-            # both are guarded on the row still being paused.
-            await db.write(
-                lambda c: store.record_pause_usage(
-                    c,
-                    session_id,
-                    _usage.read(log_path, result_path, reader),
-                    reader,
-                    work_item_id=work_item_id,
-                )
-            )
+        # A launch whose session never read running leaves the `try` above
+        # with no await, so the cancel that stops it lands in here instead:
+        # retry's `_stop_live_sessions` writes each live session, then cancels
+        # the walk. Cut short at the first await below, nothing would kill the
+        # child or tear its sandbox down; it runs to its end, then the cancel.
+        if started:
+            await wind_down()
+        else:
+            await uncancellable(wind_down())
     if capped:
         hit = time_cap.hit
 

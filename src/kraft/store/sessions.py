@@ -491,14 +491,25 @@ def latest_session_per_task_at_current_node(
 
 def session_running(
     conn: sqlite3.Connection, session_id, pid, pid_start_time, *, work_item_id: str
-) -> None:
+) -> bool:
+    """Mark a launched session running, and say whether it was. False when a
+    pause landed after the adapter's pre-launch check and before this: the row
+    stays paused, no `worker_session_started` follows its
+    `worker_session_paused`, and the caller stops the child it just launched.
+    Raises `LookupError` for a session `work_item_id` has no row for: that is a
+    caller's bug, not a pause, and must not read as one."""
     # `status != 'paused'`: a pause that landed while this session was still
     # pending must not be undone by the launch finishing.
-    conn.execute(
+    cur = conn.execute(
         "UPDATE worker_sessions SET status = 'running', pid = ?, pid_start_time = ?, "
         "started_at = ? WHERE work_item_id = ? AND id = ? AND status != ?",
         (pid, pid_start_time, _now(), work_item_id, session_id, SessionStatus.PAUSED),
     )
+    if cur.rowcount == 0:
+        # The guard's only miss on a row that exists is a paused one.
+        if session_status(conn, session_id, work_item_id=work_item_id) != SessionStatus.PAUSED:
+            raise LookupError(f"no worker session {session_id!r} on {work_item_id!r}")
+        return False
     row = conn.execute(
         "SELECT work_item_id, node_id, hook_point, round, attempt, thread FROM worker_sessions "
         "WHERE work_item_id = ? AND id = ?",
@@ -518,6 +529,7 @@ def session_running(
             "pid": pid,
         },
     )
+    return True
 
 
 #: Every token kind a row stores, apart (Ruling 211), in `_tokens`' order.
