@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_692df0f668fe9448___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-17 17:47 +0000
+            created at 2026-10-17 21:56 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -346,7 +346,7 @@
     <p class="pln"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t">        <span class="com"># wait&#x27;s timeout is its own, and the observation this re-entry makes</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t265" href="#t265">265</a></span><span class="t">        <span class="com"># is what checks it (`observe`).</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t266" href="#t266">266</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="key">await</span> <span class="nam">st</span><span class="op">.</span><span class="nam">db</span><span class="op">.</span><span class="nam">write</span><span class="op">(</span><span class="key">lambda</span> <span class="nam">c</span><span class="op">:</span> <span class="nam">store</span><span class="op">.</span><span class="nam">mark_reentered</span><span class="op">(</span><span class="nam">c</span><span class="op">,</span> <span class="nam">wid</span><span class="op">)</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t267" href="#t267">267</a></span><span class="t">            <span class="key">return</span> <span class="key">False</span>  <span class="com"># ended since `tick` selected it (Kraft-dncfg)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t267" href="#t267">267</a></span><span class="t">            <span class="key">return</span> <span class="key">False</span>  <span class="com"># ended since `tick` selected it (Kraft-dncfg), or its checkout is busy</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t268" href="#t268">268</a></span><span class="t">        <span class="com"># `store.node_index`, not `chain[&quot;nodes&quot;]`: a V1 row&#x27;s</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t269" href="#t269">269</a></span><span class="t">        <span class="com"># `chain_definition` is `&quot;{}&quot;`. `None` means this node is not in this</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t270" href="#t270">270</a></span><span class="t">        <span class="com"># item&#x27;s chain at all -- a stop (the bracket&#x27;s), not a restart at zero.</span>&nbsp;</span><span class="r"></span></p>
@@ -400,7 +400,7 @@
             <a class="nav" href="z_692df0f668fe9448___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-17 17:47 +0000
+            created at 2026-10-17 21:56 +0000
         </p>
     </div>
 </footer>
