@@ -18,10 +18,15 @@ fresh request would, against the item as it is now. Four ends:
 * it starts, and the door writes its own event;
 * the door now refuses it, or fails: the item stays where it came from, and
   `work_item_dequeued` carries the refusal or the error;
-* another request took the slot first: the door queues it again, and it is
-  given back the place it had;
-* the server shuts down before the door claims it: it is queued again, in its
+* another request took the slot or the checkout first: it is queued again,
+  and given back the place it had;
+* the server shuts down before it is claimed: it is queued again, in its
   place, and the next server starts it.
+
+A door that spawns its work before that work claims the item or writes its
+session (an escalation, a reply, an escalation's own retry, Kraft's own
+agents at a stop) has not started it when it returns: the queue waits for
+the claim or the session (`_SPAWNS`).
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from kraft import events, storage, store
+from kraft.store._common import joined
 from kraft.vocab import WorkItemEvent, WorkItemStatus
 
 logger = logging.getLogger(__name__)
@@ -110,39 +116,45 @@ async def _start_one(app, wid: str) -> bool:
 
 
 async def _take_and_start(app, wid: str) -> bool:
-    # deferred: kraft.api starts this module's poller
-    from kraft.api.routes import lifecycle, review
-
     st = app.state
     saved = await st.db.write(lambda c: store.take_queued(c, wid))
     if saved is None:
         return False  # paused, ended or started since `tick` selected it
     request = _request(app, saved["headers"])
+    claimed = asyncio.Event()
+    replay = store.REPLAY_CLAIMED.set(claimed) if saved["verb"] in _SPAWNS else None
+    before = st.tasks.get(wid)
+    work = None
     try:
-        if saved["verb"] == "retry":
-            await lifecycle._retry(wid, lifecycle.Retry(**saved["body"]), request)
-        elif saved["verb"] == "continue":
-            await lifecycle.continue_held(wid, saved["body"], request)
-        elif saved["verb"] == "self_retry":
-            await lifecycle.self_retry_held(wid, saved["body"], request)
-        elif saved["verb"] == "escalate":
-            await lifecycle.escalate_work_item(wid, lifecycle.Escalate(**saved["body"]), request)
-        elif saved["verb"] == "reply":
-            await review.reply_held(wid, saved["body"], request)
+        try:
+            await _replay(wid, saved, request)
+        finally:
+            if replay is not None:
+                store.REPLAY_CLAIMED.reset(replay)
+        # Only work this replay spawned: a door that spawned nothing (a reply
+        # beside a live auto-review) leaves the task that was there before.
+        work = st.tasks.get(wid) if replay is not None else None
+        if work is not None and work is not before:
+            await _until_claimed(wid, work, claimed)
         else:
-            await lifecycle.resume_work_item(wid, lifecycle.Resume(**saved["body"]), request)
+            work = None
     except asyncio.CancelledError:
-        # The server is shutting down mid-start. An item the door has not
+        # The server is shutting down mid-start. An item that has not been
         # claimed goes back in the queue, in its place, for the next server to
         # start: left where it came from, its request would be lost unsaid.
-        await st.db.write(lambda c: _requeue(c, wid, saved))
+        # Work it spawned that has not claimed it is stopped with it. Work
+        # that has claimed it is running, and is not asked for again.
+        if not claimed.is_set():
+            if work is not None:
+                work.cancel()
+            await st.db.write(lambda c: _requeue(c, wid, saved))
         raise
     except HTTPException as exc:
-        await _dequeued(st, wid, "refused", str(exc.detail))
+        await _dequeued(st, wid, "refused", str(exc.detail), saved)
         return False
     except Exception as exc:  # noqa: BLE001 -- it has left the queue: say so, and let the pass go on
         logger.exception("start queue: starting %s failed", wid)
-        await _dequeued(st, wid, "failed", f"{type(exc).__name__}: {exc}")
+        await _dequeued(st, wid, "failed", f"{type(exc).__name__}: {exc}", saved)
         return False
     status = st.db.read(
         lambda c: c.execute("SELECT status FROM work_items WHERE id = ?", (wid,)).fetchone()[
@@ -150,11 +162,68 @@ async def _take_and_start(app, wid: str) -> bool:
         ]
     )
     if status == WorkItemStatus.QUEUED:
-        # Another request took the slot between `tick`'s look and the door's
-        # claim, and the door queued this one again: not to the back.
+        # Another request took the slot or the checkout between `tick`'s look
+        # and the claim, and the request was queued again: not to the back.
         await st.db.write(lambda c: store.keep_place(c, wid, saved["at"]))
         return False
     return True
+
+
+#: Verbs whose door spawns the work and returns before that work claims the
+#: item or writes its session. The queue waits for one or the other
+#: (`store.replay_claimed`), or for the work to end, before it counts the
+#: item started: a claim lost meanwhile keeps its place, and a shutdown
+#: meanwhile puts the request back. Never longer than `_CLAIM_WAIT_S`.
+_SPAWNS = ("self_retry", "escalate", "reply", "follow_up")
+
+#: How long one replay may hold up the queue's pass before its claim (an
+#: add-on fetch in `restore_pins` has no timeout of its own). Past it the
+#: replay counts as started, as it did before the wait: a claim it loses
+#: later is queued again at the back.
+_CLAIM_WAIT_S = 60
+
+
+async def _until_claimed(wid: str, work: asyncio.Task, claimed: asyncio.Event) -> None:
+    waiting = asyncio.ensure_future(claimed.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {work, waiting}, timeout=_CLAIM_WAIT_S, return_when=asyncio.FIRST_COMPLETED
+        )
+        if not done:
+            logger.warning(
+                "start queue: %s has not claimed its start in %ss; counted as started",
+                wid,
+                _CLAIM_WAIT_S,
+            )
+    finally:
+        waiting.cancel()
+
+
+async def _replay(wid: str, saved: dict, request: Request) -> None:
+    """Make the saved request again through the door that queued it."""
+    # deferred: kraft.api starts this module's poller
+    from kraft.api import deps
+    from kraft.api.routes import lifecycle, review
+
+    try:
+        if saved["verb"] == "retry":
+            await lifecycle._retry(wid, lifecycle.Retry(**saved["body"]), request)
+        elif saved["verb"] in ("continue", "start"):
+            await lifecycle.continue_held(wid, saved["body"], request)
+        elif saved["verb"] == "self_retry":
+            await lifecycle.self_retry_held(wid, saved["body"], request)
+        elif saved["verb"] == "escalate":
+            await lifecycle.escalate_work_item(wid, lifecycle.Escalate(**saved["body"]), request)
+        elif saved["verb"] == "follow_up":
+            await lifecycle.follow_up_held(wid, saved["body"], request)
+        elif saved["verb"] == "reply":
+            await review.reply_held(wid, saved["body"], request)
+        else:
+            await lifecycle.resume_work_item(wid, lifecycle.Resume(**saved["body"]), request)
+    except deps.AlreadyRunning:
+        # Kraft's own replays (`self_retry`, `follow_up`) spawn with no check
+        # of their own: refused, as a door's 409 is, not failed.
+        raise HTTPException(409, "a walk is already running for this work item") from None
 
 
 def _requeue(conn, wid: str, saved: dict) -> None:
@@ -172,10 +241,13 @@ def _requeue(conn, wid: str, saved: dict) -> None:
         store.keep_place(conn, wid, saved["at"])
 
 
-async def _dequeued(st, wid: str, why: str, detail: str) -> None:
-    """The item was put back and did not start: its timeline says why. `to` is
-    the status it is in now, which an open board shows: where it came from, or
-    the stop of a door that failed after its claim (`stops.claimed_or_stopped`)."""
+async def _dequeued(st, wid: str, why: str, detail: str, saved: dict) -> None:
+    """The item was put back and did not start: its timeline says why, and
+    what was dropped with it (`saved`, a person's steer or message included).
+    `to` is the status it is in now, which an open board shows: where it came
+    from, or the stop of a door that failed after its claim
+    (`stops.claimed_or_stopped`)."""
+    detail = joined(detail, saved)
 
     def write(c):
         to = c.execute("SELECT status FROM work_items WHERE id = ?", (wid,)).fetchone()["status"]

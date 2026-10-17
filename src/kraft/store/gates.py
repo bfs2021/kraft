@@ -78,6 +78,22 @@ def hold_for_checkout(conn: sqlite3.Connection, work_item_id, holder: str, body:
     )
 
 
+def queue_follow_up(conn: sqlite3.Connection, work_item_id, holder: str) -> bool:
+    """Queue what Kraft's own agents do at a stop (the gate's reply and
+    review, the stop's auto-escalation) while `holder` uses the checkout:
+    replayed as Kraft's (`follow_up`, `executor.gates.follow_up`), with no
+    person's caller."""
+    return queue_work_item(
+        conn,
+        work_item_id,
+        verb="follow_up",
+        body={},
+        headers={},
+        from_statuses=["needs_human"],
+        held_by=holder,
+    )
+
+
 def pass_unchanged_revision(conn: sqlite3.Connection, work_item_id, gate, rationale) -> None:
     """Clear a chain revision gate whose proposal changes nothing, without
     asking anyone (Kraft-oydes): the proposal's rationale on
@@ -213,6 +229,17 @@ _REJECTION_SPENT = (
     GateEvent.REQUESTED,
     GateEvent.APPROVED,
 )
+
+
+def steer_source(conn: sqlite3.Connection, work_item_id: str, steer: str | None) -> str:
+    """Who wrote `steer`, the item's pending steer (`walk.run`'s
+    `steer_source`): `gate_review` when it is the note of an agent's rejection
+    the item still sits on (a re-run `reject_gate` held for the checkout),
+    `human` otherwise. Read off the rejection itself, so a person who pauses
+    the held item and resumes it does not make the agent's note theirs."""
+    rejected = last_rejection(conn, work_item_id)
+    by_agent = rejected is not None and rejected.get("by") == "agent"
+    return "gate_review" if steer and by_agent and rejected.get("note") == steer else "human"
 
 
 def last_rejection(conn: sqlite3.Connection, work_item_id: str) -> dict | None:

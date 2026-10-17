@@ -4,12 +4,14 @@ import asyncio
 import dataclasses
 import json
 from functools import partial
+from pathlib import Path
 
 import pytest
 from support.api import (
     _blocked_after,
     _force_node,
     _hold_storage,
+    _in_state,
     _paused,
     _poll_events,
     _post_default,
@@ -25,6 +27,8 @@ from support.api import (
 from support.harness import IN_PLACE, v1_named_chain
 
 from kraft import start_queue
+
+DOORS = json.loads((Path(__file__).parent / "api" / "lifecycle_doors.json").read_text())
 
 
 @pytest.fixture
@@ -116,9 +120,11 @@ def test_a_start_the_door_now_refuses_puts_the_item_back_and_says_why(
     client, repo, stopped, board, monkeypatch, breaks, why, detail
 ):
     """Refused or failed, the item is back where it came from with the reason
-    in its timeline, and the pass goes on to the next queued item."""
+    in its timeline, and the steer it was asked with, and the pass goes on to
+    the next queued item."""
     wid = stopped
-    assert client.post(f"/api/work-items/{wid}/retry", json={}).json()["status"] == "queued"
+    queued = client.post(f"/api/work-items/{wid}/retry", json={"steer": "keep it"})
+    assert queued.json()["status"] == "queued"
     after = _paused(client, repo, chain_template="default")
     assert client.post(f"/api/work-items/{after}/resume", json={}).json()["status"] == "queued"
     breaks(wid, monkeypatch)
@@ -131,17 +137,35 @@ def test_a_start_the_door_now_refuses_puts_the_item_back_and_says_why(
     assert last["type"] == "work_item_dequeued"
     assert last["payload"]["why"] == why
     assert detail in last["payload"]["detail"]
+    assert last["payload"]["detail"].endswith(
+        "; the queued retry was dropped, with its steer: keep it"
+    )
 
 
+@pytest.mark.parametrize(
+    ("verb", "stop"),
+    [
+        ("resume", "resume claimed this item but could not start a walk"),
+        ("start", "a queued start claimed this item but could not start a walk"),
+    ],
+    ids=["resume", "start"],
+)
 def test_a_start_that_fails_after_its_claim_reports_the_stop_it_left(
-    client, repo, board, monkeypatch
+    client, repo, board, monkeypatch, verb, stop
 ):
-    """The door's bracket stopped the item. The event names that status, which
-    an open board shows, not the one the item was queued from."""
+    """The door's bracket stopped the item, saying which start it was. The
+    event names that status, which an open board shows, not the one the item
+    was queued from."""
+    import sqlite3
+
     from kraft import store
 
     wid = _paused(client, repo, chain_template="default")
-    assert client.post(f"/api/work-items/{wid}/resume", json={}).json()["status"] == "queued"
+    with _db() as c, c:
+        c.row_factory = sqlite3.Row
+        assert store.queue_work_item(
+            c, wid, verb=verb, body={}, headers={}, from_statuses=["paused"]
+        )
 
     def boom(*_):
         raise RuntimeError("boom")
@@ -152,8 +176,10 @@ def test_a_start_that_fails_after_its_claim_reports_the_stop_it_left(
     assert _tick(client) == []
 
     assert _status_of(client, wid) == "needs_human"
-    last = client.get(f"/api/work-items/{wid}/events").json()[-1]
-    assert (last["type"], last["payload"]["to"]) == ("work_item_dequeued", "needs_human")
+    evts = client.get(f"/api/work-items/{wid}/events").json()
+    assert (evts[-1]["type"], evts[-1]["payload"]["to"]) == ("work_item_dequeued", "needs_human")
+    [stopped] = [e for e in evts if e["type"] == "work_item_needs_human"]
+    assert stopped["payload"]["reason"].startswith(stop)
 
 
 def test_an_autostart_filed_on_a_full_board_starts_when_a_slot_frees(client, repo, board):
@@ -356,3 +382,161 @@ def test_removing_the_limit_releases_a_held_start(client, repo, board):
     )
 
     assert _tick(client) == [new]
+
+
+@pytest.mark.parametrize(
+    ("lost", "left", "queued"),
+    [
+        ("checkout", [], True),
+        ("shutdown", None, True),
+        ("shutdown-after-its-session", "running", False),
+    ],
+    ids=["checkout", "shutdown", "shutdown-after-its-session"],
+)
+def test_a_spawned_replay_is_started_only_once_it_holds_its_session(
+    client, repo, quiet, monkeypatch, lost, left, queued
+):
+    """An escalation's door returns before its session is written. Its
+    checkout taken meanwhile, it is queued again in its place; the server
+    shutting down meanwhile, it goes back in its place and no agent starts.
+    Once its session is written it has started: a shutdown then asks for it
+    no second time."""
+    import sqlite3
+
+    from kraft import executor, store
+
+    working = _in_state(client, repo, DOORS["states"]["running"], in_place=True, title="A")
+    wid = _in_state(client, repo, DOORS["states"]["failed"], in_place=True)
+    later = _in_state(client, repo, DOORS["states"]["paused"], in_place=True)
+    with _db() as c, c:
+        c.row_factory = sqlite3.Row
+        for item, verb, body, came in (
+            (wid, "escalate", {"message": "look"}, "needs_human"),
+            (later, "resume", {}, "paused"),
+        ):
+            assert store.queue_work_item(
+                c, item, verb=verb, body=body, headers={}, from_statuses=[came], held_by=working
+            )
+        [at] = c.execute("SELECT queued_request FROM work_items WHERE id = ?", (wid,)).fetchone()
+    _set_status(working, "paused")
+    reached = asyncio.Event()
+
+    async def before_the_session(row):
+        if lost == "checkout":
+            _set_status(working, "active")
+            return
+        if lost == "shutdown-after-its-session":
+            store.replay_claimed()  # as `run_task` says once the session is written
+        reached.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(executor, "restore_pins", before_the_session)
+
+    async def tick():
+        ticking = asyncio.ensure_future(start_queue.tick(client.app))
+        if lost == "checkout":
+            return await ticking
+        await reached.wait()
+        ticking.cancel()
+        await asyncio.gather(ticking, return_exceptions=True)
+        await asyncio.sleep(0)
+        work = client.app.state.tasks.get(wid)
+        return "running" if work is not None and not work.done() else work
+
+    assert client.portal.call(tick) == left
+    with _db() as c:
+        held = c.execute(
+            "SELECT id, queued_request FROM work_items WHERE status = 'queued' "
+            "ORDER BY json_extract(queued_request, '$.at'), id"
+        ).fetchall()
+    assert [i for i, _ in held] == ([wid, later] if queued else [later])
+    if queued:
+        assert json.loads(held[0][1])["at"] == json.loads(at)["at"]
+
+
+@pytest.mark.parametrize(
+    ("verb", "body", "runs_on"),
+    [
+        ("escalate", {"message": "look"}, ("kraft.escalate", "_record_message")),
+        ("self_retry", None, ("kraft.executor.retry", "retry")),
+        ("escalate", {"message": "look"}, ("kraft.executor", "restore_pins")),
+    ],
+    ids=["escalate", "self_retry", "never-claims"],
+)
+def test_a_spawned_replay_counts_as_started_once_it_holds_its_claim(
+    client, repo, quiet, monkeypatch, verb, body, runs_on
+):
+    """Its session written, or its claim made: started, while its work runs
+    on. The queue does not wait out an agent's whole turn, nor, for one stuck
+    before its session, longer than `_CLAIM_WAIT_S`."""
+    import importlib
+    import sqlite3
+
+    from kraft import events, store
+
+    working = _in_state(client, repo, DOORS["states"]["running"], in_place=True, title="A")
+    wid = _in_state(client, repo, DOORS["states"]["failed"], in_place=True)
+    with _db() as c, c:
+        c.row_factory = sqlite3.Row
+        if body is None:
+            body = {"cursor": events.read_after(c, 0, wid)[-1]["seq"]}
+            events.append(
+                c,
+                wid,
+                "work_item_self_retry_requested",
+                {"node_id": "implementation", "key": None, "gate_key": None, "steer": "s"},
+            )
+        assert store.queue_work_item(
+            c, wid, verb=verb, body=body, headers={}, from_statuses=["needs_human"]
+        )
+    _set_status(working, "paused")
+
+    async def runs_on_and_on(*a, **kw):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(importlib.import_module(runs_on[0]), runs_on[1], runs_on_and_on)
+    monkeypatch.setattr(start_queue, "_CLAIM_WAIT_S", 0.5)
+
+    async def tick():
+        return await asyncio.wait_for(start_queue.tick(client.app), 10)
+
+    assert client.portal.call(tick) == [wid]
+
+
+@pytest.mark.parametrize(
+    ("state", "verb", "body", "started", "why"),
+    [
+        ("gate", "reply", {"gate": "spec_approval"}, True, None),
+        ("failed", "follow_up", {}, False, "refused"),
+        ("failed", "self_retry", {"cursor": 0}, False, "refused"),
+    ],
+    ids=["reply", "follow_up", "self_retry"],
+)
+def test_a_replay_beside_a_walk_already_running_is_not_waited_on(
+    client, repo, quiet, state, verb, body, started, why
+):
+    """A reply's door spawns nothing beside a live auto-review (its threads
+    wait for the next comment), and the queue does not wait out that walk.
+    Kraft's own replays that cannot spawn are refused, not failed."""
+    import sqlite3
+
+    from kraft import store
+
+    wid = _in_state(client, repo, DOORS["states"][state], in_place=True)
+    with _db() as c, c:
+        c.row_factory = sqlite3.Row
+        assert store.queue_work_item(
+            c, wid, verb=verb, body=body, headers={}, from_statuses=["needs_human"]
+        )
+
+    async def tick():
+        client.app.state.tasks[wid] = asyncio.get_running_loop().create_future()
+        return await asyncio.wait_for(start_queue.tick(client.app), 10)
+
+    assert client.portal.call(tick) == ([wid] if started else [])
+    dequeued = [
+        e["payload"]["why"]
+        for e in client.get(f"/api/work-items/{wid}/events").json()
+        if e["type"] == "work_item_dequeued"
+    ]
+    assert dequeued == ([why] if why else [])

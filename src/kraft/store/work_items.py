@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 import sqlite3
 from collections.abc import Iterable
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 
 from kraft import events
 from kraft.store import _now as _now  # test seam for wall-clock checks
-from kraft.store._common import write_status
+from kraft.store._common import joined, write_status
 from kraft.store.chain import materialized_chain_of
 from kraft.vocab import (
     ENDED,
@@ -534,7 +536,9 @@ def dequeue_work_item(
 ) -> bool:
     """Take a queued or blocked item out of the hold for good: a person paused
     it, or what it comes after was abandoned. It goes back to the status it
-    came from, stop reason included."""
+    came from, stop reason included. Its event says what was dropped after
+    any `detail` (`_common.dropped`), with the words a person attached, so
+    they are not lost."""
     request = take_queued(conn, work_item_id)
     if request is None:
         return False
@@ -542,9 +546,22 @@ def dequeue_work_item(
         conn,
         work_item_id,
         WorkItemEvent.DEQUEUED,
-        {"why": why, "detail": detail, "to": request["from"]},
+        {"why": why, "detail": joined(detail, request), "to": request["from"]},
     )
     return True
+
+
+#: Set by the start queue while it replays a request whose door spawns the
+#: work before that work claims the item or writes its session
+#: (`start_queue._SPAWNS`). The work's task inherits it, and `replay_claimed`
+#: says the replay has started, so the queue does not count it started sooner.
+REPLAY_CLAIMED: ContextVar[asyncio.Event | None] = ContextVar("replay_claimed", default=None)
+
+
+def replay_claimed() -> None:
+    """The replay running in this task now holds its claim or its session."""
+    if (claimed := REPLAY_CLAIMED.get()) is not None:
+        claimed.set()
 
 
 def keep_place(conn: sqlite3.Connection, work_item_id: str, at: str) -> None:

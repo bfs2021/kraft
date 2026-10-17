@@ -391,6 +391,7 @@ def test_a_checkout_taken_after_the_doors_look_still_gets_no_second_session(
             ).fetchone()[0]
             == 0
         )
+    assert not _of(client, wid, "escalation_message"), "its replay records the message"
 
 
 @pytest.mark.parametrize(
@@ -540,20 +541,46 @@ def test_a_held_approval_refreshes_the_base_before_it_goes_on(client, repo, monk
     assert _of(client, wid, "node_started") == []
 
 
-def test_a_held_rejection_paused_and_resumed_by_hand_keeps_its_re_run(client, repo):
-    """The queued request goes with the pause; the re-run does not."""
+@pytest.mark.parametrize(
+    ("by", "rewind", "source"),
+    [("human", None, "human"), ("agent", None, "gate_review"), ("agent", "mine", "human")],
+    ids=["person", "agent", "agent-with-rewind"],
+)
+def test_a_held_rejection_paused_and_resumed_by_hand_keeps_its_re_run(
+    client, repo, monkeypatch, by, rewind, source
+):
+    """The queued request goes with the pause; the re-run does not, nor whose
+    note it carries: an agent's stays an agent's, unless a person's review
+    note (a pending rewind) is joined onto it."""
+    from kraft import executor, store
+
     client.portal.call(client.app.state.queue_task.cancel)
     working = _in_state(client, repo, DOORS["states"]["running"], in_place=True, title="A")
     wid = _in_state(client, repo, DOORS["states"]["gate"], in_place=True)
-    client.post(f"/api/work-items/{wid}/gates/spec_approval/reject", json={"note": "redo it"})
+    if by == "human":
+        client.post(f"/api/work-items/{wid}/gates/spec_approval/reject", json={"note": "redo it"})
+    else:
+        with _orchestrator_db() as c, c:
+            c.row_factory = sqlite3.Row
+            store.reject_gate(
+                c, wid, "spec_approval", "redo it", reopen=True, node="spec", by="agent"
+            )
     [rejected] = _of(client, wid, "gate_rejected")
     _set_status(working, "paused")
     assert client.post(f"/api/work-items/{wid}/pause", json={}).status_code == 200
+    if rewind:
+        with _orchestrator_db() as c, c:
+            store.request_rewind(c, wid, review_id="r1", target="spec", note=rewind)
+    sources, real_run = [], executor.run
+    monkeypatch.setattr(
+        executor, "run", lambda *a, **kw: sources.append(kw["steer_source"]) or real_run(*a, **kw)
+    )
 
     r = client.post(f"/api/work-items/{wid}/resume", json={})
 
     assert r.status_code == 200, r.text
-    assert r.json()["steer"] == "redo it"
+    assert r.json()["steer"] == ("mine\n\nredo it" if rewind else "redo it")
+    assert sources == [source]
     evts = _poll_events(client, wid, "node_started")
     after = [e for e in evts if e["seq"] > rejected["seq"]]
     first = next(e for e in after if e["type"] in ("node_started", "gate_requested"))
@@ -613,3 +640,71 @@ def test_an_autostart_behind_a_working_in_place_item_is_filed_queued(client, rep
     assert r.json()["held_by"] == working
     [queued] = _of(client, r.json()["id"], "work_item_queued")
     assert queued["payload"]["held_by"] == working
+
+
+def test_a_pickup_queued_for_the_checkout_starts_as_krafts_own(client, repo):
+    """Auto-intake's queued start (`start`) is not a person's resume."""
+    from kraft import store
+
+    client.portal.call(client.app.state.queue_task.cancel)
+    working = _in_state(client, repo, DOORS["states"]["running"], in_place=True, title="A")
+    wid = _paused(client, repo, in_place=True)
+    with _orchestrator_db() as c, c:
+        c.row_factory = sqlite3.Row
+        assert store.queue_work_item(
+            c, wid, verb="start", body={}, headers={}, from_statuses=["paused"], held_by=working
+        )
+    _set_status(working, "paused")
+
+    assert _queue_tick(client) == [wid]
+    _poll_events(client, wid, "node_started")
+    assert not _of(client, wid, "work_item_resumed"), "replayed as a person's resume"
+
+
+def test_krafts_own_agents_queued_for_the_checkout_run_when_it_frees(client, repo, monkeypatch):
+    """A gate's reply or review, or a stop's auto-escalation, that found the
+    checkout in use (`store.queue_follow_up`) runs as Kraft's, not a person's."""
+    from kraft import executor, store
+
+    client.portal.call(client.app.state.queue_task.cancel)
+    working = _in_state(client, repo, DOORS["states"]["running"], in_place=True, title="A")
+    wid = _in_state(client, repo, DOORS["states"]["failed"], in_place=True)
+    with _orchestrator_db() as c, c:
+        c.row_factory = sqlite3.Row
+        assert store.queue_follow_up(c, wid, working)
+    ran = []
+
+    async def follow_up(db, run_dirs, **kw):
+        ran.append(kw["work_item_id"])
+
+    monkeypatch.setattr(executor, "follow_up", follow_up)
+    assert _queue_tick(client) == []
+
+    _set_status(working, "paused")
+
+    assert _queue_tick(client) == [wid]
+    assert ran == [wid]
+    assert _status_of(client, wid) == "needs_human"
+
+
+def test_a_held_decision_refused_beside_a_live_walk_keeps_its_steer(client, repo):
+    """The replay is refused, and the rejection's note waits on the item for
+    whatever starts it next."""
+    client.portal.call(client.app.state.queue_task.cancel)
+    working = _in_state(client, repo, DOORS["states"]["running"], in_place=True, title="A")
+    wid = _in_state(client, repo, DOORS["states"]["gate"], in_place=True)
+    client.post(f"/api/work-items/{wid}/gates/spec_approval/reject", json={"note": "redo it"})
+    _set_status(working, "paused")
+
+    async def live():
+        client.app.state.tasks[wid] = asyncio.get_running_loop().create_future()
+
+    client.portal.call(live)
+
+    assert _queue_tick(client) == []
+    [dequeued] = _of(client, wid, "work_item_dequeued")
+    assert dequeued["payload"]["why"] == "refused"
+    with _orchestrator_db() as c:
+        assert c.execute(
+            "SELECT status, pending_steer_context FROM work_items WHERE id = ?", (wid,)
+        ).fetchone() == ("paused", "redo it")

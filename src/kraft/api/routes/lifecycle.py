@@ -959,18 +959,24 @@ def checkout_refusal(st, wid: str) -> HTTPException | None:
 async def continue_held(wid: str, body: dict, request: Request) -> None:
     """Kraft's own replay of a gate decision that waited for the checkout
     (`store.hold_for_checkout`): the walk from `body["node"]`, with the
-    decision's steer (the item's pending one). Not a person's resume, so no
-    run boundary. Queued again, for its place, while the slot or the checkout
-    is still taken."""
+    decision's steer (the item's pending one). Also an auto-intaken item's
+    first start (`start`, no `node`): the walk from its cursor. Not a
+    person's resume, so no run boundary. Queued again, for its place, while
+    the slot or the checkout is still taken."""
     st = request.app.state
     row = deps._live_work_item_row(st, wid)
     limit = st.policy.max_concurrent if st.policy else 1
     paused = [WorkItemStatus.PAUSED]
+    if deps.task_is_live(request.app, wid):
+        # Before the claim and the steer, as `resume` checks: a refusal after
+        # them would spend the decision's steer on a walk that never ran.
+        raise HTTPException(409, "a walk is already running for this work item")
     async with stops.claimed_or_stopped(
         st.db,
         wid,
         row["current_node_id"],
-        reason="a held gate decision claimed this item but could not start a walk",
+        reason=f"{'a held gate decision' if 'node' in body else 'a queued start'} claimed "
+        "this item but could not start a walk",
         handed_off=lambda: deps.task_is_live(request.app, wid),
     ):
         if not await st.db.write(
@@ -980,7 +986,7 @@ async def continue_held(wid: str, body: dict, request: Request) -> None:
                 lambda c: store.queue_work_item(
                     c,
                     wid,
-                    verb="continue",
+                    verb="continue" if "node" in body else "start",
                     body=body,
                     headers={},
                     from_statuses=paused,
@@ -1012,7 +1018,9 @@ async def continue_held(wid: str, body: dict, request: Request) -> None:
                         st.run_dirs,
                         work_item_id=wid,
                         bd_cwd=deps.bd_cwd(),
-                        start_index=next(i for i, n in enumerate(nodes) if n.id == body["node"]),
+                        start_index=next(i for i, n in enumerate(nodes) if n.id == body["node"])
+                        if "node" in body
+                        else None,
                         policy=st.policy,
                         steer=steer,
                         steer_source=body.get("steer_source", "human"),
@@ -1044,6 +1052,31 @@ async def self_retry_held(wid: str, body: dict, request: Request) -> None:
                 st.run_dirs,
                 work_item_id=wid,
                 cursor=body["cursor"],
+                policy=st.policy,
+                launch=deps.launch(st, row["repo"]),
+                bd_cwd=deps.bd_cwd(),
+                on_approve=deps._on_approve(st),
+            ),
+        ),
+    )
+
+
+async def follow_up_held(wid: str, body: dict, request: Request) -> None:
+    """Kraft's own agents at a stop, queued for the checkout as `follow_up`
+    (`executor.follow_up`): the gate's reply and review, the stop's
+    auto-escalation, as the walk that stopped would have run them."""
+    st = request.app.state
+    row = deps._live_work_item_row(st, wid)
+    deps.spawn(
+        request.app,
+        wid,
+        deps.guard(
+            st.db,
+            wid,
+            executor.follow_up(
+                st.db,
+                st.run_dirs,
+                work_item_id=wid,
                 policy=st.policy,
                 launch=deps.launch(st, row["repo"]),
                 bd_cwd=deps.bd_cwd(),
@@ -1301,6 +1334,12 @@ async def resume_work_item(wid: str, body: Resume, request: Request):
         if steer_text is not None:
             await st.db.write(lambda c: store.set_steer(c, wid, steer_text))
         steer = await st.db.write(lambda c: store.take_steer(c, wid))
+        # A person's review note joined onto it makes the steer theirs.
+        steer_source = (
+            "human"
+            if rewind is not None and rewind["note"]
+            else st.db.read(lambda c: store.steer_source(c, wid, steer))
+        )
         start_index = None
         if rewind is not None:
             steer = "\n\n".join(filter(None, [rewind["note"], steer]))
@@ -1387,6 +1426,7 @@ async def resume_work_item(wid: str, body: Resume, request: Request):
                         # Addressed to the paused agent tasks when there are
                         # any; otherwise the note the next agent launch takes.
                         steer=None if targets else steer,
+                        steer_source=steer_source,
                         steer_to=targets,
                         launch=deps.launch(st, row["repo"]),
                         on_approve=deps._on_approve(st),

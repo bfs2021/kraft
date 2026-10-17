@@ -158,11 +158,13 @@ def waiting_for_checkout(queued: dict | None) -> str | None:
 #: `rowText.ts`'s `QUEUED_VERB`: the start a queued request makes, in words.
 _QUEUED_VERB = {
     "resume": "resume",
+    "start": "start",
     "retry": "retry",
     "continue": "continue past its gate",
     "self_retry": "retry, as its escalation asked",
     "escalate": "escalate",
     "reply": "answer its review",
+    "follow_up": "run its agents at the stop",
 }
 
 
