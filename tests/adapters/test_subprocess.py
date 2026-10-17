@@ -255,25 +255,66 @@ async def test_run_task_leaves_the_exit_file_beside_the_result(run, run_dirs):
     assert (sp._resolve_result_file(files.result), files.exit.read_text()) == (None, "4")
 
 
-async def test_run_task_aborts_before_popen_if_the_row_was_stopped_first(
-    run, run_dirs, monkeypatch
+def _paused_after(original):
+    """`create_session`, then a pause: it lands before the pre-launch check."""
+
+    def wrapped(conn, **kwargs):
+        original(conn, **kwargs)
+        store.stop_escalation_session(conn, "w1", kwargs["id"])
+
+    return wrapped
+
+
+def _paused_before(original):
+    """A pause, then `session_running`: it lands after the pre-launch check,
+    while Popen ran, so the row has no pid for the pause to signal."""
+
+    def wrapped(conn, session_id, *args, **kwargs):
+        store.stop_escalation_session(conn, "w1", session_id)
+        return original(conn, session_id, *args, **kwargs)
+
+    return wrapped
+
+
+@pytest.mark.parametrize(
+    "seam, wrap, launches",
+    [
+        pytest.param("create_session", _paused_after, False, id="before-the-check"),
+        pytest.param("session_running", _paused_before, True, id="after-popen"),
+    ],
+)
+async def test_run_task_never_runs_a_row_paused_before_it_started(
+    run, run_dirs, database, tmp_path, monkeypatch, seam, wrap, launches
 ):
     """Kraft-qx1q: a row marked paused/stopped between `create_session` and
-    Popen must never launch -- nothing SIGTERMs a session with no pid yet."""
-    original = store.create_session
+    Popen must never launch -- nothing SIGTERMs a session with no pid yet.
+    The same pause landing after the check, while Popen ran, finds a child
+    already launched: it must be stopped, and no `worker_session_started`
+    may follow the `worker_session_paused` (a reader would show it running)."""
+    monkeypatch.setattr(store, seam, wrap(getattr(store, seam)))
+    launched = []
+    real_popen = sp.subprocess.Popen
 
-    def create_then_stop(conn, **kwargs):
-        original(conn, **kwargs)
-        conn.execute("UPDATE worker_sessions SET status = 'paused' WHERE id = ?", (kwargs["id"],))
+    def spy(*a, **kw):
+        proc = real_popen(*a, **kw)
+        if kw.get("start_new_session"):  # the session's child, not a git call
+            launched.append(proc)
+        return proc
 
-    def _boom(*a, **kw):
-        raise AssertionError("Popen must not run once the row is no longer pending")
+    monkeypatch.setattr(sp.subprocess, "Popen", spy)
+    done = tmp_path / "ran-to-the-end"
 
-    monkeypatch.setattr(store, "create_session", create_then_stop)
-    monkeypatch.setattr(sp.subprocess, "Popen", _boom)
+    status, row = await run(["sh", "-c", f"sleep 3 && touch {shlex.quote(str(done))}"])
 
-    assert (await run(["true"]))[0] == "paused"
-    assert not own_files(run_dirs, "s1").log.exists(), "aborted before the log was even opened"
+    types = [e["type"] for e in database.read(lambda c: events.read_after(c, 0, "w1"))]
+    assert (status, row["status"]) == ("paused", "paused")
+    assert "worker_session_started" not in types
+    assert len(launched) == launches
+    assert own_files(run_dirs, "s1").log.exists() == launches, "aborted before the log opened"
+    for proc in launched:
+        with pytest.raises(ProcessLookupError):
+            os.killpg(proc.pid, 0)
+    assert not done.exists(), "the child ran on under a paused row"
 
 
 # --- the log, live -------------------------------------------------------------------

@@ -491,14 +491,21 @@ def latest_session_per_task_at_current_node(
 
 def session_running(
     conn: sqlite3.Connection, session_id, pid, pid_start_time, *, work_item_id: str
-) -> None:
+) -> bool:
+    """Mark a launched session running and say so in its events. False, with
+    no row change and no event, when a pause already stopped the row: that
+    pause landed after the adapter's pre-launch check, so the child it just
+    launched is the adapter's to stop, and a `worker_session_started` after
+    the `worker_session_paused` would read a stopped session as running."""
     # `status != 'paused'`: a pause that landed while this session was still
     # pending must not be undone by the launch finishing.
-    conn.execute(
+    updated = conn.execute(
         "UPDATE worker_sessions SET status = 'running', pid = ?, pid_start_time = ?, "
         "started_at = ? WHERE work_item_id = ? AND id = ? AND status != ?",
         (pid, pid_start_time, _now(), work_item_id, session_id, SessionStatus.PAUSED),
-    )
+    ).rowcount
+    if not updated:
+        return False
     row = conn.execute(
         "SELECT work_item_id, node_id, hook_point, round, attempt, thread FROM worker_sessions "
         "WHERE work_item_id = ? AND id = ?",
@@ -518,6 +525,7 @@ def session_running(
             "pid": pid,
         },
     )
+    return True
 
 
 #: Every token kind a row stores, apart (Ruling 211), in `_tokens`' order.

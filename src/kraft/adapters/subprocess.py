@@ -1048,17 +1048,24 @@ async def run_task(
     )
     watcher.start()
     oom: _backends.OomKill | None = None
+    started = False
 
     try:
         try:
             pid_start_time = psutil.Process(proc.pid).create_time()
         except psutil.Error:
             pid_start_time = None
-        await db.write(
+        started = await db.write(
             lambda c: store.session_running(
                 c, session_id, proc.pid, pid_start_time, work_item_id=work_item_id
             )
         )
+        if not started:
+            # The pre-launch check's race, one step later: a pause landed
+            # after that check, while Popen ran. The row has no pid, so the
+            # pause signalled nothing; the `finally` below kills the group
+            # it just launched, and this ends as that check does.
+            return SessionStatus.PAUSED
 
         # Poll instead of `await asyncio.to_thread(proc.wait)`: a blocked thread is
         # uncancellable, so on SIGTERM the executor task's cancel() could not
@@ -1126,7 +1133,9 @@ async def run_task(
             await db.write(lambda c: store.session_status(c, session_id, work_item_id=work_item_id))
             == SessionStatus.PAUSED
         )
-        if paused and flush_grace:
+        # Only a session that started was SIGINT'd, so only it has a flush
+        # to wait for.
+        if paused and flush_grace and started:
             await _flush_sleep(flush_grace)
         # Same cancellation as above: without this inside `finally`, a pause
         # or skip propagates CancelledError past the kill calls entirely, and
