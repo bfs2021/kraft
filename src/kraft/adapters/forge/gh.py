@@ -121,6 +121,10 @@ class GhCli(mr_ops.CliWaits):
     async def update_mr(self, *, repo: Path, branch: str, body: str) -> None:
         await git.run_git(repo, ["gh", "pr", "edit", "--body", body])
 
+    async def mr_body(self, *, repo: Path, branch: str) -> str:
+        data = await self._json(repo, ["pr", "view", "--json", "body"], "gh pr view")
+        return str(data.get("body") or "")
+
     async def ci_status(
         self, *, repo: Path, mr: MR, branch: str = "", pipeline_id: str = ""
     ) -> CIStatus:
@@ -407,6 +411,14 @@ class GhCli(mr_ops.CliWaits):
         }
         for run_id in run_ids:
             await git.run_git(repo, ["gh", "run", "rerun", run_id, "--failed"])
+
+    async def rerun_after_description_change(
+        self, *, repo: Path, branch: str, ci: CIStatus
+    ) -> bool:
+        """A job that reads the description through the API sees the edit on
+        a re-run, and a workflow on `pull_request: edited` re-runs by itself."""
+        await self.retry_jobs(repo=repo, ci=ci)
+        return False
 
     async def set_labels(self, *, repo: Path, mr: MR, labels: tuple[str, ...]) -> None:
         """Label the pull request.
