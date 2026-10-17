@@ -5,7 +5,7 @@ import * as api from "../../api";
 import { ago, elapsed, logLineText, plural, until, usd } from "../../format";
 import { countedAgainst } from "../settings/storageWords";
 import type { ChainNode, DiffFile, KraftEvent, WorkerSession } from "../../types";
-import { Ban, CircleCheck, CircleHelp, Clock, Pause, X } from "../icons";
+import { Ban, ChevronDown, ChevronRight, CircleCheck, CircleHelp, Clock, Pause, X } from "../icons";
 import { Button } from "../ui/Button";
 import { act } from "./actions";
 import { nameOf } from "../board/rowText";
@@ -32,6 +32,27 @@ type Handlers = {
 type Action = { label: string; run: () => unknown; primary?: boolean };
 type Card = { tone: "bad" | "info" | "warn" | "muted" | "neutral"; glyph: ReactNode; title: string; where?: string; text?: string; facts: [string, ReactNode][]; actions: Action[]; node?: string | null; body?: ReactNode; note?: string };
 
+/** A card's folded state, kept for the one card it was folded on: a different
+ *  card in the same place (a failed item retried, then stopped again) opens
+ *  unfolded, and nothing is remembered past the page. */
+function useFold(key: string): [boolean, () => void] {
+  const [folded, setFolded] = useState<string | null>(null);
+  return [folded === key, () => setFolded((f) => (f === key ? null : key))];
+}
+
+/** The card's heading as a button: click folds the card down to this one line. */
+function FoldHead({ glyph, title, where, folded, onToggle }: { glyph: ReactNode; title: string; where?: string; folded: boolean; onToggle: () => void }) {
+  return (
+    <h2 className="item-card-head">
+      <button type="button" className="item-card-fold" aria-expanded={!folded} onClick={onToggle}>
+        {glyph} <span className="item-card-title">{title}</span>
+        {where && <span className="item-card-where">{where}</span>}
+        {folded ? <ChevronRight className="item-card-chevron" size={14} aria-hidden /> : <ChevronDown className="item-card-chevron" size={14} aria-hidden />}
+      </button>
+    </h2>
+  );
+}
+
 /** `action` where `ok`, the server admitting its door (`admits`), else nothing. */
 const when = (ok: boolean, action: Action): Action[] => (ok ? [action] : []);
 
@@ -50,6 +71,7 @@ export function StateCard({ item, files = null, ...h }: { item: ItemDetail; file
   const [steer, setSteer] = useState("");
   const events = useEndEvents(item);
   const navigate = useNavigate();
+  const [folded, toggle] = useFold(`${item.id}:state`);
   const card = cardFor(item, { ...h, steer, setSteer, files, logUrl: logLink(item), onRepos: () => navigate(`/settings/repos/${encodeURIComponent(item.repo)}`), onReview: (nodes) => navigate(`/work-items/${encodeURIComponent(item.id)}/review${nodes ? `?nodes=${encodeURIComponent(nodes)}` : ""}`) }, events, async (p) => {
     setBusy(true);
     setError(null);
@@ -60,28 +82,27 @@ export function StateCard({ item, files = null, ...h }: { item: ItemDetail; file
   });
   if (!card) return null;
   return (
-    <section className={`item-card is-${card.tone}`} aria-label={card.title}>
-      <h2 className="item-card-head">
-        {card.glyph} <span className="item-card-title">{card.title}</span>
-        {card.where && <span className="item-card-where">{card.where}</span>}
-      </h2>
-      {card.text && <p className="item-card-text">{card.text}</p>}
-      {card.facts.length > 0 && (
+    <section className={`item-card is-${card.tone}${folded ? " is-folded" : ""}`} aria-label={card.title}>
+      <FoldHead glyph={card.glyph} title={card.title} where={card.where} folded={folded} onToggle={toggle} />
+      {!folded && card.text && <p className="item-card-text">{card.text}</p>}
+      {!folded && card.facts.length > 0 && (
         <dl className="item-facts item-card-facts">
           {card.facts.slice(0, 4).map(([k, v]) => (
             <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
           ))}
         </dl>
       )}
-      {card.body}
+      {!folded && card.body}
       {error && <p className="item-error" role="alert">{error}</p>}
-      <div className="item-actions">
-        {card.actions.map((a) => (
-          <Button key={a.label} variant={a.primary ? "primary" : "secondary"} disabled={busy} aria-describedby={a.primary && card.note ? `${item.id}-card-note` : undefined} onClick={() => void a.run()}>{a.label}</Button>
-        ))}
-        {card.node && <LinkButton className="item-card-open" onClick={() => h.onOpenNode(card.node!)}>Open {nameOf(item.chain_definition.nodes, card.node)} →</LinkButton>}
-      </div>
-      {card.note && <p id={`${item.id}-card-note`} className="item-muted item-card-note">{card.note}</p>}
+      {!folded && (
+        <div className="item-actions">
+          {card.actions.map((a) => (
+            <Button key={a.label} variant={a.primary ? "primary" : "secondary"} disabled={busy} aria-describedby={a.primary && card.note ? `${item.id}-card-note` : undefined} onClick={() => void a.run()}>{a.label}</Button>
+          ))}
+          {card.node && <LinkButton className="item-card-open" onClick={() => h.onOpenNode(card.node!)}>Open {nameOf(item.chain_definition.nodes, card.node)} →</LinkButton>}
+        </div>
+      )}
+      {!folded && card.note && <p id={`${item.id}-card-note`} className="item-muted item-card-note">{card.note}</p>}
     </section>
   );
 }
@@ -288,6 +309,7 @@ function useEndEvents(item: ItemDetail): KraftEvent[] {
 export function ComesAfterCard({ item, reload }: { item: ItemDetail; reload: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [folded, toggle] = useFold(`${item.id}:comes-after`);
   const deps = item.dependencies ?? [];
   const waits = deps.filter((d) => !d.met).length;
   const blocked = item.display_status === "blocked";
@@ -301,19 +323,20 @@ export function ComesAfterCard({ item, reload }: { item: ItemDetail; reload: () 
     else setError(r.error);
   };
   return (
-    <section className={`item-card is-${blocked ? "info" : "neutral"}`} aria-label={blocked ? "Blocked" : "Comes after"}>
-      <h2 className="item-card-head">
-        <Clock size={14} aria-hidden /> <span className="item-card-title">{blocked ? "Blocked" : "Comes after"}</span>
-        <span className="item-card-where">{waits ? `waiting on ${plural(waits, "item")}` : RELEASED.where}</span>
-      </h2>
-      <p className="item-card-text">{!waits ? RELEASED.text : blocked ? "Kraft starts it when they complete." : "Started before they complete, it is blocked until they do."}</p>
-      <dl className="item-facts item-card-facts">
-        {deps.map((d) => (
-          <div key={d.id}><dt>{d.status.replace("_", " ")}</dt><dd><Link className={linkButtonClass()} to={`/work-items/${encodeURIComponent(d.id)}`}>{d.title}</Link></dd></div>
-        ))}
-      </dl>
+    <section className={`item-card is-${blocked ? "info" : "neutral"}${folded ? " is-folded" : ""}`} aria-label={blocked ? "Blocked" : "Comes after"}>
+      <FoldHead glyph={<Clock size={14} aria-hidden />} title={blocked ? "Blocked" : "Comes after"} where={waits ? `waiting on ${plural(waits, "item")}` : RELEASED.where} folded={folded} onToggle={toggle} />
+      {!folded && (
+        <>
+          <p className="item-card-text">{!waits ? RELEASED.text : blocked ? "Kraft starts it when they complete." : "Started before they complete, it is blocked until they do."}</p>
+          <dl className="item-facts item-card-facts">
+            {deps.map((d) => (
+              <div key={d.id}><dt>{d.status.replace("_", " ")}</dt><dd><Link className={linkButtonClass()} to={`/work-items/${encodeURIComponent(d.id)}`}>{d.title}</Link></dd></div>
+            ))}
+          </dl>
+        </>
+      )}
       {error && <p className="item-error" role="alert">{error}</p>}
-      {waits > 0 && (blocked || item.display_status === "paused") && admits(item, "unblock", true) && (
+      {!folded && waits > 0 && (blocked || item.display_status === "paused") && admits(item, "unblock", true) && (
         <div className="item-actions">
           <Button disabled={busy} onClick={unblock}>Unblock</Button>
         </div>

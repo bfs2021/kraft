@@ -14,6 +14,8 @@ afterEach(() => vi.unstubAllGlobals());
 
 const stop = (kind: string, over = {}) => ({ kind, node: "merge_request", task: "merge_request.open.open_draft", attempt: 3, resume_at: null, reason: "The forge refused.", facts: {}, ...over }) as never;
 const handlers = () => ({ reload: vi.fn(), onCancel: vi.fn(), onEscalate: vi.fn(), onDuplicate: vi.fn(), onOpenNode: vi.fn() });
+/** The labels of a card's action buttons: its heading is a button too, the fold toggle. */
+const acts = (card: HTMLElement) => within(card).getAllByRole("button").filter((b) => !b.hasAttribute("aria-expanded")).map((b) => b.textContent);
 const posts = (calls: Call[]) => calls.filter((c) => c.method === "POST");
 let where = "";
 const Where = () => {
@@ -33,6 +35,34 @@ describe("StateCard: queued for storage", () => {
   it("is no card when a busy slot is what it waits on", () => {
     show({ display_status: "queued", status: "queued", queued: { verb: "resume", since: "2026-10-10T09:00:00+00:00", storage: null } });
     expect(screen.queryByRole("region", { name: "Queued" })).toBeNull();
+  });
+});
+
+describe("a card folds to its heading", () => {
+  const cancelled = () => show({ display_status: "cancelled", stop: null, ended_reason: "Folded into another item." });
+
+  it("hides everything under the heading on click and brings it back on the next", async () => {
+    cancelled();
+    const card = screen.getByRole("region", { name: "Cancelled" });
+    const head = within(card).getByRole("button", { name: /Cancelled/ });
+    expect(head).toHaveAttribute("aria-expanded", "true");
+    expect(card).toHaveTextContent("Folded into another item.");
+    await userEvent.click(head);
+    expect(head).toHaveAttribute("aria-expanded", "false");
+    expect(card).not.toHaveTextContent("Folded into another item.");
+    expect(within(card).queryByRole("button", { name: "Duplicate as new item" })).toBeNull();
+    await userEvent.click(head);
+    expect(card).toHaveTextContent("Folded into another item.");
+    expect(within(card).getByRole("button", { name: "Duplicate as new item" })).toBeInTheDocument();
+  });
+
+  it("folds Comes after to its heading, which keeps what it waits on", async () => {
+    routed(<ComesAfterCard item={detail({ display_status: "paused", status: "paused", dependencies: [{ id: "a1", title: "Schema first", status: "needs_human", met: false }] })} reload={vi.fn()} />);
+    const card = screen.getByRole("region", { name: "Comes after" });
+    await userEvent.click(within(card).getByRole("button", { name: /Comes after/ }));
+    expect(card).toHaveTextContent("waiting on 1 item");
+    expect(within(card).queryByRole("link", { name: "Schema first" })).toBeNull();
+    expect(within(card).queryByRole("button", { name: "Unblock" })).toBeNull();
   });
 });
 
@@ -83,7 +113,7 @@ describe("ComesAfterCard", () => {
     const card = screen.getByRole("region", { name: "Blocked" });
     expect(card).toHaveTextContent("nothing left to wait for");
     expect(card).toHaveTextContent("Kraft queues it within seconds.");
-    expect(within(card).queryByRole("button")).toBeNull();
+    expect(within(card).queryByRole("button", { name: "Unblock" })).toBeNull();
   });
 });
 
@@ -136,7 +166,7 @@ describe("StateCard", () => {
     stubFetch();
     show({ display_status: "failed", stop: stop("infra", { facts: cause ? { cause } : {} }) });
     const card = screen.getByRole("region", { name: "Failed" });
-    expect(within(card).getAllByRole("button").map((b) => b.textContent)).toEqual(labels);
+    expect(acts(card)).toEqual(labels);
     // A cause with words says them as a fact; the others are not a fact of their own.
     expect(card).not.toHaveTextContent("cause");
     if (why) expect(within(card).getByText("why").nextSibling).toHaveTextContent(why);
@@ -306,7 +336,7 @@ describe("StateCard", () => {
     expect(card).toHaveTextContent("changes2 files +13 −3");
     expect(card).toHaveTextContent("spent$2.50 of $10.00");
     expect(card).toHaveTextContent("took12m");
-    expect(within(card).getAllByRole("button").map((b) => b.textContent)).toEqual(["Archive"]);
+    expect(acts(card)).toEqual(["Archive"]);
     expect(within(card).getByRole("button", { name: "Archive" })).toHaveClass("btn-secondary");
     await userEvent.click(within(card).getByRole("button", { name: "Archive" }));
     await waitFor(() => expect(posts(calls)).toHaveLength(1));
@@ -351,7 +381,7 @@ describe("StateCard", () => {
   ])("%s", (_name, over, title, labels) => {
     stubFetch();
     show(over);
-    expect(within(screen.getByRole("region", { name: title })).getAllByRole("button").map((b) => b.textContent)).toEqual(labels);
+    expect(acts(screen.getByRole("region", { name: title }))).toEqual(labels);
   });
 
   it.each([["running", null], ["needs_you", "gate"], ["needs_you", "question"], ["needs_you", "cap"], ["paused", null]])("renders nothing for %s (%s)", (display_status, kind) => {

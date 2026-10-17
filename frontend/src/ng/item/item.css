@@ -80,9 +80,14 @@
 .item-card-head { display: flex; align-items: center; gap: 8px; margin: 0; font-size: var(--fs-meta); font-weight: 400; }
 .item-card-title { font-weight: 600; color: var(--text); }
 .item-card-where { color: var(--text-sub); font-size: var(--fs-meta); }
+.item-card-fold { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; margin: -4px -6px; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.item-card-fold:hover { background: var(--line); }
+.item-card-fold:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.item-card.is-folded { gap: 0; padding-block: 8px; }
 .item-card.is-warn .item-card-head svg { color: var(--warn); }
 .item-card.is-bad .item-card-head svg { color: var(--bad); }
 .item-card.is-info .item-card-head svg { color: var(--info); }
+.item-card .item-card-head svg.item-card-chevron { margin-left: auto; flex: none; color: var(--text-faint); }
 .item-quote { margin: 0; font-size: var(--fs-meta); color: var(--text); }
 .item-card.is-muted { border-color: var(--border); background: var(--surface); }
 .item-card.is-muted .item-card-title { color: var(--text-sub); }
