@@ -70,3 +70,67 @@ def test_a_gate_after_the_merge_request_opened_is_not_refreshed(client, repo, mo
     assert gates_route._before_any_push(nodes, "spec_approval")
     assert gates_route._before_any_push(nodes, "local_review")
     assert not gates_route._before_any_push(nodes, "final_review")
+
+
+def test_an_in_place_refresh_that_clashes_stops_the_approved_item_as_checkout(
+    client, repo, monkeypatch
+):
+    """The approval lands, but a rebase that left the person's checkout
+    clashing stops the item for them, naming the stash."""
+    from kraft import inplace
+
+    monkeypatch.setenv("KRAFT_FAKE_CLAUDE", "fix")
+    r = client.post(
+        "/api/work-items",
+        json={"title": "t", "repo": str(repo), "autostart": True, "in_place": True},
+    )
+    wid = r.json()["id"]
+    _poll_events(client, wid, "gate_requested")
+
+    async def clash(*_, **__):
+        raise inplace.AutostashClash("your edits to f clash", ["f"], "5ca1ab1e")
+
+    monkeypatch.setattr(inplace, "rebase", clash)
+
+    r = client.post(f"/api/work-items/{wid}/gates/spec_approval/approve")
+
+    assert r.status_code == 200, r.text
+    now = client.get(f"/api/work-items/{wid}").json()
+    assert now["status"] == "needs_human"
+    evts = client.get(f"/api/work-items/{wid}/events").json()
+    [stop] = [e["payload"] for e in evts if e["type"] == "work_item_needs_human"]
+    assert (stop["kind"], stop["facts"]) == ("checkout", {"paths": ["f"], "stash": "5ca1ab1e"})
+    assert "gate_approved" in [e["type"] for e in evts]
+
+
+def test_an_in_place_refresh_reads_the_items_branch_not_the_persons_head(client, repo, monkeypatch):
+    """The person went back to `main` while the item waited at its gate: what
+    the rebase left is read off the item's branch, not their checkout."""
+    from support.harness import git
+
+    monkeypatch.setenv("KRAFT_FAKE_CLAUDE", "fix")
+    r = client.post(
+        "/api/work-items",
+        json={"title": "t", "repo": str(repo), "autostart": True, "in_place": True},
+    )
+    wid = r.json()["id"]
+    _poll_events(client, wid, "gate_requested")
+    branch = client.get(f"/api/work-items/{wid}").json()["branch"]
+    git(repo, "checkout", "-q", branch)
+    (repo / "item.txt").write_text("the item's\n")
+    commit_all(repo, "the item's")
+    git(repo, "checkout", "-q", "main")
+    (repo / "moved.txt").write_text("moved on\n")
+    new_base = commit_all(repo, "moved on")
+
+    r = client.post(f"/api/work-items/{wid}/gates/spec_approval/approve")
+
+    assert r.status_code == 200, r.text
+    [verified] = [
+        e["payload"]
+        for e in _poll_events(client, wid, "worktree_rebase_verified")
+        if e["type"] == "worktree_rebase_verified"
+    ]
+    assert verified["reported_head"] == new_base
+    assert verified["worktree_head"] != new_base
+    git(repo, "merge-base", "--is-ancestor", verified["worktree_head"], branch)

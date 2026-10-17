@@ -19,6 +19,7 @@ from kraft import (
     escalate,
     events,
     executor,
+    inplace,
     item_paths,
     node_runs,
     start_queue,
@@ -51,7 +52,7 @@ from kraft.vocab import (
     WorkItemStatus,
     admitting,
 )
-from kraft.worker import backends
+from kraft.worker import backends, reattach
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,7 @@ def chain_or_409(row):
     return chain
 
 
-def _terminate(pid: int | None) -> None:
+def _terminate(pid: int | None, *, started: float | None) -> None:
     """SIGINT the session's whole process group.
 
     Sessions are launched with `start_new_session=True`, so the child is its own
@@ -166,8 +167,11 @@ def _terminate(pid: int | None) -> None:
     """
     if pid is None:
         return
+    if not reattach.launched_group(pid, started):
+        logger.warning("session pid %s is no longer the process Kraft launched; not signalled", pid)
+        return
     try:
-        os.killpg(os.getpgid(pid), signal.SIGINT)
+        os.killpg(pid, signal.SIGINT)
     except (ProcessLookupError, PermissionError):
         pass  # already gone, or not ours — the row still moves to paused
 
@@ -238,7 +242,7 @@ async def _stop_live_sessions(st, wid: str, *, pause_item: bool = True) -> list[
             for sid in ids:
                 await st.db.write(lambda c, sid=sid: store.stop_escalation_session(c, wid, sid))
         for s in sessions:
-            _terminate(s["pid"])
+            _terminate(s["pid"], started=s["pid_start_time"])
     return ids
 
 
@@ -489,19 +493,34 @@ async def abandon_work_item(wid: str, request: Request, body: AbandonWorkItem | 
     # and keeps everything) or a second call: either way it is reclaimed
     # again, without a second `work_item_abandoned`. A second call finds
     # nothing left and answers `worktree_removed: false`.
+    in_place = inplace.is_in_place(row)
+    if in_place:
+        # The person's checkout: nothing of theirs in it is killed or removed.
+        # Kraft's own sessions (an escalation, a reply) stop, found by their
+        # recorded pids, never by a cwd that may be the person's. Before the
+        # write, so the event says whether the branch stayed.
+        for s in st.db.read(lambda c: store.live_sessions(c, wid)):
+            await st.db.write(lambda c, sid=s["id"]: store.stop_escalation_session(c, wid, sid))
+            _terminate(s["pid"], started=s["pid_start_time"])
+        removed = {"worktree_removed": False, "in_place": True}
+        removed |= await asyncio.to_thread(
+            inplace.drop_branch, Path(row["repo"]), store.branch_for(row), wid, keep=False
+        )
     if row["status"] != WorkItemStatus.ABANDONED:
-        await st.db.write(lambda c: store.abandon_work_item(c, wid, reason))
+        kept = removed["branch_kept"] if in_place else None
+        await st.db.write(lambda c: store.abandon_work_item(c, wid, reason, branch_kept=kept))
         await executor.settle_beads_on_abandon(row, deps.bd_cwd(), reason)
-    worktree = st.run_dirs.worktrees / wid
-    killed = await asyncio.to_thread(_kill_orphans_under, worktree)
-    if killed:
-        logger.warning("abandon %s: killed orphaned process(es) %s under worktree", wid, killed)
-    await asyncio.to_thread(_forget_sandbox, st.run_dirs, worktree, wid)
-    removed = await _remove_worktree(
-        Path(row["repo"]), worktree, store.branch_for(row), wid, _connected_members(st, row)
-    )
-    if not worktree.exists():
-        storage.forget(st, wid)
+    if not in_place:
+        worktree = st.run_dirs.worktrees / wid
+        killed = await asyncio.to_thread(_kill_orphans_under, worktree)
+        if killed:
+            logger.warning("abandon %s: killed orphaned process(es) %s under worktree", wid, killed)
+        await asyncio.to_thread(_forget_sandbox, st.run_dirs, worktree, wid)
+        removed = await _remove_worktree(
+            Path(row["repo"]), worktree, store.branch_for(row), wid, _connected_members(st, row)
+        )
+        if not worktree.exists():
+            storage.forget(st, wid)
     # Best-effort, like the worktree removal beside it: the row is already
     # abandoned, and a failure to delete a directory must not leave the item in
     # a state the board cannot show. In a thread: a large folder must not hold
@@ -558,11 +577,21 @@ async def _archive_one(app, row, by: str, *, reason: str | None = None) -> dict:
             return {"worktree_removed": False, "archived_by": current and current["archived_by"]}
         repo, branch = Path(row["repo"]), store.branch_for(row)
         members = _connected_members(st, row)
+        in_place = inplace.is_in_place(row)
         worktree = st.run_dirs.worktrees / wid
         kept = await asyncio.to_thread(_branches_to_keep, repo, branch, members)
         extra = {"kept_branch": branch, "unpushed_commits": sum(kept.values())} if kept else {}
-        extra |= await asyncio.to_thread(_rescue_detached_head, repo, worktree, wid)
+        if in_place:  # before the write, so the event says whether the branch stayed
+            dropped = await asyncio.to_thread(
+                inplace.drop_branch, repo, branch, wid, keep=bool(kept)
+            )
+            if dropped["branch_kept"] is not None:
+                extra["branch_kept"] = dropped["branch_kept"]
+        else:  # an in-place checkout's HEAD is the person's, not the item's
+            extra |= await asyncio.to_thread(_rescue_detached_head, repo, worktree, wid)
         await st.db.write(lambda c: store.archive_work_item(c, wid, by, reason=reason, **extra))
+        if in_place:
+            return {"worktree_removed": False, "in_place": True, **dropped, **extra}
         for where, count in kept.items():
             logger.info(
                 "archive %s kept branch %s in %s: %d unpushed commit(s)", wid, branch, where, count
@@ -725,7 +754,7 @@ async def pause_work_item(wid: str, request: Request):
     # a SIGTERM that lands before the row is paused would resolve as 'failed'
     await st.db.write(lambda c: store.pause_work_item(c, wid, ids))
     for s in sessions:
-        _terminate(s["pid"])
+        _terminate(s["pid"], started=s["pid_start_time"])
     # Bounded (Kraft-c5ui): pause spawns nothing, so it would rather return
     # late than block the whole request on a git/forge call the old task
     # happens to be parked in -- the sessions above are already SIGTERM'd
@@ -787,8 +816,8 @@ async def report_progress(wid: str, body: Progress, request: Request):
         raise HTTPException(
             409, "this run is rework after a gate rejection: it follows the note, not the plan"
         )
-    worktree = st.run_dirs.worktrees / wid
-    tasks = progress_mod.tasks_for(row, worktree, st.run_dirs)
+    worktree, in_place = inplace.item_folder(st.run_dirs, row), inplace.is_in_place(row)
+    tasks = progress_mod.tasks_for(row, worktree, st.run_dirs, in_place=in_place)
     if not tasks:
         raise HTTPException(400, "this work item's plan has no '## Task N' headings")
     if not 1 <= body.task <= len(tasks):
@@ -800,7 +829,7 @@ async def report_progress(wid: str, body: Progress, request: Request):
         "title": tasks[body.task - 1][0],
     }
     await st.db.write(lambda c: events.append(c, wid, WorkItemEvent.PLAN_PROGRESS, payload))
-    p = progress_mod.for_item(st.db, row, worktree, st.run_dirs)
+    p = progress_mod.for_item(st.db, row, worktree, st.run_dirs, in_place=in_place)
     return {"id": wid, "progress": p.model_dump() if p else None}
 
 
@@ -879,10 +908,21 @@ async def slots_answer(st, wid: str) -> dict:
     return slots
 
 
-async def queued_answer(request: Request, wid: str, verb: str, body, from_statuses) -> dict:
-    """Hold a start request that passed every check but capacity, and answer
-    for it. `kraft.start_queue` makes the same request again when a slot
-    frees, so `body` is saved as the caller sent it."""
+#: What `queued_answer` says when the item left the statuses its door queues from.
+_NOT_QUEUEABLE = {
+    "retry": "work item is not stopped",
+    "escalate": "work item is not needs_human or paused",
+    "reply": "work item is no longer at its gate",
+}
+
+
+async def queued_answer(
+    request: Request, wid: str, verb: str, body, from_statuses, *, held_by: str | None = None
+) -> dict:
+    """Hold a start request that passed every check but capacity, or whose
+    checkout the in-place item `held_by` is using, and answer for it.
+    `kraft.start_queue` makes the same request again when a slot or the
+    checkout frees, so `body` is saved as the caller sent it."""
     st = request.app.state
     queued = await st.db.write(
         lambda c: store.queue_work_item(
@@ -892,13 +932,125 @@ async def queued_answer(request: Request, wid: str, verb: str, body, from_status
             body=body.model_dump(mode="json", exclude_defaults=True),
             headers=deps.caller_headers(request),
             from_statuses=from_statuses,
+            held_by=held_by,
         )
     )
     if not queued:
-        raise HTTPException(
-            409, "work item is not stopped" if verb == "retry" else "work item is not paused"
-        )
-    return {"id": wid, "status": WorkItemStatus.QUEUED, "slots": await slots_answer(st, wid)}
+        raise HTTPException(409, _NOT_QUEUEABLE.get(verb, "work item is not paused"))
+    held = st.db.read(lambda c: store.checkout_reason(c, held_by)) if held_by else {}
+    return {
+        "id": wid,
+        "status": WorkItemStatus.QUEUED,
+        "slots": await slots_answer(st, wid),
+        **held,
+    }
+
+
+def checkout_refusal(st, wid: str) -> HTTPException | None:
+    """The 409 for a door that cannot queue, when another in-place item is
+    using this item's checkout."""
+    holder = st.db.read(lambda c: store.checkout_holder(c, wid))
+    if holder is None:
+        return None
+    title = st.db.read(lambda c: store.checkout_reason(c, holder))["held_by_title"]
+    return HTTPException(409, f"the checkout is in use by {title}; try again when it stops")
+
+
+async def continue_held(wid: str, body: dict, request: Request) -> None:
+    """Kraft's own replay of a gate decision that waited for the checkout
+    (`store.hold_for_checkout`): the walk from `body["node"]`, with the
+    decision's steer (the item's pending one). Not a person's resume, so no
+    run boundary. Queued again, for its place, while the slot or the checkout
+    is still taken."""
+    st = request.app.state
+    row = deps._live_work_item_row(st, wid)
+    limit = st.policy.max_concurrent if st.policy else 1
+    paused = [WorkItemStatus.PAUSED]
+    async with stops.claimed_or_stopped(
+        st.db,
+        wid,
+        row["current_node_id"],
+        reason="a held gate decision claimed this item but could not start a walk",
+        handed_off=lambda: deps.task_is_live(request.app, wid),
+    ):
+        if not await st.db.write(
+            lambda c: store.claim_for_run(c, wid, from_statuses=paused, limit=limit)
+        ):
+            await st.db.write(
+                lambda c: store.queue_work_item(
+                    c,
+                    wid,
+                    verb="continue",
+                    body=body,
+                    headers={},
+                    from_statuses=paused,
+                    held_by=store.checkout_holder(c, wid),
+                )
+            )
+            return
+        nodes = store.effective_nodes(executor.chain_of(row), store.node_overrides_of(row))
+        if body.get("approved"):
+            from kraft.api.routes import gates as gates_route
+
+            # As a direct approval: a clash or a refused checkout stops it.
+            if (
+                gates_route._before_any_push(nodes, body["node"])
+                and inplace.item_folder(st.run_dirs, row).is_dir()
+                and await gates_route._refresh_base_at_gate(request, wid, row, body["node"])
+            ):
+                return
+        steer = await st.db.write(lambda c: store.take_steer(c, wid))
+        try:
+            deps.spawn(
+                request.app,
+                wid,
+                deps.guard(
+                    st.db,
+                    wid,
+                    executor.run(
+                        st.db,
+                        st.run_dirs,
+                        work_item_id=wid,
+                        bd_cwd=deps.bd_cwd(),
+                        start_index=next(i for i, n in enumerate(nodes) if n.id == body["node"]),
+                        policy=st.policy,
+                        steer=steer,
+                        steer_source=body.get("steer_source", "human"),
+                        launch=deps.launch(st, row["repo"]),
+                        on_approve=deps._on_approve(st),
+                    ),
+                ),
+            )
+        except deps.AlreadyRunning:
+            raise HTTPException(409, "a walk is already running for this work item") from None
+
+
+async def self_retry_held(wid: str, body: dict, request: Request) -> None:
+    """Kraft's own replay of an escalation's self-retry that waited for the
+    checkout: `executor.resume_after_escalation` again, from the same cursor,
+    so the retry stays the agent's (counters kept, `escalated`) and its steer
+    is not checked as a person's. It queues itself again if the checkout is
+    taken by the time it claims."""
+    st = request.app.state
+    row = deps._live_work_item_row(st, wid)
+    deps.spawn(
+        request.app,
+        wid,
+        deps.guard(
+            st.db,
+            wid,
+            executor.resume_after_escalation(
+                st.db,
+                st.run_dirs,
+                work_item_id=wid,
+                cursor=body["cursor"],
+                policy=st.policy,
+                launch=deps.launch(st, row["repo"]),
+                bd_cwd=deps.bd_cwd(),
+                on_approve=deps._on_approve(st),
+            ),
+        ),
+    )
 
 
 def blocked_refusal(row) -> str:
@@ -1136,6 +1288,10 @@ async def resume_work_item(wid: str, body: Resume, request: Request):
             lambda c: store.claim_for_run(c, wid, from_statuses=from_statuses, limit=limit)
         )
         if not claimed:
+            if holder := st.db.read(lambda c: store.checkout_holder(c, wid)):
+                return await queued_answer(
+                    request, wid, "resume", body, from_statuses, held_by=holder
+                )
             if st.db.read(store.active_count) >= limit:
                 return await queued_answer(request, wid, "resume", body, from_statuses)
             raise HTTPException(409, "work item is not paused")
@@ -1154,6 +1310,8 @@ async def resume_work_item(wid: str, body: Resume, request: Request):
             start_index = next(
                 (i for i, n in enumerate(target_nodes) if n.id == rewind["target"]), None
             )
+        # Not item_folder: an in-place item is never sandboxed, and
+        # `refresh_base` rebases it through `inplace.rebase`.
         worktree = st.run_dirs.worktrees / wid
         conflict = None
         try:
@@ -1171,6 +1329,9 @@ async def resume_work_item(wid: str, body: Resume, request: Request):
             # Handed to the walk, which gives it to the node's `on_conflict`
             # handler as it would a task's, or stops for a human (Kraft-e7anb).
             new_base, conflict = None, str(exc)
+        except (inplace.AutostashClash, inplace.CheckoutRefused) as exc:
+            await inplace.stop_refused(st.db, wid, row["current_node_id"], exc)
+            return deps.work_item_answer(st, wid)
         except RuntimeError as exc:
             # The claim already flipped this item to 'active'; a failed rebase
             # must not leave it stranded there with no walk behind it.
@@ -1267,7 +1428,9 @@ async def refresh_base(
     and node carry, so a pause, a cancel or a server stop ends the rebase
     instead of waiting behind it, and a hung checkout filter cannot hold the
     request forever. Answers 409 when the item was paused or ended meanwhile -- a stop
-    that landed between the claim and here is not a reason to rebase."""
+    that landed between the claim and here is not a reason to rebase. An
+    in-place item goes through `inplace.rebase`, which waits a stop out
+    rather than kill git in the person's checkout."""
     st = request.app.state
     repo = Path(row["repo"])
     base = await builtins_mod.base_branch(st.db, wid, repo)
@@ -1285,19 +1448,18 @@ async def refresh_base(
 
     # No await between this read and the spawn: a stop from here on finds the task.
     active()
-    try:
-        moved = await deps.run_stoppable(
-            request.app,
-            wid,
-            builtins_mod.refresh_worktree_base(
-                st.run_dirs.worktrees / wid,
-                repo,
-                store.branch_for(row),
-                base=base,
-                timeout=timeout,
-            ),
-            stopped=stopped,
+    rebasing = (
+        inplace.rebase(st.run_dirs, row, base=base, timeout=timeout)
+        if inplace.is_in_place(row)
+        else builtins_mod.refresh_worktree_base(
+            st.run_dirs.worktrees / wid, repo, store.branch_for(row), base=base, timeout=timeout
         )
+    )
+    try:
+        moved = await deps.run_stoppable(request.app, wid, rebasing, stopped=stopped)
+    except inplace.AutostashClash:
+        # Even over a stop: the person's edits are in a stash only this names.
+        raise
     except RuntimeError:
         # A conflict or a failure of an item stopped meanwhile is not the
         # walk's to be handed.
@@ -1318,7 +1480,7 @@ async def open_worktree(wid: str, body: OpenDocument, request: Request):
     """
     st = request.app.state
     row = deps._work_item_row(st, wid)
-    path = st.run_dirs.worktrees / wid
+    path = inplace.item_folder(st.run_dirs, row)
     if not path.is_dir():
         raise deps.worktree_missing(row)
     return search._launch_editor(request, body.editor, path)
@@ -1556,9 +1718,15 @@ async def _retry(wid: str, body: Retry, request: Request):
             lambda c: store.claim_for_run(c, wid, from_statuses=admitting(Verb.RETRY), limit=limit)
         )
         if not claimed:
+            if holder := st.db.read(lambda c: store.checkout_holder(c, wid)):
+                return await queued_answer(
+                    request, wid, "retry", asked, admitting(Verb.RETRY), held_by=holder
+                )
             if st.db.read(store.active_count) >= limit:
                 return await queued_answer(request, wid, "retry", asked, admitting(Verb.RETRY))
             raise HTTPException(409, "work item is not stopped")
+        # Not item_folder: an in-place item is never sandboxed, and
+        # `refresh_base` rebases it through `inplace.rebase`.
         worktree = st.run_dirs.worktrees / wid
         conflict = None
         try:
@@ -1575,6 +1743,9 @@ async def _retry(wid: str, body: Retry, request: Request):
             # starting node's `on_conflict` handler, or stops for a human
             # (Kraft-e7anb).
             new_base, conflict = None, str(exc)
+        except (inplace.AutostashClash, inplace.CheckoutRefused) as exc:
+            await inplace.stop_refused(st.db, wid, node_id, exc)
+            return deps.work_item_answer(st, wid)
         except RuntimeError as exc:
             reason = str(exc)
             cause = forge_mod.failure_cause(reason) or "git"
@@ -1994,7 +2165,9 @@ async def skip_work_item(wid: str, body: Skip, request: Request):
                 lambda c: store.claim_for_run(c, wid, from_statuses=admitting(Verb.SKIP))
             )
             if not claimed:
-                raise HTTPException(409, "work item status changed; try again")
+                raise checkout_refusal(st, wid) or HTTPException(
+                    409, "work item status changed; try again"
+                )
             note = (body.note or "").strip() or None
             session_ids = [s["id"] for s in sessions]
             # mark first, then signal: same race pause_work_item guards against —
@@ -2003,7 +2176,7 @@ async def skip_work_item(wid: str, body: Skip, request: Request):
                 lambda c: store.skip_node(c, wid, node_id, gate, note, session_ids=session_ids)
             )
             for s in sessions:
-                _terminate(s["pid"])
+                _terminate(s["pid"], started=s["pid_start_time"])
 
             try:
                 deps.spawn(
@@ -2073,7 +2246,7 @@ async def _skip_within_node(st, request: Request, wid: str, row, target: ChainPa
             lambda c: store.skip_scope(c, wid, target.path, note, session_ids=session_ids)
         )
         for s in sessions:
-            _terminate(s["pid"])
+            _terminate(s["pid"], started=s["pid_start_time"])
         return deps.work_item_answer(st, wid)
     async with stops.claimed_or_stopped(
         st.db,
@@ -2088,7 +2261,9 @@ async def _skip_within_node(st, request: Request, wid: str, row, target: ChainPa
             )
         )
         if not claimed:
-            raise HTTPException(409, "work item status changed; try again")
+            raise checkout_refusal(st, wid) or HTTPException(
+                409, "work item status changed; try again"
+            )
         await st.db.write(lambda c: store.skip_scope(c, wid, target.path, note))
         try:
             deps.spawn(
@@ -2163,7 +2338,7 @@ async def _close_cancelled_mr(st, wid: str, row) -> dict:
         return {"ok": False, "error": str(exc)}
     if state != "open":
         return {"ok": False, "error": "no open merge request"}
-    worktree = st.run_dirs.worktrees / wid
+    worktree = inplace.item_folder(st.run_dirs, row)
     mr_ref = forge_mod.MRRef(number=ref["number"], url=ref["url"], state="open")
     repo_entry = deps.launch(st, row["repo"]).repo_entry
     backend = forge_mod.backend_for("auto", repo_entry.forge if repo_entry else None)
@@ -2208,7 +2383,7 @@ async def reopen_mr(wid: str, request: Request):
         raise HTTPException(409, "work item has no merge request to reopen")
     # Before the forge: `_retry` refuses a legacy row, after the reopen.
     chain_or_409(row)
-    worktree = st.run_dirs.worktrees / wid
+    worktree = inplace.item_folder(st.run_dirs, row)
     mr_ref = forge_mod.MRRef(number=ref["number"], url=ref["url"], state="closed")
     repo_entry = deps.launch(st, row["repo"]).repo_entry
     try:
@@ -2246,7 +2421,7 @@ async def _end_work_item(request: Request, wid: str, action: str, reason: str):
     ids = [s["id"] for s in sessions]
     await st.db.write(lambda c: store.end_work_item(c, wid, action, reason, session_ids=ids))
     for s in sessions:
-        _terminate(s["pid"])
+        _terminate(s["pid"], started=s["pid_start_time"])
     # Bounded, as pause's is: the status is already terminal, so a walk that
     # outlives the wait stops at its next node on its own.
     await deps.cancel(request.app, wid, timeout=deps.CANCEL_TIMEOUT)
@@ -2304,18 +2479,43 @@ async def escalate_work_item(wid: str, body: Escalate, request: Request):
     # got two agents committing to one worktree.
     if deps.task_is_live(request.app, wid):
         raise HTTPException(409, "a walk is already running for this work item")
+    if holder := st.db.read(lambda c: store.checkout_holder(c, wid)):
+        return await queued_answer(
+            request, wid, "escalate", body, admitting(Verb.ESCALATE), held_by=holder
+        )
+
+    headers = deps.caller_headers(request)
 
     async def _run_escalation() -> None:
         cursor_evts = st.db.read(lambda c: events.read_after(c, 0, wid))
         cursor = cursor_evts[-1]["seq"] if cursor_evts else 0
-        await escalate.dispatch(
-            st.db,
-            st.run_dirs,
-            work_item_id=wid,
-            message=message,
-            launch=deps.launch(st, row["repo"]),
-            new_thread=body.new_thread,
-        )
+        try:
+            await escalate.dispatch(
+                st.db,
+                st.run_dirs,
+                work_item_id=wid,
+                message=message,
+                launch=deps.launch(st, row["repo"]),
+                new_thread=body.new_thread,
+            )
+        except store.CheckoutBusy as exc:
+            # Taken since the check above: waits for it as if found then.
+            holder = exc.holder
+            await st.db.write(
+                lambda c: store.queue_work_item(
+                    c,
+                    wid,
+                    verb="escalate",
+                    body=body.model_dump(mode="json", exclude_defaults=True),
+                    headers=headers,
+                    from_statuses=admitting(Verb.ESCALATE),
+                    held_by=holder,
+                )
+            )
+            return
+        except inplace.CheckoutRefused as exc:
+            await inplace.stop_refused(st.db, wid, row["current_node_id"], exc)
+            return
         # The agent may have called `kraft item retry` on itself mid-turn
         # (lifecycle.py's `work_item_self_retry_requested` deferral above) --
         # consume it the same way `gates.auto_escalate_stuck` does, or a
@@ -2361,11 +2561,12 @@ async def stop_escalation(wid: str, request: Request):
         raise HTTPException(409, "no escalation turn is running")
     row = st.db.read(
         lambda c: c.execute(
-            "SELECT pid FROM worker_sessions WHERE work_item_id = ? AND id = ?", (wid, running)
+            "SELECT pid, pid_start_time FROM worker_sessions WHERE work_item_id = ? AND id = ?",
+            (wid, running),
         ).fetchone()
     )
     await st.db.write(lambda c: store.stop_escalation_session(c, wid, running))
-    _terminate(row["pid"] if row else None)
+    _terminate(row and row["pid"], started=row and row["pid_start_time"])
     return {"id": wid, "session_id": running, "status": WorkItemStatus.PAUSED}
 
 
@@ -2385,7 +2586,7 @@ async def set_mr_labels(wid: str, body: MrLabels, request: Request):
     """
     st = request.app.state
     row = deps._work_item_row(st, wid)
-    worktree = st.run_dirs.worktrees / wid
+    worktree = inplace.item_folder(st.run_dirs, row)
     if not worktree.is_dir():
         raise deps.worktree_missing(row)
     labels = tuple(label.strip() for label in body.labels if label.strip())
@@ -2395,7 +2596,12 @@ async def set_mr_labels(wid: str, body: MrLabels, request: Request):
     try:
         backend = forge_mod.backend_for("auto", repo_entry.forge if repo_entry else None)
         forge = forge_mod.resolve(backend)
-        await forge.set_labels(repo=worktree, mr=forge_mod.MR(number=0, url=""), labels=labels)
+        await forge.set_labels(
+            repo=worktree,
+            branch=store.branch_for(row),
+            mr=forge_mod.MR(number=0, url=""),
+            labels=labels,
+        )
     except forge_mod.ForgeError as exc:
         raise HTTPException(502, str(exc)) from exc
 

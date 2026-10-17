@@ -12,8 +12,10 @@ describe("reasonTail", () => {
     expect(reasonTail(row("blocked"), NOW)).toBe("waiting on another item");
   });
 
-  it("says a queued item is waiting for a slot", () => {
+  it("says a queued item is waiting for a slot, or for the checkout and who is using it", () => {
     expect(reasonTail(row("queued"), NOW)).toBe("waiting to start");
+    const queued = { verb: "resume", since: "2026-09-13T09:00:00Z", why: "checkout" as const, held_by: "w2", held_by_title: "Cache the index" };
+    expect(reasonTail(row("queued", { queued }), NOW)).toBe("waiting for the checkout: Cache the index is using it");
   });
 
   it("says one short thing per status and stop kind", () => {
@@ -26,6 +28,8 @@ describe("reasonTail", () => {
       // A budget stop's reason is two sentences; the row keeps the first, cents and all.
       [row("needs_you", { stop: stop("budget", { reason: "budget cap reached: $0.035 spent on this work item, cap $0.030. Nothing new was started; a running agent was not interrupted." }) }), "budget cap reached: $0.035 spent on this work item, cap $0.030"],
       [row("needs_you", { stop: stop("conflict") }), "waiting for you at verification"],
+      // A checkout stop goes on to what to do about it; the row keeps what happened.
+      [row("needs_you", { stop: stop("checkout", { reason: "the checkout moved to main during the run of review in /r. Kraft did not switch it back, nor move those commits: retry the item once /r may go back to kraft/x" }) }), "the checkout moved to main during the run of review in /r"],
       [row("failed", { stop: stop("failed", { node: "merge_request" }) }), "failed at merge request"],
       [row("needs_you", { stop: stop("gate"), pending_gate: "spec-approval" }), "approve spec"],
       [row("failed", { stop: stop("failed", { node: "post-merge-ci2" }) }), "failed at post merge ci2"],
@@ -73,6 +77,7 @@ describe("rowAction", () => {
     expect(a(row("needs_you", { stop: stop("budget") }))).toEqual({ label: "Raise budget", kind: "peek", tab: "config", budget: true });
     expect(a(row("needs_you", { stop: stop("mr_closed") }))).toMatchObject({ label: "Open", kind: "peek" });
     expect(a(row("needs_you", { stop: stop("stuck") }))).toEqual({ label: "Retry…", kind: "peek", tab: "overview" });
+    expect(a(row("needs_you", { stop: stop("checkout") }))).toEqual({ label: "Retry…", kind: "peek", tab: "overview" });
     expect(a(row("failed", { stop: stop("failed") }))).toMatchObject({ label: "Retry…", kind: "peek" });
     expect(a(row("paused"))).toEqual({ label: "Resume", kind: "resume" });
     for (const s of ["running", "waiting", "escalated", "done", "cancelled"] as DisplayStatus[]) expect(a(row(s)), s).toBeNull();
@@ -88,6 +93,7 @@ describe("admittedRowAction: rowAction, only through a door the server's actions
     ["paused, the server refusing resume", row("paused", { actions: ["steer", "cancel"] }), null],
     ["failed, the server refusing retry", row("failed", { stop: stop("failed"), actions: ["escalate", "cancel"] }), null],
     ["stuck, the server refusing retry", row("needs_you", { stop: stop("stuck"), actions: ["escalate"] }), null],
+    ["a checkout stop, the server refusing retry", row("needs_you", { stop: stop("checkout"), actions: ["cancel"] }), null],
     ["a question, the server refusing resume", row("needs_you", { stop: stop("question"), actions: ["steer"] }), null],
     ["a cap, the server refusing retry", row("needs_you", { stop: stop("cap"), actions: ["cancel"] }), null],
     // The peek offers Retry when it can't raise: the row still goes there.

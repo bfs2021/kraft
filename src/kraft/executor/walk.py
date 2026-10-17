@@ -6,7 +6,7 @@ from pathlib import Path
 
 from kraft import builtins as _builtins
 from kraft import config as _config
-from kraft import events, node_runs, store
+from kraft import events, inplace, node_runs, store
 from kraft import findings as _findings
 from kraft import policy as _policy
 from kraft.adapters import beads
@@ -18,6 +18,7 @@ from kraft.executor.context import (
     _ADVANCING,
     BASE_MOVED,
     BUDGET,
+    CHECKOUT_REFUSED,
     CONFIG_ERROR,
     CONFLICT,
     CONFLICT_RESOLVED,
@@ -511,6 +512,24 @@ async def _sentinel_stop(
         return "paused"
     if verdict == CONFIG_ERROR:
         return await _stop_for_config_error(db, work_item_id, node, failed)
+    if verdict == CHECKOUT_REFUSED:
+        # The after-task check (`inplace.check_task`) stops the item
+        # itself; a refused take leaves its reason in a session's log.
+        status = db.read(
+            lambda c: c.execute(
+                "SELECT status FROM work_items WHERE id = ?", (work_item_id,)
+            ).fetchone()["status"]
+        )
+        if status == "needs_human":
+            return "needs_human"
+        # Never `stuck`: an escalation would take the checkout straight back.
+        reason = "; ".join(_task_log(db, work_item_id, node, t).strip() for t in failed)
+        await db.write(
+            lambda c: store.mark_needs_human(
+                c, work_item_id, node.id, reason, kind=StopKind.CHECKOUT
+            )
+        )
+        return "needs_human"
     if verdict == RATE_LIMITED:
         return await stops.stop_for_rate_limit(db, work_item_id, node)
     if verdict == WAITING:
@@ -2009,7 +2028,7 @@ async def run_once(
         # Before the worktree is touched at all: host git in a member or a
         # nested repository runs what a sandboxed worker planted in its
         # config (Kraft-nx4id, Kraft-ju36l).
-        stops.refuse_planted_repos(row, launch, run_dirs.worktrees / work_item_id)
+        stops.refuse_planted_repos(row, launch, inplace.item_folder(run_dirs, row))
         # A sandboxed item's setup_command runs in its sandbox, never on the
         # host (Kraft-p8nem).
         sandbox = dispatch.item_sandbox(row, launch)
@@ -2047,14 +2066,21 @@ async def run_once(
                 # Its members now exist, checked out by Kraft just above.
                 checkout=stops.sandbox_checkout(row, launch, worktree) if sandbox else None,
             )
-            if start_index == 0
+            # Never in place: the person's checkout is already set up.
+            if start_index == 0 and not inplace.is_in_place(row)
             else None
         )
     except (RuntimeError, _config.ConfigError) as exc:
         failing_node = nodes[start_index].id
         reason = str(exc)
         kind = StopKind.CONFIG if isinstance(exc, _config.ConfigError) else StopKind.INFRA
-        await node_runs.entered(db, run_dirs.worktrees / work_item_id, work_item_id, failing_node)
+        await node_runs.entered(
+            db,
+            inplace.item_folder(run_dirs, row),
+            work_item_id,
+            failing_node,
+            branch=store.branch_for(row) if inplace.is_in_place(row) else None,
+        )
         await db.write(
             lambda c: store.mark_needs_human(c, work_item_id, failing_node, reason, kind=kind)
         )
@@ -2169,15 +2195,27 @@ async def run_once(
                 # local: avoids an import cycle through kraft.executor
                 from kraft import review_reply
 
-                await review_reply.run(
-                    db,
-                    run_dirs,
-                    work_item_id=work_item_id,
-                    gate=node.id,
-                    nodes=nodes,
-                    launch=launch,
-                )
-            return "awaiting_gate"
+                try:
+                    await review_reply.run(
+                        db,
+                        run_dirs,
+                        work_item_id=work_item_id,
+                        gate=node.id,
+                        nodes=nodes,
+                        launch=launch,
+                    )
+                except (store.CheckoutBusy, inplace.CheckoutRefused) as exc:
+                    await db.write(
+                        lambda c, why=str(exc), gate=node.id: events.append(
+                            c,
+                            work_item_id,
+                            GateEvent.REPLY_AGENT_SKIPPED,
+                            {"gate": gate, "reason": why},
+                            node_id=gate,
+                        )
+                    )
+            # The reply's after-check (`inplace.check_task`) may have stopped it.
+            return "needs_human" if inplace.stopped(db, work_item_id) else "awaiting_gate"
         if isinstance(node.node, GateNode):
             # Cleared: its approval already completed it (`store.approve_gate`),
             # and entering it again would stamp a second `node_started` on a

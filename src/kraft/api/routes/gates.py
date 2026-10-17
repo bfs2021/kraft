@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from kraft import events, executor, store
+from kraft import events, executor, inplace, store
 from kraft.api import api_router, deps
 from kraft.api.routes import artifacts, board
 from kraft.api.routes.lifecycle import (
@@ -232,14 +232,16 @@ def _before_any_push(nodes, gate: str) -> bool:
     return True
 
 
-async def _refresh_base_at_gate(request, wid: str, row, gate: str) -> None:
+async def _refresh_base_at_gate(request, wid: str, row, gate: str) -> bool:
     """Bring the branch up to date with its base, as a resume does, before the
     chain goes on from `gate`: an item that sat there for days would otherwise
     implement and verify against the code it forked from. The approval has
     landed whatever this finds: a base that cannot be refreshed cleanly leaves
     the item on its old one and says so (`worktree_refresh_skipped`), and a
     stop that came meanwhile has already stopped the item, so the walk is not
-    started over it."""
+    started over it. An in-place checkout the rebase could not take, or left
+    clashing, stops the item for the person: answers True, and the walk does
+    not start."""
     st = request.app.state
     node = row["current_node_id"]
     reason = None
@@ -249,6 +251,9 @@ async def _refresh_base_at_gate(request, wid: str, row, gate: str) -> None:
         # Stopped (paused, cancelled, a walk already there): not a refusal of
         # the approval, and not ours to continue after.
         raise
+    except (inplace.AutostashClash, inplace.CheckoutRefused) as exc:
+        await inplace.stop_refused(st.db, wid, node, exc)
+        return True
     except RuntimeError as exc:
         new_base, reason = None, str(exc).splitlines()[0] if str(exc) else repr(exc)
     if reason is not None:
@@ -262,8 +267,8 @@ async def _refresh_base_at_gate(request, wid: str, row, gate: str) -> None:
             )
         )
     elif new_base and new_base != row["base_ref"]:
-        worktree = st.run_dirs.worktrees / wid
-        head = git_read(worktree, "rev-parse", "HEAD", expected_failure=True)
+        worktree = inplace.item_folder(st.run_dirs, row)
+        head = git_read(worktree, "rev-parse", inplace.head_ref(row), expected_failure=True)
         await st.db.write(
             lambda c: events.append(
                 c,
@@ -274,6 +279,7 @@ async def _refresh_base_at_gate(request, wid: str, row, gate: str) -> None:
             )
         )
         await st.db.write(lambda c: store.set_base_ref(c, wid, new_base))
+    return False
 
 
 @api_router.post("/work-items/{wid}/gates/{gate:path}/approve")
@@ -330,7 +336,7 @@ async def approve_gate(wid: str, gate: str, request: Request, body: GateApprove 
         )
 
     # Bracketed from *before* the claim to the hand-off. `store.approve_gate` is
-    # an unconditional `UPDATE work_items SET status = 'active'` -- a claim like
+    # an `UPDATE work_items SET status = 'active'` -- a claim like
     # any other, which `api/deps.py`'s `task_is_live` docstring already names:
     # "calling `store.approve_gate`/`apply_rejection` and only then discovering
     # `spawn` refuses would leave the gate cleared and the item `active` with no
@@ -346,10 +352,19 @@ async def approve_gate(wid: str, gate: str, request: Request, body: GateApprove 
         reason="gate approval cleared the gate but could not start a walk",
         handed_off=lambda: deps.task_is_live(request.app, wid),
     ):
-        await st.db.write(lambda c: store.approve_gate(c, wid, gate, by=_decided_by(request)))
+        approval = await st.db.write(
+            lambda c: store.approve_gate(c, wid, gate, by=_decided_by(request))
+        )
+        if isinstance(approval, str):
+            # Approved, and queued to go on once the checkout frees.
+            return held_answer(st, wid, approval)
         start = board._gate_node_index(nodes, gate) + 1
-        if _before_any_push(nodes, gate) and (st.run_dirs.worktrees / wid).is_dir():
-            await _refresh_base_at_gate(request, wid, row, gate)
+        if (
+            _before_any_push(nodes, gate)
+            and inplace.item_folder(st.run_dirs, row).is_dir()
+            and await _refresh_base_at_gate(request, wid, row, gate)
+        ):
+            return deps.work_item_answer(st, wid)
         try:
             deps.spawn(
                 request.app,
@@ -372,6 +387,11 @@ async def approve_gate(wid: str, gate: str, request: Request, body: GateApprove 
         except deps.AlreadyRunning:
             raise HTTPException(409, "a walk is already running for this work item") from None
         return deps.work_item_answer(st, wid)
+
+
+def held_answer(st, wid: str, holder: str) -> dict:
+    """The item, as a gate decision queued for its checkout leaves it."""
+    return deps.work_item_answer(st, wid) | st.db.read(lambda c: store.checkout_reason(c, holder))
 
 
 # Backward motion: 02 §7.2. Every gate on this path: Kraft-ko7j.
@@ -453,6 +473,8 @@ async def reject_gate(wid: str, gate: str, body: GateReject, request: Request):
         if target is None:
             # A spent reject loop goes to a human, not an agent (Ruling 176).
             return deps.work_item_answer(st, wid)
+        if isinstance(target, str):
+            return held_answer(st, wid, target)  # rejected, queued for the checkout
 
         try:
             deps.spawn(

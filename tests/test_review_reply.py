@@ -8,10 +8,19 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
 from support.addons import drop_store, install_release, pinned_chain
-from support.harness import entry_of, git, make_repo, seed_v1_library, write_harness_profiles
+from support.harness import (
+    IN_PLACE,
+    entry_of,
+    git,
+    make_repo,
+    seed_v1_library,
+    write,
+    write_harness_profiles,
+)
 
-from kraft import executor, review_reply, store
+from kraft import executor, inplace, review_reply, store
 
 _FAKE_AGENT = Path(__file__).parent / "support" / "fake_agent.py"
 FAKE_AGENT_COMMAND = f"{sys.executable} {_FAKE_AGENT}"
@@ -328,3 +337,60 @@ async def test_the_comment_reviews_summary_reaches_the_reply_agent(
     )
 
     assert "Mostly fine; one question." in prompts.read_text()
+
+
+@pytest.mark.parametrize(
+    ("busy", "refusal", "match"),
+    [(True, store.CheckoutBusy, "in use by A"), (False, inplace.CheckoutRefused, "is gone")],
+    ids=["another-item-uses-it", "it-cannot-be-taken"],
+)
+async def test_no_reply_agent_starts_without_its_checkout(
+    item_on, run_dirs, tmp_path, monkeypatch, busy, refusal, match
+):
+    """Refused where its session would be written, or where the checkout is
+    switched to the item's branch (here, gone); the caller queues or skips it."""
+    _seed(tmp_path, monkeypatch)
+    if busy:
+        await item_on(NODES, GATE, wid="a", target=IN_PLACE, title="A")
+    it = await item_on(NODES, GATE, wid="b", target=IN_PLACE, status="needs_human")
+    await _published_unanswered_thread(it)
+
+    with pytest.raises(refusal, match=match):
+        await review_reply.run(
+            it.database,
+            it.run_dirs,
+            work_item_id=it.id,
+            gate=GATE,
+            nodes=it.chain.chain.nodes,
+            launch=LAUNCH,
+        )
+
+    assert [s["status"] for s in it.sessions()] == ([] if busy else ["config_error"])
+    assert not it.events("reply_agent_failed")
+
+
+async def test_an_in_place_reply_agent_that_writes_nothing_did_not_write(
+    item_on, repo, tmp_path, monkeypatch
+):
+    """Its snapshot reads the item's branch, not the checkout's HEAD: the
+    person on their own branch is not a write by the reply agent."""
+    _seed(tmp_path, monkeypatch)
+    monkeypatch.setenv("KRAFT_FAKE_AGENT", "noop")
+    it = await item_on(NODES, GATE, target=IN_PLACE, status="needs_human")
+    git(repo, "branch", store.branch_for(it.row()))
+    write(repo, "MINE", "the person's own commit\n")
+    git(repo, "add", "MINE")
+    git(repo, "commit", "-qm", "mine")
+    await _published_unanswered_thread(it)
+
+    status = await review_reply.run(
+        it.database,
+        it.run_dirs,
+        work_item_id=it.id,
+        gate=GATE,
+        nodes=it.chain.chain.nodes,
+        launch=LAUNCH,
+    )
+
+    assert status == "replied"
+    assert it.events("reply_agent_wrote") == []

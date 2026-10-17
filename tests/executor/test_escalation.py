@@ -2,11 +2,14 @@
 dispatched onto a `needs_human` stop nobody has looked at, and the self-retry
 that agent may leave behind."""
 
+import json
+
 import pytest
 
-from kraft import events, executor, store
+from kraft import events, executor, inplace, store
 from kraft import policy as _policy
 from kraft.executor import gates as gates_module
+from kraft.templates.environment import WorkItemTarget
 
 _CHAIN = """
 - id: implementation
@@ -313,9 +316,26 @@ def test_auto_dispatch_count_resets_only_when_a_human_acts(between, expected):
     assert gates_module._auto_dispatch_count([stop, auto, between, stop, auto]) == expected
 
 
-@pytest.mark.parametrize("moved_to", ["abandoned", "active"])
+def _moved(status):
+    return lambda c, wid: c.execute("UPDATE work_items SET status = ? WHERE id = ?", (status, wid))
+
+
+def _checkout_stopped(c, wid):
+    store.mark_needs_human(c, wid, "implementation", "the agent committed a.py", kind="checkout")
+
+
+@pytest.mark.parametrize(
+    ("move", "moved_to"),
+    [
+        (_moved("abandoned"), "abandoned"),
+        (_moved("active"), "active"),
+        # The turn's own in-place after-check (`inplace.check_task`) stopped it.
+        (_checkout_stopped, "needs_human"),
+    ],
+    ids=["abandoned", "active", "checkout-stop"],
+)
 async def test_resume_after_escalation_drops_a_self_retry_on_a_moved_item(
-    item_on, run_dirs, moved_to
+    item_on, run_dirs, move, moved_to
 ):
     """A human who moves the item while the escalation turn is running must not
     have it resurrected: `retry_after_cap`/`mark_needs_human` both UPDATE
@@ -333,9 +353,7 @@ async def test_resume_after_escalation_drops_a_self_retry_on_a_moved_item(
     await it.database.write(
         lambda c: events.append(c, it.id, "work_item_self_retry_requested", _self_retry_event())
     )
-    await it.database.write(
-        lambda c: c.execute("UPDATE work_items SET status = ? WHERE id = ?", (moved_to, it.id))
-    )
+    await it.database.write(lambda c: move(c, it.id))
 
     status = await gates_module.resume_after_escalation(
         it.database, run_dirs, work_item_id=it.id, cursor=cursor
@@ -345,6 +363,53 @@ async def test_resume_after_escalation_drops_a_self_retry_on_a_moved_item(
     assert it.status() == moved_to, "the bracket stopped an item this call never claimed"
     assert len(it.events("work_item_self_retry_dropped")) == 1
     assert not it.events("work_item_retried"), "something re-entered the chain"
+
+
+async def test_a_self_retry_behind_a_working_in_place_item_is_queued(item_on, run_dirs):
+    """The retry the escalation asked for stands, queued until the checkout frees."""
+    in_place = WorkItemTarget.for_repository("sample", in_place=True)
+    await item_on(_CHAIN, "implementation", wid="a", target=in_place, title="A")
+    it = await item_on(_CHAIN, "implementation", wid="b", target=in_place)
+    await _stop(it, "stuck")
+    cursor = it.events()[-1]["seq"]
+    payload = _self_retry_event(steer="fixed it", path="implementation.main.implement")
+    await it.database.write(
+        lambda c: events.append(c, it.id, "work_item_self_retry_requested", payload)
+    )
+
+    status = await gates_module.resume_after_escalation(
+        it.database, run_dirs, work_item_id=it.id, cursor=cursor
+    )
+
+    assert status == it.status() == "queued"
+    assert json.loads(it.row()["queued_request"])["body"] == {"cursor": cursor}
+    assert it.events("work_item_queued")[-1]["payload"]["held_by"] == "a"
+    assert not it.events("work_item_self_retry_dropped")
+
+
+async def test_a_self_retry_whose_in_place_rebase_clashes_stops_as_checkout(
+    item_on, run_dirs, monkeypatch
+):
+    in_place = WorkItemTarget.for_repository("sample", in_place=True)
+    it = await item_on(_CHAIN, "implementation", target=in_place)
+    await _stop(it, "stuck")
+    cursor = it.events()[-1]["seq"]
+    await it.database.write(
+        lambda c: events.append(c, it.id, "work_item_self_retry_requested", _self_retry_event())
+    )
+
+    async def clash(*_, **__):
+        raise inplace.AutostashClash("your edits to f clash", ["f"], "5ca1ab1e")
+
+    monkeypatch.setattr(inplace, "rebase", clash)
+
+    status = await gates_module.resume_after_escalation(
+        it.database, run_dirs, work_item_id=it.id, cursor=cursor
+    )
+
+    assert status == "needs_human"
+    stop = it.events("work_item_needs_human")[-1]["payload"]
+    assert (stop["kind"], stop["facts"]) == ("checkout", {"paths": ["f"], "stash": "5ca1ab1e"})
 
 
 @pytest.mark.parametrize(
@@ -483,3 +548,27 @@ async def test_a_self_retry_applies_the_override_it_carried(item_on, run_dirs, n
     assert fork.override["task_config"] == {"command": "make again"}
     task = fork.chain.chain.nodes[0].steps[0].tasks[0].task
     assert task.command == "make again"
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [store.CheckoutBusy("a", "A"), inplace.CheckoutRefused("the branch is gone")],
+    ids=["another-item-uses-it", "it-cannot-be-taken"],
+)
+async def test_an_auto_escalation_refused_its_checkout_is_skipped(item_on, monkeypatch, refusal):
+    """`escalate.dispatch` started nothing: another in-place item took the
+    checkout (`store.create_session`), or it could not be switched to the
+    item's branch (`inplace.take`). The stop stays the person's."""
+
+    async def busy(*a, **kw):
+        raise refusal
+
+    monkeypatch.setattr("kraft.executor.gates.escalate.dispatch", busy)
+    it = await _stuck(item_on)
+
+    assert await _escalate(it) == "needs_human"
+
+    assert [e["payload"] for e in it.events("work_item_auto_escalate_skipped")] == [
+        {"reason": "checkout"}
+    ]
+    assert not it.events("work_item_retried")

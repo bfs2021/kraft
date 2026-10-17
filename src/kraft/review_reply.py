@@ -21,7 +21,7 @@ import asyncio
 import json
 import logging
 
-from kraft import caps, events, executor, store
+from kraft import caps, events, executor, inplace, store
 from kraft import overrides as _overrides
 from kraft.adapters import agent as _agent
 from kraft.executor import read_only
@@ -70,10 +70,8 @@ async def run(db, run_dirs, *, work_item_id: str, gate: str, nodes, launch) -> s
         return await _run(
             db, run_dirs, work_item_id=work_item_id, gate=gate, nodes=nodes, launch=launch
         )
-    except asyncio.CancelledError:
-        raise
-    except AssertionError:
-        raise
+    except (asyncio.CancelledError, AssertionError, store.CheckoutBusy, inplace.CheckoutRefused):
+        raise  # nothing started: the caller queues, skips or stops on it
     except Exception as exc:  # noqa: BLE001
         logger.exception("reply agent failed for %s at gate %s", work_item_id, gate)
         error = repr(exc)
@@ -122,7 +120,7 @@ async def _run(db, run_dirs, *, work_item_id: str, gate: str, nodes, launch) -> 
     row = db.read(
         lambda c: c.execute("SELECT * FROM work_items WHERE id = ?", (work_item_id,)).fetchone()
     )
-    worktree = run_dirs.worktrees / work_item_id
+    worktree = inplace.item_folder(run_dirs, row)
     # The `comment` review that launched this, whose summary is part of what was asked.
     review = db.read(lambda c: store.last_review(c, work_item_id))
     summary = review["summary"] if review else None
@@ -186,6 +184,7 @@ async def _run(db, run_dirs, *, work_item_id: str, gate: str, nodes, launch) -> 
         repo_entry=launch.repo_entry,
         time_cap=time_cap,
         harness_id=task.task.harness,
+        takes_checkout=True,
     )
     files = read_only.changed(db, row, launch, worktree, before)
     if files:

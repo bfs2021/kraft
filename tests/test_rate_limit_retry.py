@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from support.harness import isolated_bd
+from support.harness import IN_PLACE, isolated_bd, v1_named_chain
 
 from kraft import events, policy, rate_limit_retry, store
 
@@ -263,3 +263,20 @@ async def test_a_rate_limit_relaunch_leaves_the_position_to_the_walk(
     await asyncio.gather(*app.state.tasks.values(), return_exceptions=True)
     assert "start_index" not in seen and "start_step" not in seen
     assert seen["work_item_id"] == "w1"
+
+
+async def test_a_due_item_whose_checkout_is_busy_waits_and_counts_nothing(
+    tmp_path, item_on, run_dirs, stub_app
+):
+    chain = v1_named_chain(run_dirs.base / "t")
+    await item_on(chain, wid="a", target=IN_PLACE)  # active in the checkout
+    it = await item_on(chain, "implementation", wid="b", target=IN_PLACE)
+    await it.database.write(
+        lambda c: store.mark_rate_limited(c, "b", "implementation", "2000-01-01T00:00:00+00:00")
+    )
+    before = len(it.events())
+
+    assert await rate_limit_retry.tick(stub_app(**_state(tmp_path))) == []
+    assert it.status() == "rate_limited"
+    assert it.database.read(lambda c: store.cap_counts(c, "b")) == {}
+    assert len(it.events()) == before

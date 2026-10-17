@@ -16,6 +16,7 @@ from kraft import (
     auto_escalate_delay,
     caps,
     executor,
+    inplace,
     mr_poller,
     rate_limit_retry,
     start_queue,
@@ -184,6 +185,17 @@ async def lifespan(app: FastAPI):
         refreshed = []
     for path in refreshed:
         logger.info("%s: Kraft's permission hook now runs with -I", path)
+
+    try:
+        await asyncio.to_thread(inplace.drop_stale_scratch, run_dirs)
+    except Exception:  # noqa: BLE001 -- a leftover never refuses the boot
+        logger.exception("could not remove the throwaway rebase worktrees in %s", run_dirs.scratch)
+
+    try:
+        for pid in await reattach.reap_stopped(database):
+            logger.info("stopped the process group %s a stopped session left running", pid)
+    except Exception:  # noqa: BLE001 -- never a refused boot
+        logger.exception("could not stop the process groups stopped sessions left")
 
     summary, adopted = await reattach.reattach(
         database,

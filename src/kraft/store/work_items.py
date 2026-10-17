@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from collections.abc import Iterable
+from datetime import datetime, timedelta
 
 from kraft import events
 from kraft.store import _now as _now  # test seam for wall-clock checks
 from kraft.store._common import write_status
+from kraft.store.chain import materialized_chain_of
 from kraft.vocab import (
     ENDED,
     HOLDS_SLOT,
+    LIVE,
     STOP_TRAITS,
     SessionEvent,
     SessionStatus,
@@ -362,10 +366,11 @@ def queue_work_item(
     body: dict,
     headers: dict[str, str],
     from_statuses,
+    held_by: str | None = None,
 ) -> bool:
-    """Hold a start request the board had no slot for (`kraft.start_queue`).
-    True when it queued; False when the item is not in a status the door
-    starts from.
+    """Hold a start request the board had no slot for (`kraft.start_queue`),
+    or whose checkout another in-place item, `held_by`, is using. True when it
+    queued; False when the item is not in a status the door starts from.
 
     The request is saved, not a prepared run: the rebase, the counter clearing
     and the steer all happen when the item starts, against the code as it is
@@ -383,8 +388,111 @@ def queue_work_item(
         (json.dumps(request), request["at"], work_item_id),
     ):
         return False
-    events.append(conn, work_item_id, WorkItemEvent.QUEUED, {"verb": verb, "from": request["from"]})
+    payload = {"verb": verb, "from": request["from"]}
+    if held_by is not None:
+        payload |= checkout_reason(conn, held_by)
+    events.append(conn, work_item_id, WorkItemEvent.QUEUED, payload)
     return True
+
+
+class CheckoutBusy(Exception):
+    """An agent session outside the walk found its checkout in use by another
+    in-place item (`create_session(takes_checkout=True)`); nothing started."""
+
+    def __init__(self, holder: str, title: str):
+        super().__init__(f"the checkout is in use by {title}")
+        self.holder = holder
+
+
+def checkout_holder(conn: sqlite3.Connection, work_item_id: str) -> str | None:
+    """The other in-place item working in this item's checkout folder
+    (`folder_holder`). None for a worktree item, and for an item already
+    `active`, which holds the checkout itself."""
+    row = conn.execute("SELECT * FROM work_items WHERE id = ?", (work_item_id,)).fetchone()
+    if row is None or row["status"] == WorkItemStatus.ACTIVE or not is_in_place(row):
+        return None
+    return folder_holder(conn, row["repo"], work_item_id)
+
+
+#: How long after its row stopped a session's processes are looked for: a
+#: stop is written before they are killed (a 2s flush, then a 10s group kill).
+REAP_WINDOW_S = 120
+
+
+def _group_alive(pgid: int, started: float | None) -> bool:
+    """Whether the process group a session leads (`start_new_session`) has a
+    member left. A live leader counts only as the process Kraft launched,
+    by its start time: a reused pid is anyone's. Past a gone leader, its
+    group's other members: no pid is reused while its group has one.
+    `PermissionError` is macOS's answer for a zombie-only group."""
+    from kraft.worker import reattach
+
+    if reattach._pid_alive(pgid):
+        return reattach._identity_ok(pgid, started)
+    try:
+        os.killpg(pgid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def recently_stopped(conn: sqlite3.Connection, other_than: str = "") -> list[sqlite3.Row]:
+    """Sessions written stopped within `REAP_WINDOW_S` that recorded a pid,
+    each as its item's row with `session_pid` and `session_started`: ones
+    whose processes a stop may not have reached yet."""
+    since = (datetime.fromisoformat(_now()) - timedelta(seconds=REAP_WINDOW_S)).isoformat()
+    return conn.execute(
+        "SELECT w.*, s.pid AS session_pid, s.pid_start_time AS session_started "
+        "FROM work_items w JOIN worker_sessions s ON s.work_item_id = w.id "
+        "WHERE w.id != ? AND s.pid IS NOT NULL AND s.exited_at >= ? "
+        f"AND s.status NOT IN ({in_list(LIVE)}) ORDER BY w.id",
+        (other_than, since),
+    ).fetchall()
+
+
+def folder_holder(conn: sqlite3.Connection, folder: str, other_than: str) -> str | None:
+    """The in-place item, other than `other_than`, working in `folder`: one
+    that is `active`, or has a live session, or one whose row has stopped
+    but whose processes are not yet gone, still writing in the checkout.
+
+    Read from the rows and the process table, not kept in a lock of its own,
+    so a restart neither loses nor doubles it. The folder is compared
+    resolved: two spellings of one checkout are one lease."""
+    folder = os.path.realpath(folder)
+    working = conn.execute(
+        "SELECT * FROM work_items w WHERE id != ? AND (status = ? OR EXISTS ("
+        "SELECT 1 FROM worker_sessions s WHERE s.work_item_id = w.id "
+        f"AND s.status IN ({in_list(LIVE)}))) ORDER BY id",
+        (other_than, WorkItemStatus.ACTIVE),
+    )
+    stopping = recently_stopped(conn, other_than)
+
+    def here(o) -> bool:
+        return is_in_place(o) and os.path.realpath(o["repo"]) == folder
+
+    # shortcut: parses each working item's chain inside the writer; fine for a
+    # board of tens of items, a stored `in_place` column when it is hundreds.
+    return next((o["id"] for o in working if here(o)), None) or next(
+        (
+            o["id"]
+            for o in stopping
+            if here(o) and _group_alive(o["session_pid"], o["session_started"])
+        ),
+        None,
+    )
+
+
+def checkout_reason(conn: sqlite3.Connection, holder: str) -> dict:
+    """Why an item waits for its checkout, as its queued event and answer say it."""
+    title = conn.execute("SELECT title FROM work_items WHERE id = ?", (holder,)).fetchone()
+    return {"why": "checkout", "held_by": holder, "held_by_title": title["title"]}
+
+
+def is_in_place(row) -> bool:
+    """Whether the item runs in its repository's checkout. False for a row
+    with no row, no snapshot, or one that did not select it."""
+    chain = materialized_chain_of(row) if row is not None else None
+    return chain is not None and chain.target.in_place
 
 
 #: Where a queued item goes back to. A literal each, like `MANUAL_ENDS`, so no
@@ -676,8 +784,11 @@ def mark_reentered(conn: sqlite3.Connection, work_item_id: str) -> bool:
     the row stop looking due, not something a human reads.
 
     False, and nothing written, for an item an operator ended after the
-    poller selected it (Kraft-dncfg).
+    poller selected it (Kraft-dncfg), or whose checkout another in-place item
+    is using (`checkout_holder`): the poller tries again next tick.
     """
+    if checkout_holder(conn, work_item_id) is not None:
+        return False
     return write_status(
         conn,
         "UPDATE work_items SET status = 'active', retry_at = NULL, updated_at = ? WHERE id = ?",
@@ -780,18 +891,26 @@ def open_counts_by_repo(conn: sqlite3.Connection) -> dict[str, int]:
 
 
 def abandon_work_item(
-    conn: sqlite3.Connection, work_item_id: str, reason: str | None = None
+    conn: sqlite3.Connection,
+    work_item_id: str,
+    reason: str | None = None,
+    *,
+    branch_kept: str | None = None,
 ) -> None:
     """Terminal. The row stays — its events and sessions are still the record of
     what happened — but it is out of the running set for good, and off the board.
-    `reason` is why a person dropped it, kept on the event when given.
+    `reason` is why a person dropped it, kept on the event when given;
+    `branch_kept` why an in-place item's branch stayed (`inplace.drop_branch`).
     """
     conn.execute(
         "UPDATE work_items SET status = 'abandoned', queued_request = NULL, updated_at = ? "
         "WHERE id = ?",
         (_now(), work_item_id),
     )
-    events.append(conn, work_item_id, WorkItemEvent.ABANDONED, {"reason": reason} if reason else {})
+    payload = {"reason": reason} if reason else {}
+    if branch_kept is not None:
+        payload["branch_kept"] = branch_kept
+    events.append(conn, work_item_id, WorkItemEvent.ABANDONED, payload)
 
 
 def archive_work_item(
@@ -804,6 +923,7 @@ def archive_work_item(
     rescued_branch: str | None = None,
     rescued_commits: int | None = None,
     worktree_kept: str | None = None,
+    branch_kept: str | None = None,
     reason: str | None = None,
 ) -> None:
     """Marks a completed/abandoned item archived without touching `status`
@@ -817,7 +937,8 @@ def archive_work_item(
     archive left the item's branch in place because nothing else held its
     commits; `rescued_branch` and `rescued_commits` when it named a detached
     HEAD's commits; `worktree_kept` (the reason) when that failed and the
-    worktree stayed. `reason` is `"storage"` when the storage limit's automatic
+    worktree stayed; `branch_kept` why an in-place item's branch stayed
+    (`inplace.drop_branch`). `reason` is `"storage"` when the storage limit's automatic
     clean-up archived it (`kraft.storage.tick`).
     """
     now = _now()
@@ -832,6 +953,8 @@ def archive_work_item(
         payload |= {"rescued_branch": rescued_branch, "rescued_commits": rescued_commits}
     if worktree_kept is not None:
         payload["worktree_kept"] = worktree_kept
+    if branch_kept is not None:
+        payload["branch_kept"] = branch_kept
     if reason is not None:
         payload["reason"] = reason
     events.append(conn, work_item_id, WorkItemEvent.ARCHIVED, payload)
@@ -1079,9 +1202,15 @@ def claim_for_run(
     `work_item_retried`, `node_skipped`, ...); this owns only the status
     column, so a caller that loses the race can 409 before writing anything
     else.
+
+    False too while another in-place item works in this item's checkout
+    (`checkout_holder`); a caller tells that apart by reading it again.
     """
     from_statuses = [WorkItemStatus(s) for s in from_statuses]
     to_status = WorkItemStatus(to_status)
+    # Atomic with the UPDATE below: the caller runs this whole on Kraft's one writer connection.
+    if to_status == WorkItemStatus.ACTIVE and checkout_holder(conn, work_item_id) is not None:
+        return False
     placeholders = marks(from_statuses)
     capacity_clause = ""
     params: tuple = (to_status, _now(), work_item_id, *from_statuses)

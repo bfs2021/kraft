@@ -19,6 +19,7 @@ from support.api import (
     _create_escalation_session,
     _force_node,
     _in_state,
+    _paused,
     _poll_events,
     _post_default,
     _set_status,
@@ -322,7 +323,9 @@ def test_retry_kills_a_strangers_running_escalation_and_proceeds(client, repo, m
     distinct from the self-retry deferral path above, which stays a defer,
     not a kill."""
     terminated = []
-    monkeypatch.setattr("kraft.api.routes.lifecycle._terminate", lambda pid: terminated.append(pid))
+    monkeypatch.setattr(
+        "kraft.api.routes.lifecycle._terminate", lambda pid, **_: terminated.append(pid)
+    )
     wid = _post_default(client, repo)
     _poll_events(client, wid, "gate_requested")
     _force_node(wid, "implementation", "needs_human")
@@ -364,7 +367,7 @@ def test_a_door_takes_only_the_states_this_table_lists(client, repo, monkeypatch
     monkeypatch.setattr(
         lifecycle.forge_mod, "resolve", lambda _b: SimpleNamespace(reopen_mr=reopened)
     )
-    monkeypatch.setattr(lifecycle, "_terminate", lambda pid: None)
+    monkeypatch.setattr(lifecycle, "_terminate", lambda pid, **_: None)
     row, spec = DOORS["states"][state], DOORS["doors"][door]
     wid = _in_state(client, repo, row)
     if row.get("walk"):
@@ -474,25 +477,32 @@ def test_abandon_refuses_an_active_item(client, repo):
     assert "active" in r.json()["detail"]
 
 
-def test_abandon_kills_a_process_left_running_from_the_worktree(client, repo):
+@pytest.mark.parametrize("in_place", [False, True], ids=["worktree", "in-place-checkout-kept"])
+def test_abandon_kills_a_process_left_running_from_the_worktree(client, repo, in_place):
     """Kraft-ugm6: a server (or anything else) an agent started by hand from
     inside the worktree is invisible to `pause`'s session teardown and used to
-    outlive the directory it was launched from."""
-    wid = _post_default(client, repo)
-    _poll_events(client, wid, "gate_requested")
-    worktree = Path(os.environ["KRAFT_RUN_DIR"]) / "worktrees" / wid
-    orphan = subprocess.Popen(["sleep", "60"], cwd=worktree, start_new_session=True)
+    outlive the directory it was launched from. An in-place item's folder is
+    the person's own checkout: abandoning it kills nothing there and removes
+    nothing."""
+    if in_place:
+        wid, folder = _paused(client, repo, in_place=True), repo
+    else:
+        wid = _post_default(client, repo)
+        _poll_events(client, wid, "gate_requested")
+        folder = Path(os.environ["KRAFT_RUN_DIR"]) / "worktrees" / wid
+    orphan = subprocess.Popen(["sleep", "60"], cwd=folder, start_new_session=True)
     try:
         _set_status(wid, "paused")
 
         r = client.post(f"/api/work-items/{wid}/abandon", json={"reason": "test"})
 
         assert r.status_code == 200, r.text
-        for _ in range(50):
+        for _ in range(5 if in_place else 50):
             if orphan.poll() is not None:
                 break
             time.sleep(0.1)
-        assert orphan.poll() is not None, "orphan process outlived the abandon"
+        assert (orphan.poll() is None) is in_place, "the abandon killed the wrong process"
+        assert folder.is_dir() is in_place
     finally:
         if orphan.poll() is None:
             orphan.kill()

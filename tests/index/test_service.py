@@ -4,12 +4,13 @@ import json
 import os
 
 import pytest
-from support.harness import make_repo_with_engineering
+from support.harness import commit_all, git, make_repo_with_engineering, v1_chain, write
 from support.index import seed_session as _seed_session
 from support.index import seed_work_item as _seed_work_item
 
 from kraft.index import db as index_db
 from kraft.index.service import Indexer
+from kraft.templates.environment import WorkItemTarget
 
 
 async def test_repos_union_of_work_items_and_env(tmp_path, database, conn):
@@ -197,19 +198,28 @@ def _markdown_link_to_env(repo, wt):
 
 @pytest.mark.parametrize(
     "plant",
-    [_in_main_checkout_only, _not_markdown, _markdown_link_to_env],
-    ids=["main-checkout", "not-markdown", "md-link-to-env"],
+    [_in_main_checkout_only, _in_main_checkout_only, _not_markdown, _markdown_link_to_env],
+    ids=["main-checkout", "in-place-checkout", "not-markdown", "md-link-to-env"],
 )
 async def test_a_summary_ref_reads_only_a_markdown_file_in_its_own_worktree(
-    tmp_path, database, conn, plant
+    request, tmp_path, database, conn, plant
 ):
     """A worker reports the ref. What it names lands in the index every
     repo's agents search, so it may not name the main checkout's files (an
-    ignored `.env` among them) or anything but a summary."""
+    ignored `.env` among them) or anything but a summary. An in-place item's
+    folder is that checkout, so it reads none."""
     from kraft.paths import RunDirs
 
     repo = make_repo_with_engineering(tmp_path, {".engineering/specs/a.md": "# A\nx\n"})
     await _seed_work_item(database, str(repo))
+    if request.node.callspec.id == "in-place-checkout":
+        target = WorkItemTarget.for_repository("s", in_place=True)
+        task = {"id": "t", "kind": "subprocess", "command": "true"}
+        node = {"id": "n", "kind": "exec", "tasks": [task]}
+        chain = v1_chain([node], repo=repo, target=target).to_json()
+        await database.write(
+            lambda c: c.execute("UPDATE work_items SET materialized_chain = ?", (chain,))
+        )
     rd = RunDirs(tmp_path / "run").ensure()
     wt = rd.worktrees / "w1"
     wt.mkdir()
@@ -298,6 +308,8 @@ async def test_documents_for_work_item_includes_intake_attachments(tmp_path, dat
         ("", "# As filed\nbody\n", None),
         (None, "# Attached plan\nbody\n", "Attached plan"),
         (None, "# Attached plan\nbody\n", "Attached plan"),
+        (None, "# Attached plan\nbody\n", "Attached plan"),
+        ("# Attached plan\nbody\n", "# As filed\nbody\n", "Attached plan"),
     ],
     ids=[
         "worktree",
@@ -306,6 +318,8 @@ async def test_documents_for_work_item_includes_intake_attachments(tmp_path, dat
         "gone-from-worktree",
         "stored-before-the-upgrade",
         "stored-under-a-moved-run-dir",
+        "in-place-before-the-take",
+        "in-place-committed-on-its-branch",
     ],
 )
 async def test_documents_for_work_item_shows_an_unindexed_attachment(
@@ -318,7 +332,9 @@ async def test_documents_for_work_item_shows_an_unindexed_attachment(
     it was filed with: 1.4 listed it there, read from the main checkout
     (R11F-02). Once the worktree exists, it alone is read: a stored copy must
     not stand in for a file a worker removed. `in_worktree` "" is a worktree
-    without the file, None no worktree at all."""
+    without the file, None no worktree at all. An in-place item's folder is
+    the checkout, which always exists: its stored copy is read until the
+    attachment is committed on the item's branch, `in_worktree` there."""
     from kraft.paths import RunDirs
 
     rd = RunDirs(tmp_path / "run").ensure()
@@ -340,7 +356,26 @@ async def test_documents_for_work_item_shows_an_unindexed_attachment(
             ("w1", str(repo), json.dumps([attachment])),
         )
     )
-    if in_worktree is not None:
+    if request.node.callspec.id.startswith("in-place"):
+        node = {
+            "id": "n",
+            "kind": "exec",
+            "tasks": [{"id": "t", "kind": "subprocess", "command": "true"}],
+        }
+        chain = v1_chain(
+            [node], repo=repo, target=WorkItemTarget.for_repository("s", in_place=True)
+        )
+        await database.write(
+            lambda c: c.execute(
+                "UPDATE work_items SET materialized_chain = ? WHERE id = 'w1'", (chain.to_json(),)
+            )
+        )
+    if in_worktree is not None and request.node.callspec.id.startswith("in-place"):
+        git(repo, "checkout", "-q", "-b", "kraft/w1")
+        write(repo, attachment["path"], in_worktree)
+        commit_all(repo, "attach")
+        git(repo, "checkout", "-q", "main")
+    elif in_worktree is not None:
         wt = rd.worktrees / "w1" / ".engineering" / "plans"
         wt.mkdir(parents=True)
         if in_worktree:
@@ -365,7 +400,9 @@ async def test_documents_for_work_item_shows_an_unindexed_attachment(
 
 
 @pytest.mark.parametrize(
-    "worktree", ["with-the-file", "without-it", None], ids=["worktree", "file-gone", "not-started"]
+    "worktree",
+    ["with-the-file", "without-it", None, "in-place-on-its-branch", "in-place-elsewhere"],
+    ids=["worktree", "file-gone", "not-started", "in-place-on-its-branch", "in-place-elsewhere"],
 )
 async def test_resolve_attachment_path_reads_from_the_worktree_not_the_main_repo(
     tmp_path, database, conn, repo, worktree
@@ -374,7 +411,9 @@ async def test_resolve_attachment_path_reads_from_the_worktree_not_the_main_repo
     `_synthesize_attachment_doc` already resolves content from — the file is
     on the item's branch, not the registered repo's checkout. Only a file
     that is there: before the item starts, an editor saving to the path
-    would create the worktree's directory as a plain one (R11F-02 review)."""
+    would create the worktree's directory as a plain one (R11F-02 review).
+    In place, the checkout's file is the item's only while its branch is
+    checked out there; on main it is the person's copy."""
     from kraft.paths import RunDirs
 
     await database.write(
@@ -387,14 +426,29 @@ async def test_resolve_attachment_path_reads_from_the_worktree_not_the_main_repo
     )
     rd = RunDirs(tmp_path / "run").ensure()
     wt = rd.worktrees / "w1" / ".engineering" / "plans"
-    if worktree is not None:
+    if worktree is not None and worktree.startswith("in-place"):
+        task = {"id": "t", "kind": "subprocess", "command": "true"}
+        target = WorkItemTarget.for_repository("s", in_place=True)
+        chain = v1_chain([{"id": "n", "kind": "exec", "tasks": [task]}], repo=repo, target=target)
+        await database.write(
+            lambda c: c.execute("UPDATE work_items SET materialized_chain = ?", (chain.to_json(),))
+        )
+        git(repo, "checkout", "-q", "-b", "kraft/w1")
+        write(repo, ".engineering/plans/p.md", "# Attached plan\nbody\n")
+        commit_all(repo, "attach")
+        if worktree == "in-place-elsewhere":
+            git(repo, "checkout", "-q", "main")
+            write(repo, ".engineering/plans/p.md", "# The person's own\n")
+        wt = repo / ".engineering" / "plans"
+    elif worktree is not None:
         wt.mkdir(parents=True)
     if worktree == "with-the-file":
         (wt / "p.md").write_text("# Attached plan\nbody\n")
 
     ix = Indexer(conn, database, repos_env=str(repo), run_dirs=rd)
     resolved = ix.resolve_attachment_path("attachment:w1:plan")
-    assert resolved == ((wt / "p.md").resolve() if worktree == "with-the-file" else None)
+    found = worktree in ("with-the-file", "in-place-on-its-branch")
+    assert resolved == ((wt / "p.md").resolve() if found else None)
     assert ix.resolve_attachment_path("attachment:w1:spec") is None
     assert ix.resolve_attachment_path("attachment:nope:plan") is None
 

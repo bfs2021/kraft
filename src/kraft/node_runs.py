@@ -70,9 +70,14 @@ def _base(c, wid: str, fallback: str) -> str:
     return (row["base_ref"] if row else None) or fallback
 
 
-async def entered(db, worktree, wid: str, node_id: str) -> None:
+async def entered(db, worktree, wid: str, node_id: str, branch: str | None = None) -> None:
+    """`branch` for an in-place item: its checkout's HEAD may be the person's
+    until a task takes it."""
     wt = _live(worktree)
-    sha = head(wt) if wt else None
+    if wt and branch:
+        sha = _config.git_read(wt, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")
+    else:
+        sha = head(wt) if wt else None
 
     def write(c):
         store.enter_node(c, wid, node_id)
@@ -82,9 +87,19 @@ async def entered(db, worktree, wid: str, node_id: str) -> None:
     await db.write(write)
 
 
+def _tip(db, wt: Path, wid: str) -> str | None:
+    """The item's tip (`inplace.head_ref`): in place its branch, never the
+    checkout's HEAD, which may be the person's."""
+    from kraft import inplace
+
+    row = db.read(lambda c: c.execute("SELECT * FROM work_items WHERE id = ?", (wid,)).fetchone())
+    ref = inplace.head_ref(row) if row is not None else "HEAD"
+    return _config.git_read(wt, "rev-parse", "--verify", "--quiet", ref)
+
+
 async def completed(db, worktree, wid: str, node_id: str) -> None:
     wt = _live(worktree)
-    sha = head(wt) if wt else None
+    sha = _tip(db, wt, wid) if wt else None
     dirty = is_dirty(wt) if wt else False
 
     def write(c):
@@ -98,7 +113,7 @@ async def completed(db, worktree, wid: str, node_id: str) -> None:
 
 async def gate_requested(db, worktree, wid: str, gate: str) -> None:
     wt = _live(worktree)
-    sha = head(wt) if wt else None
+    sha = _tip(db, wt, wid) if wt else None
     dirty = is_dirty(wt) if wt else False
     # The ref goes first: `gate_requested` ends the walk, and anything still
     # awaited after it keeps the walk's task live past the point a person can

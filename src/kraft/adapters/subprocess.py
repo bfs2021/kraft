@@ -12,7 +12,7 @@ import stat
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -736,6 +736,12 @@ async def run_task(
     #: a workspace member's, for a task fanned out into one. None mounts
     #: `cwd` alone, with no member (Kraft-ju36l).
     checkout: _sandbox.Checkout | None = None,
+    #: `store.create_session(takes_checkout=...)`: an agent outside the walk.
+    takes_checkout: bool = False,
+    #: Awaited once the session is written, before anything launches: what
+    #: needs the session's lease (an in-place item's take). Raising ends the
+    #: session `config_error`, its message the log, and is raised on.
+    before_launch: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
     files = files or item_paths.session_files(run_dirs, work_item_id, session_id)
     # Kraft's own folder: the log, and the two sidecars below, are written
@@ -770,8 +776,21 @@ async def run_task(
             sandbox=backend.kind if backend is not None else None,
             model=model,
             repository=repository,
+            takes_checkout=takes_checkout,
         )
     )
+    if before_launch is not None:
+        try:
+            await before_launch()
+        except BaseException as exc:
+            # A row left pending would hold the checkout lease for good.
+            log_path.write_text(f"kraft: {str(exc) or 'cancelled before launch'}\n")
+            await db.write(
+                lambda c: store.session_exited(
+                    c, session_id, "config_error", work_item_id=work_item_id
+                )
+            )
+            raise
 
     full_env = worker_env(repo_entry, {**(env or {}), "KRAFT_RESULT_PATH": str(result_path)})
     # A managed credential's value goes to the egress proxy, read from the

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import psutil
 
-from kraft import caps, events, ids, item_paths, store
+from kraft import caps, events, ids, inplace, item_paths, store
 from kraft import harness as _harness
 from kraft import policy as _policy
 from kraft import usage as _usage
@@ -130,6 +130,34 @@ def _identity_ok(pid: int, pid_start_time) -> bool:
         return abs(psutil.Process(pid).create_time() - pid_start_time) < 1e-6
     except psutil.Error:
         return False
+
+
+def launched_group(pid: int, pid_start_time) -> bool:
+    """Whether `pid` is still the process Kraft launched, leading its own
+    group: a row left after it died may name a pid reused by anyone, a
+    person included. Never signal a group this denies."""
+    try:
+        return _identity_ok(pid, pid_start_time) and os.getpgid(pid) == pid
+    except OSError:
+        return False
+
+
+async def reap_stopped(db, grace: float = 2.0) -> list[int]:
+    """At startup, before anything starts: the process groups of in-place
+    sessions written stopped within `store.REAP_WINDOW_S` that are still
+    running, a stopped server having never finished their kill. Each holds
+    its checkout (`store.folder_holder`) until gone, and nothing else would
+    end it. Only groups `launched_group` confirms. Returns their pids."""
+    rows = db.read(store.recently_stopped)
+    pids = sorted(
+        {
+            r["session_pid"]
+            for r in rows
+            if store.is_in_place(r) and launched_group(r["session_pid"], r["session_started"])
+        }
+    )
+    await asyncio.gather(*(_kill_group(pid, grace) for pid in pids))
+    return pids
 
 
 def _is_young(started_at) -> bool:
@@ -443,14 +471,33 @@ async def _sweep_after(db, run_dirs, row, launch_factory) -> None:
         (t for n in snapshot.chain.nodes for t in n.tasks() if t.path == row["hook_point"]),
         None,
     )
+    if task is None and store.is_in_place(item):
+        # An agent outside the walk (an escalation, a reply): the after-check
+        # its own launch runs, from the mark it left under its hook point.
+        try:
+            await inplace.check_task(
+                db,
+                run_dirs,
+                item,
+                inplace.item_folder(run_dirs, item),
+                row["node_id"],
+                row["hook_point"],
+            )
+        except Exception:  # noqa: BLE001 -- never at the cost of the adoption itself
+            logger.exception(
+                "in-place check after re-adopted session %s failed",
+                ids.session_ref(row["work_item_id"], row["id"]),
+            )
+        return
     if task is None or not isinstance(task.task, AgentTask):
         return
     if task.task.scope is TaskScope.EACH_REPOSITORY and snapshot.target.kind == "workspace":
         return
-    worktree = run_dirs.worktrees / item["id"]
+    worktree = inplace.item_folder(run_dirs, item)
     if not worktree.is_dir():
         return
     try:
+        # In place, a checkout stop it finds is written there, as dispatch's is.
         await sweep_stragglers(
             db,
             item,
@@ -459,6 +506,7 @@ async def _sweep_after(db, run_dirs, row, launch_factory) -> None:
             task_path=row["hook_point"],
             launch=launch_factory(item["repo"]) if launch_factory is not None else None,
             sandboxed=row["sandbox"] is not None,
+            run_dirs=run_dirs,
         )
     except Exception:  # noqa: BLE001 -- never at the cost of the adoption itself
         logger.exception(
@@ -558,6 +606,8 @@ async def _adopt(
         work_item_id=work_item_id,
     )
     if row["hook_point"] == ESCALATION_HOOK and run_dirs is not None:
+        # Checked before the retry it may have asked for is consumed.
+        await _sweep_after(db, run_dirs, row, launch_factory)
         await _resume_adopted_escalation(
             db,
             run_dirs,
@@ -671,7 +721,9 @@ async def _guarded_adopt(
                 (work_item_id, session_id),
             ).fetchone()
         )
-        await _sweep_after(db, run_dirs, row, launch_factory)
+        # An escalation's ran in `_adopt`, before its self-retry.
+        if row["hook_point"] != ESCALATION_HOOK:
+            await _sweep_after(db, run_dirs, row, launch_factory)
 
 
 async def _oom_killed(

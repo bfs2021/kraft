@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from kraft import builtins as _builtins
-from kraft import escalate, events, gate_review, item_paths, node_runs, store
+from kraft import escalate, events, gate_review, inplace, item_paths, node_runs, store
 from kraft import policy as _policy
 from kraft.executor import stops
 from kraft.executor.context import LaunchContext, OnApprove
@@ -157,9 +157,11 @@ async def apply_rejection(
     node: str | None = None,
     by: str = "human",
     verdict: str | None = None,
-) -> int | None:
+) -> int | str | None:
     """Record a gate rejection and return the node index the chain re-enters at,
-    or None when the reject loop's cap breached and the item is now parked.
+    or None when the reject loop's cap breached and the item is now parked, or
+    the id of the in-place item using its checkout, when the re-run is queued
+    behind it (`store.reject_gate`).
 
     One function, two callers: the `POST .../reject` endpoint (a human) and
     `review_gates` (an agent's verdict). They must not drift -- an agent
@@ -184,7 +186,7 @@ async def apply_rejection(
     span = [
         n.id for n in nodes[target:gate_index] if isinstance(n.node, ExecNode) and n.node.fix_loop
     ]
-    await db.write(
+    holder = await db.write(
         lambda c: store.reject_gate(
             c,
             work_item_id,
@@ -198,7 +200,7 @@ async def apply_rejection(
         )
     )
     if replan:
-        return target
+        return holder or target
     await db.write(
         lambda c: store.mark_needs_human(
             c,
@@ -330,9 +332,13 @@ async def maybe_gate(db, work_item_id: str, node: ResolvedNode, run_dirs=None) -
         if why is not None:
             await db.write(lambda c: store.pass_unchanged_revision(c, work_item_id, node.id, why))
             return False
-    await node_runs.gate_requested(
-        db, run_dirs.worktrees / work_item_id if run_dirs else None, work_item_id, node.id
-    )
+    folder = None
+    if run_dirs:
+        row = db.read(
+            lambda c: c.execute("SELECT * FROM work_items WHERE id = ?", (work_item_id,)).fetchone()
+        )
+        folder = inplace.item_folder(run_dirs, row) if row else run_dirs.worktrees / work_item_id
+    await node_runs.gate_requested(db, folder, work_item_id, node.id)
     return True
 
 
@@ -405,6 +411,10 @@ async def review_gates(
         )
         if gate is None or not row["auto_gate"]:
             return status
+        if row["stop_kind"] == StopKind.CHECKOUT:
+            # A reply agent's after-check stopped it: a reviewer would take the
+            # checkout straight back from the person.
+            return row["status"]
         # The item's own chain, node overrides folded in (UI v2 · 04 point 1):
         # an `auto_escalate` override must suppress review here the same way it
         # does the Config tab's read, not just the gate's own declaration.
@@ -442,24 +452,40 @@ async def review_gates(
         # artifact edited, or shown to a person, between this line and the
         # approval below is exactly the race `seen` exists to catch.
         seen = _chain_revision_seen(run_dirs, row, gate, node, launch)
-        verdict, note = await gate_review.review(
-            db,
-            run_dirs,
-            work_item_id=work_item_id,
-            gate=gate,
-            node=node,
-            launch=launch,
-        )
+        try:
+            verdict, note = await gate_review.review(
+                db,
+                run_dirs,
+                work_item_id=work_item_id,
+                gate=gate,
+                node=node,
+                launch=launch,
+            )
+        except (store.CheckoutBusy, inplace.CheckoutRefused) as exc:
+            # Closes the attempt its `_started` opened: the gate is the person's.
+            await db.write(
+                lambda c, gate=gate, note=str(exc): events.append(
+                    c,
+                    work_item_id,
+                    GateEvent.AUTO_REVIEW_SKIPPED,
+                    {"gate": gate, "reason": "checkout", "note": note},
+                    node_id=gate,
+                )
+            )
+            return status
 
         # The agent may have worked for minutes. A decision a person made in the
         # meantime outranks a verdict computed against the state before it.
-        if pending_gate(db, work_item_id) != gate:
+        # Nor does a verdict outrank the reviewer's own after-check stopping it.
+        checkout = inplace.stopped(db, work_item_id)
+        if checkout or pending_gate(db, work_item_id) != gate:
+            why = "checkout stop" if checkout else "gate no longer pending"
             await db.write(
-                lambda c, gate=gate, verdict=verdict: events.append(
+                lambda c, gate=gate, verdict=verdict, why=why: events.append(
                     c,
                     work_item_id,
                     GateEvent.AUTO_REVIEW_DISCARDED,
-                    {"gate": gate, "verdict": verdict, "reason": "gate no longer pending"},
+                    {"gate": gate, "verdict": verdict, "reason": why},
                     node_id=gate,
                 )
             )
@@ -530,9 +556,11 @@ async def review_gates(
                         )
                     )
                     return "needs_human"
-                await db.write(
+                approval = await db.write(
                     lambda c, gate=gate: store.approve_gate(c, work_item_id, gate, by="agent")
                 )
+                if isinstance(approval, str):
+                    return status_of(db, work_item_id)  # approved, queued for the checkout
                 start, steer = gate_node_index(approved, gate) + 1, None
             else:
                 # `fixed` is a rejection that repaired something on its way out, so
@@ -560,6 +588,8 @@ async def review_gates(
                 )
                 if target is None:
                     return "needs_human"
+                if isinstance(target, str):
+                    return status_of(db, work_item_id)  # rejected, queued for the checkout
                 start, steer = target, note
 
             status = await walk.run_once(
@@ -1042,15 +1072,27 @@ async def auto_escalate_stuck(
         )
         return status
     cursor = evts[-1]["seq"] if evts else 0
-    await escalate.dispatch(
-        db,
-        run_dirs,
-        work_item_id=work_item_id,
-        message=_AUTO_ESCALATE_MESSAGE,
-        launch=launch,
-        auto=True,
-        evts=evts,
-    )
+    try:
+        await escalate.dispatch(
+            db,
+            run_dirs,
+            work_item_id=work_item_id,
+            message=_AUTO_ESCALATE_MESSAGE,
+            launch=launch,
+            auto=True,
+            evts=evts,
+        )
+    except (store.CheckoutBusy, inplace.CheckoutRefused):
+        await db.write(
+            lambda c: events.append(
+                c,
+                work_item_id,
+                EscalationEvent.WORK_ITEM_AUTO_ESCALATE_SKIPPED,
+                {"reason": "checkout"},
+                node_id=row["current_node_id"],
+            )
+        )
+        return status
     return await resume_after_escalation(
         db,
         run_dirs,
@@ -1111,6 +1153,22 @@ async def resume_after_escalation(
     # Absent on an event written before this field existed, or on a
     # hand-built test payload -- default False rather than KeyError either way.
     seeded = payload.get("seeded", False)
+    if any(
+        e["type"] == WorkItemEvent.NEEDS_HUMAN and e["payload"].get("kind") == StopKind.CHECKOUT
+        for e in new_evts
+    ):
+        # The turn's own after-check (`inplace.check_task`) stopped it: the
+        # person's to look at before anything takes their checkout again.
+        status = status_of(db, work_item_id)
+        await db.write(
+            lambda c: events.append(
+                c,
+                work_item_id,
+                EscalationEvent.WORK_ITEM_SELF_RETRY_DROPPED,
+                {"node_id": node_id, "status": status},
+            )
+        )
+        return status
     row = db.read(
         lambda c: c.execute("SELECT * FROM work_items WHERE id = ?", (work_item_id,)).fetchone()
     )
@@ -1160,6 +1218,21 @@ async def resume_after_escalation(
             lambda c: store.claim_for_run(c, work_item_id, from_statuses=admitting(Verb.RETRY))
         )
         if not claimed:
+            if holder := db.read(lambda c: store.checkout_holder(c, work_item_id)):
+                # The retry stands, queued until the checkout frees.
+                # Replayed by this function, as Kraft's own retry (`self_retry`).
+                await db.write(
+                    lambda c: store.queue_work_item(
+                        c,
+                        work_item_id,
+                        verb="self_retry",
+                        body={"cursor": cursor},
+                        headers={},
+                        from_statuses=admitting(Verb.RETRY),
+                        held_by=holder,
+                    )
+                )
+                return status_of(db, work_item_id)
             status = status_of(db, work_item_id)
             await db.write(
                 lambda c: events.append(
@@ -1170,21 +1243,26 @@ async def resume_after_escalation(
                 )
             )
             return status
-        worktree = run_dirs.worktrees / work_item_id
+        worktree = inplace.item_folder(run_dirs, row)
         try:
             # The refresh runs host git in the worktree and its members (Kraft-ju36l).
             stops.refuse_planted_repos(row, launch, worktree)
             # Left to a node that rebases itself (`walk.rebases_itself`).
-            new_base = (
-                None
-                if walk.rebases_itself(row, node_id)
-                else await _builtins.refresh_worktree_base(
+            if walk.rebases_itself(row, node_id):
+                new_base = None
+            elif inplace.is_in_place(row):
+                base = await _builtins.base_branch(db, work_item_id, Path(row["repo"]))
+                new_base = await inplace.rebase(run_dirs, row, base=base)
+            else:
+                new_base = await _builtins.refresh_worktree_base(
                     worktree,
                     Path(row["repo"]),
                     store.branch_for(row),
                     base=await _builtins.base_branch(db, work_item_id, Path(row["repo"])),
                 )
-            )
+        except (inplace.AutostashClash, inplace.CheckoutRefused) as exc:
+            await inplace.stop_refused(db, work_item_id, node_id, exc)
+            return status_of(db, work_item_id)
         except RuntimeError as exc:
             reason = str(exc)
             await db.write(

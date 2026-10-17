@@ -13,7 +13,7 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel, field_validator, model_validator
 
 from kraft import config as config_mod
-from kraft import executor, review_reply, store
+from kraft import executor, inplace, review_reply, store
 from kraft import review as review_mod
 from kraft.api import api_router, deps
 from kraft.api.routes import board, lifecycle
@@ -183,7 +183,7 @@ async def create_thread(wid: str, body: ThreadIn, request: Request):
     row = deps._live_work_item_row(st, wid)
     gate = board._pending_gate(st, wid)
     anchor = body.anchor_sha or config_mod.git_read(
-        st.run_dirs.worktrees / wid, "rev-parse", "HEAD"
+        inplace.item_folder(st.run_dirs, row), "rev-parse", inplace.head_ref(row)
     )
     if not anchor:
         raise HTTPException(409, "this work item has no commit to anchor a thread to")
@@ -216,7 +216,7 @@ async def _quote(st, row, body: ThreadIn, anchor: str) -> str | None:
     and never host git in a sandboxed worktree a live session can write."""
     if body.start_line is None or not row["base_ref"]:
         return None
-    worktree = st.run_dirs.worktrees / row["id"]
+    worktree = inplace.item_folder(st.run_dirs, row)
     if not worktree.is_dir():
         return None
     try:
@@ -379,7 +379,8 @@ async def _submit(st, request: Request, row, gate: str | None, body: ReviewIn):
             409,
             "nothing ahead in this chain will read these threads; use `kraft item retry --steer`",
         )
-    head = config_mod.git_read(st.run_dirs.worktrees / wid, "rev-parse", "HEAD")
+    folder = inplace.item_folder(st.run_dirs, row)
+    head = config_mod.git_read(folder, "rev-parse", inplace.head_ref(row))
     if not head:
         # A review's `head_sha` is what `last_review` compares from; never ''.
         raise HTTPException(409, "git could not read this work item's HEAD; nothing was recorded")
@@ -435,36 +436,83 @@ async def _submit(st, request: Request, row, gate: str | None, body: ReviewIn):
             "gate": None,
             "reply_agent": False,
         }
-    launch = deps.launch(st, row["repo"])
-    if await review_reply.refused_without_channel(st.db, row, launch, gate):
-        return {
-            "review_id": rid,
-            "outcome": ReviewOutcome.COMMENT,
-            "gate": gate,
-            "reply_agent": False,
-        }
-    try:
-        deps.spawn(
-            request.app,
-            wid,
-            review_reply.run(
-                st.db,
-                st.run_dirs,
-                work_item_id=wid,
-                gate=gate,
-                nodes=nodes,
-                launch=launch,
-            ),
-        )
-        spawned = True
-    except deps.AlreadyRunning:
-        spawned = False  # an auto-review is still running; the threads wait for the next comment
     return {
         "review_id": rid,
         "outcome": ReviewOutcome.COMMENT,
         "gate": gate,
-        "reply_agent": spawned,
+        **await _start_reply(st, request, row, gate, nodes),
     }
+
+
+#: Where a reply agent's item can be: at its gate, or paused there.
+_REPLY_FROM = (WorkItemStatus.PAUSED, WorkItemStatus.NEEDS_HUMAN)
+
+
+class HeldReply(BaseModel):
+    """A reply agent queued for the checkout: the gate whose threads it answers."""
+
+    gate: str
+
+
+async def _start_reply(st, request: Request, row, gate: str, nodes) -> dict:
+    """Spawn the reply agent for `gate`'s threads; queued as `reply` while
+    another in-place item is using the item's checkout."""
+    wid = row["id"]
+    launch = deps.launch(st, row["repo"])
+    if await review_reply.refused_without_channel(st.db, row, launch, gate):
+        return {"reply_agent": False}
+    if row["status"] == WorkItemStatus.QUEUED and (
+        inplace.is_in_place(row) or (store.queued_request_of(row) or {}).get("verb") == "reply"
+    ):
+        # Its reply already waits, and answers every unanswered thread then;
+        # in place, nothing may start in the checkout ahead of its queued start.
+        return {"reply_agent": False, "id": wid, "status": WorkItemStatus.QUEUED}
+    if holder := st.db.read(lambda c: store.checkout_holder(c, wid)):
+        held = await lifecycle.queued_answer(
+            request, wid, "reply", HeldReply(gate=gate), _REPLY_FROM, held_by=holder
+        )
+        return {"reply_agent": False, **held}
+    headers = deps.caller_headers(request)
+
+    async def reply() -> None:
+        try:
+            await review_reply.run(
+                st.db, st.run_dirs, work_item_id=wid, gate=gate, nodes=nodes, launch=launch
+            )
+        except store.CheckoutBusy as exc:
+            # Taken since the check above: waits for it as if found then.
+            holder = exc.holder
+            await st.db.write(
+                lambda c: store.queue_work_item(
+                    c,
+                    wid,
+                    verb="reply",
+                    body={"gate": gate},
+                    headers=headers,
+                    from_statuses=_REPLY_FROM,
+                    held_by=holder,
+                )
+            )
+        except inplace.CheckoutRefused as exc:
+            await inplace.stop_refused(st.db, wid, gate, exc)
+
+    try:
+        deps.spawn(request.app, wid, reply())
+        spawned = True
+    except deps.AlreadyRunning:
+        spawned = False  # an auto-review is still running; the threads wait for the next comment
+    return {"reply_agent": spawned}
+
+
+async def reply_held(wid: str, body: dict, request: Request) -> None:
+    """The start queue's replay of a reply agent that waited for the checkout
+    (`HeldReply`): the review is already published, so only the agent runs."""
+    st = request.app.state
+    row = deps._live_work_item_row(st, wid)
+    gate = HeldReply(**body).gate
+    if board._pending_gate(st, wid) != gate:
+        raise HTTPException(409, f"gate {gate!r} is not pending")
+    await _start_reply(st, request, row, gate, gate_routes.gate_nodes(st, row))
 
 
 async def _request_changes_now(st, request, row, body, head, base):
@@ -506,7 +554,7 @@ async def _request_changes_now(st, request, row, body, head, base):
         runs = st.db.read(lambda c: store.node_run_rows(c, wid))
         try:
             idx, why = review_mod.changes_target(
-                st.run_dirs.worktrees / wid, nodes, current, threads, runs
+                inplace.item_folder(st.run_dirs, row), nodes, current, threads, runs
             )
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc

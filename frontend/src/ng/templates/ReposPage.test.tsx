@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -362,6 +362,32 @@ describe("Repos page: the Config rows", () => {
     await userEvent.click(screen.getByRole("switch", { name: "No setup needed" }));
     await waitFor(() => expect(d.postOps).toHaveBeenCalledTimes(2));
     expect(vi.mocked(d.postOps).mock.calls[0][2]).toEqual([{ op: "set_repo", path: "/src/platform", patch: { setup_command: null } }]);
+  });
+
+  it("runs items in worktrees by default; turning worktrees off sets false, and on again clears it", async () => {
+    cleanPreview();
+    mount();
+    await openConfig();
+    await showDefaults();
+    const on = screen.getByRole("switch", { name: "worktrees" });
+    expect(on).toBeChecked();
+    expect(screen.getByText("Each item in its own worktree")).toBeInTheDocument();
+    await userEvent.click(on);
+    await waitFor(() => expect(d.postOps).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(d.postOps).mock.calls[0][2]).toEqual([{ op: "set_repo", path: "/src/platform", patch: { worktrees: false } }]);
+    cleanup();
+    vi.mocked(d.postOps).mockClear();
+    const repos = REPOS.map((r) => (r.name === "platform" ? { ...r, entry: { ...r.entry, worktrees: false } } : r));
+    vi.mocked(d.getDraft).mockImplementation(() => ok(reposView({ resolved: { repos, detected: DETECTED } as never })));
+    mount();
+    await openConfig();
+    // Off is the switch's state; its words say what on means, as "No tests" does beside it.
+    const off = screen.getByRole("switch", { name: "worktrees" });
+    expect(off).not.toBeChecked();
+    expect(screen.getByText("Each item in its own worktree")).toBeInTheDocument();
+    await userEvent.click(off);
+    await waitFor(() => expect(d.postOps).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(d.postOps).mock.calls[0][2]).toEqual([{ op: "set_repo", path: "/src/platform", patch: { worktrees: null } }]);
   });
 
   it("groups the rows, folds those at their default into one line per group, and shows the YAML-only keys", async () => {
