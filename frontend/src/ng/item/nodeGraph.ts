@@ -164,7 +164,7 @@ export const verdictOf = (events: KraftEvent[] | undefined, node: string, cycle:
 /** A node's inside for NodeGraph (Decisions §7): steps in order, a row per
  *  task with its state in the round shown (a fix-loop node's own round: every
  *  task, its repair and its judge follow it), the escalation side branch, the
- *  fix-loop arc once a round ran, and the on_failure footer line. */
+ *  fix-loop arc once a round ran, and the on_failure footer line once the handler ran. */
 export function nodeGraph(item: ItemDetail, node: ApiNode, now = Date.now(), events?: KraftEvent[], picked?: number) {
   const { steps } = stepsOf(node);
   const frozen = materialized(item);
@@ -188,14 +188,17 @@ export function nodeGraph(item: ItemDetail, node: ApiNode, now = Date.now(), eve
   const stop = stopOn(item, node.id);
   const stopped = stop?.kind === "cap" || stop?.kind === "budget";
   const own = loopPaths(frozen, node.id);
-  const inLoop = passOf(item, node.id).some((s) => s.hook_point.startsWith(`${node.id}.${FIX_LOOP}.`));
+  const pass = passOf(item, node.id);
+  const inLoop = pass.some((s) => s.hook_point.startsWith(`${node.id}.${FIX_LOOP}.`));
   // The arc is drawn once the loop did something: a second round, or a repair or judge that ran.
   // Red while the newest round is shown and the loop stopped; amber while it runs on past its first round.
   // A pass that resumed at a later round (`first`) has not looped until it goes past that one, or its limit stops it there.
   const looped = !!rounds && (rounds.latest > (rounds.first ?? 1) || (stopped && rounds.latest > 1));
   const tone = stopped && shown === rounds?.latest ? "red" : looped && standsOn(item, node.id) ? "active" : "idle";
   const loop = node.fix_loop && rounds && (looped || inLoop) ? loopOf(item, node, own, shown!, rounds, tone, now, events) : undefined;
-  const onFailure = node.on_failure?.length ? node.on_failure.map(taskName).join(", ") : undefined;
+  // Drawn once the handler ran in the pass and round shown, as the arc is: one that never failed has no on-failure to name.
+  const handled = node.on_failure?.length && pass.some((x) => node.on_failure!.includes(x.hook_point) && (!shown || x.round === shown - 1));
+  const onFailure = handled ? node.on_failure!.map(taskName).join(", ") : undefined;
   return { steps: out, side, loop, onFailure, rounds: rounds && shown ? roundList(item, node, rounds, shown) : undefined };
 }
 
