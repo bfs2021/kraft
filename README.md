@@ -13,7 +13,7 @@
 | src/kraft/adapters/forge/\_\_init\_\_.py     |        8 |        0 |    100% |           |
 | src/kraft/adapters/forge/ci.py               |       45 |        0 |    100% |           |
 | src/kraft/adapters/forge/gh.py               |      156 |       11 |     93% |253, 277, 283-293, 371, 422 |
-| src/kraft/adapters/forge/git.py              |      215 |       15 |     93% |216-217, 234-235, 258-259, 291-293, 357-359, 554-561, 739 |
+| src/kraft/adapters/forge/git.py              |      215 |       14 |     93% |216-217, 234-235, 258-259, 292-293, 357-359, 554-561, 739 |
 | src/kraft/adapters/forge/glab.py             |      180 |       10 |     94% |239-240, 327, 336, 359-360, 426, 429, 442, 464 |
 | src/kraft/adapters/forge/models.py           |      184 |        0 |    100% |           |
 | src/kraft/adapters/forge/mr.py               |      125 |        5 |     96% |75, 204, 256, 322-323 |
@@ -89,7 +89,7 @@
 | src/kraft/console/live.py                    |      105 |        1 |     99% |       114 |
 | src/kraft/console/moments.py                 |       78 |        0 |    100% |           |
 | src/kraft/console/output.py                  |       53 |        0 |    100% |           |
-| src/kraft/console/panels.py                  |       97 |        4 |     96% |59, 157-159 |
+| src/kraft/console/panels.py                  |       97 |        5 |     95% |59, 105, 157-159 |
 | src/kraft/console/prompt.py                  |      137 |        4 |     97% |57, 125, 144, 187 |
 | src/kraft/console/pulse.py                   |      119 |        0 |    100% |           |
 | src/kraft/console/runner.py                  |      113 |        0 |    100% |           |
@@ -97,7 +97,7 @@
 | src/kraft/console/screens/addons.py          |      236 |        5 |     98% |298-301, 306, 389 |
 | src/kraft/console/screens/board.py           |      392 |        9 |     98% |374, 377, 388, 515, 551-555 |
 | src/kraft/console/screens/item.py            |      480 |       13 |     97% |392, 394-395, 445, 457-458, 481, 529, 619-620, 635, 694-695 |
-| src/kraft/console/screens/item\_chain.py     |      137 |        5 |     96% |66-67, 82, 169, 189 |
+| src/kraft/console/screens/item\_chain.py     |      137 |        4 |     97% |66-67, 169, 189 |
 | src/kraft/console/screens/item\_menu.py      |       96 |        0 |    100% |           |
 | src/kraft/console/screens/new\_item.py       |       74 |        1 |     99% |       141 |
 | src/kraft/console/screens/repos.py           |       84 |        2 |     98% |   105-106 |
@@ -147,7 +147,7 @@
 | src/kraft/index/db.py                        |       68 |        5 |     93% |158-159, 168-170 |
 | src/kraft/index/embed.py                     |       75 |        9 |     88% |42-43, 80, 100-102, 122-124 |
 | src/kraft/index/ingest.py                    |      262 |        9 |     97% |236-237, 358, 448-450, 560-562 |
-| src/kraft/index/service.py                   |      416 |       23 |     94% |141-143, 196, 306, 325-327, 381, 386, 389-390, 572, 606-607, 623, 641, 645-646, 833, 836, 842, 904 |
+| src/kraft/index/service.py                   |      416 |       27 |     94% |141-143, 196, 267-269, 306, 325-327, 380-381, 386, 389-390, 572, 606-607, 623, 641, 645-646, 833, 836, 842, 904 |
 | src/kraft/init.py                            |       51 |        2 |     96% |     62-64 |
 | src/kraft/intake.py                          |      134 |       12 |     91% |99-101, 117, 160-161, 198-200, 219-224, 260 |
 | src/kraft/intent.py                          |      198 |        9 |     95% |91-92, 186, 203, 264-265, 321-322, 339 |
@@ -237,7 +237,7 @@
 | src/kraft/worker/tree\_walk.py               |       99 |       12 |     88% |71-72, 132-133, 135-136, 171-172, 181-182, 185-186 |
 | src/kraft/worker/worktree\_read.py           |       90 |        8 |     91% |52, 165-167, 170-174, 182-183 |
 | src/kraft/ws.py                              |       72 |        3 |     96% |     77-79 |
-| **TOTAL**                                    | **41187** | **1796** | **96%** |           |
+| **TOTAL**                                    | **41187** | **1799** | **96%** |           |
 
 
 ## Setup coverage badge
