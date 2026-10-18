@@ -61,6 +61,19 @@ describe("Row", () => {
     expect(tail.textContent).toBe(words);
   });
 
+  // A break only after a path's slashes: never inside an amount, a file name or a node id.
+  it.each([
+    ["a path", LONG_STOP, ["/<wbr>Work/<wbr>clients/<wbr>acme-corporation/<wbr>", "verification.review.code_review in "]],
+    ["an amount", "Spend cap reached · $5.00 of $5.00", ["$5.00 of $5.00"]],
+    ["a file name", "would overwrite local.cfg, ignored here but tracked on main", ["local.cfg"]],
+    ["a node id", "review › code_review", ["code_review"]],
+  ])("wraps a long tail only after its path's slashes, the words whole: %s", (_, reason, whole) => {
+    const stop = { kind: "checkout", node: "verification", resume_at: null, reason } as WorkItem["stop"];
+    const tail = mount("needs_you", { stop }).main.querySelector(".board-tail-text")!;
+    for (const w of whole) expect(tail.innerHTML).toContain(w);
+    if (!reason.includes("/")) expect(tail.querySelector("wbr")).toBeNull();
+  });
+
   it("says an in-place item runs in your checkout, and a worktree item nothing of the kind", () => {
     expect(mount("running", { in_place: true }).main.querySelector(".board-meta")).toHaveTextContent("in your checkout");
     cleanup();

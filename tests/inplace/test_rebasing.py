@@ -1,6 +1,6 @@
-"""`inplace.rebase`: an in-place item's branch brought onto a newer base
-without moving the person's checkout, or forcing anything in it. A sibling
-of test_inplace.py, which is at its line budget."""
+"""`inplace.rebase` (`kraft.inplace.rebasing`): an in-place item's branch
+brought onto a newer base without moving the person's checkout, or forcing
+anything in it."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ import pytest
 from support.addons import with_origin
 from support.api import _force_node, _paused, _poll_events, _set_status
 from support.harness import IN_PLACE, commit_all, git, v1_named_chain, write
-from test_inplace import _head, _on_branch, _prepared
 
+from inplace.test_taking import _head, _on_branch, _prepared
 from kraft import builtins, inplace, store
 
 
@@ -260,8 +260,8 @@ async def test_an_operation_begun_after_the_look_is_refused_in_the_checkouts_wor
         subprocess.run(["git", "rebase", "-x", "false", "HEAD~1"], cwd=repo, capture_output=True)
         looks = iter([True])  # still on the branch when Kraft looked
         on = inplace._on
-        monkeypatch.setattr(inplace, "_on", lambda *a: next(looks, False) or on(*a))
-    monkeypatch.setattr(inplace, "_settled", lambda _: None)  # theirs began after the look
+        monkeypatch.setattr(inplace.rebasing, "_on", lambda *a: next(looks, False) or on(*a))
+    monkeypatch.setattr(inplace.rebasing, "_settled", lambda _: None)  # theirs began after the look
 
     with pytest.raises(inplace.CheckoutRefused, match="operation in progress") as refused:
         await inplace.rebase(run_dirs, it.row(), base="main")
@@ -275,7 +275,7 @@ async def test_a_failed_rebase_never_aborts_the_persons_own(
 ):
     """Theirs, started between Kraft's check and its rebase: left alone."""
     it, branch = await _behind_origin(item_on, database, run_dirs, repo)
-    monkeypatch.setattr(inplace, "_on", lambda *_: True)  # theirs began after the look
+    monkeypatch.setattr(inplace.rebasing, "_on", lambda *_: True)  # theirs began after the look
     git(repo, "checkout", "-q", branch)
     _side_branch(repo, branch, "item.txt", "side's\n")
     subprocess.run(["git", "rebase", "side"], cwd=repo, capture_output=True)
@@ -346,10 +346,10 @@ async def test_a_cancel_reports_nothing_but_the_cancel(
     unhandled = []
     asyncio.get_running_loop().set_exception_handler(lambda _, ctx: unhandled.append(ctx))
     if which == "take":
-        monkeypatch.setattr(inplace, "_take", _slow_take)
+        monkeypatch.setattr(inplace.taking, "_take", _slow_take)
         running = inplace.take(database, run_dirs, it.row(), attachments=[])
     else:
-        monkeypatch.setattr(inplace, "_rebase_in_checkout", _slow_conflict)
+        monkeypatch.setattr(inplace.rebasing, "_rebase_in_checkout", _slow_conflict)
         running = inplace.rebase_in_checkout(repo, branch, "HEAD", "main", None)
     task = asyncio.ensure_future(running)
     await asyncio.sleep(0.1)
@@ -504,6 +504,10 @@ _EDITED = "which you had edited"
         ("main.txt", None, "elsewhere-at-the-tip", None),
         ("main.txt", None, "rebase-twice", ["f"]),
         ("main.txt", None, "elsewhere-after-a-pull", None),
+        ("main.txt", None, "elsewhere-after-a-pull-by-url", None),
+        ("item.txt", None, "merge-committed", ["f"]),
+        ("f", None, "older-git", ["f"]),
+        ("main.txt", None, "stash-pop-conflicts", None),
     ],
     ids=[
         "resolved",
@@ -518,6 +522,10 @@ _EDITED = "which you had edited"
         "another-worktree-at-the-tip",
         "rebased-twice",
         "pulled-then-another-at-the-new-base",
+        "pulled-by-url-then-another-at-the-new-base",
+        "merge-conflict-committed-then-clash",
+        "clash-in-an-older-gits-reflog",
+        "unmerged-from-a-stash-pop-after-the-rebase",
     ],
 )
 async def test_an_agents_autostash_rebase_is_checked_after_its_task(
@@ -561,8 +569,17 @@ async def test_an_agents_autostash_rebase_is_checked_after_its_task(
     rebases = then != "elsewhere-at-the-tip"
     if rebases:
         # A pull's every reflog entry is named `pull …`: only its `(start)` started it.
-        pull = ["pull", "-q", "--rebase", "--autostash", "origin", "main"]
-        how = pull if then == "elsewhere-after-a-pull" else ["rebase", "--autostash", onto]
+        # By URL, a colon comes before that phase.
+        pull = ["pull", "-q", "--rebase", "--autostash"]
+        if then == "merge-committed":  # f too: the put-back at the merge's commit clashes
+            upstream_again("f")
+            onto = git(repo, "rev-parse", "refs/remotes/origin/main")
+        by_url = git(repo, "remote", "get-url", "origin")
+        how = {
+            "elsewhere-after-a-pull": [*pull, "origin", "main"],
+            "elsewhere-after-a-pull-by-url": [*pull, by_url, "main"],
+            "merge-committed": ["merge", "--no-edit", "--autostash", onto],
+        }.get(then, ["rebase", "--autostash", onto])
         done = subprocess.run(["git", *how], cwd=repo)
         if main_writes == "item.txt":  # the conflict
             assert done.returncode != 0
@@ -572,6 +589,22 @@ async def test_an_agents_autostash_rebase_is_checked_after_its_task(
         write(repo, "item.txt", "the item's, on main's newer\n")
         git(repo, "add", "--", "item.txt")
         git(repo, "-c", "core.editor=true", "rebase", "--continue")
+    if then == "merge-committed":  # resolved; git writes only `commit (merge):`
+        write(repo, "item.txt", "the item's, on main's newer\n")
+        git(repo, "add", "--", "item.txt")
+        subprocess.run(["git", "commit", "-q", "--no-edit"], cwd=repo)
+    if then == "older-git":  # git 2.25 and older name a rebase's entries `rebase: …`
+        log = repo / ".git" / "logs" / "HEAD"
+        old = log.read_text().replace("rebase (start): checkout", "rebase: checkout")
+        old = old.replace("rebase (pick): ", "rebase: ")
+        log.write_text(old.replace("rebase (finish): returning", "rebase finished: returning"))
+    if then == "stash-pop-conflicts":  # unmerged paths, but no autostash of the rebase's
+        write(repo, "g", "the agent's, stashed\n")
+        git(repo, "stash", "push", "-q", "--", "g")
+        write(repo, "g", "the agent's, committed\n")
+        git(repo, "commit", "-q", "-m", "agent", "--", "g")
+        assert subprocess.run(["git", "stash", "pop"], cwd=repo).returncode != 0
+        assert git(repo, "diff", "--name-only", "--diff-filter=U") == "g"
     if then == "commit-f":  # the clashed file, resolved and committed against the prompt
         write(repo, "f", "main's and the person's\n")
         git(repo, "add", "--", "f")
@@ -599,7 +632,8 @@ async def test_an_agents_autostash_rebase_is_checked_after_its_task(
         assert (reason, it.row()["stop_kind"]) == (None, None)
         assert not rebases or git(repo, "merge-base", branch, onto) == onto, "rebased onto it"
         assert (repo / "f").read_text() == "the person's edit\n"
-        assert (git(repo, "stash", "list") == "") != (then or "").startswith("elsewhere")
+        kept = (then or "").startswith("elsewhere") or then == "stash-pop-conflicts"
+        assert (git(repo, "stash", "list") == "") != kept
         return
     assert it.row()["stop_kind"] == "checkout"
     facts = it.events("work_item_needs_human")[-1]["payload"]["facts"]
@@ -613,5 +647,5 @@ async def test_an_agents_autostash_rebase_is_checked_after_its_task(
     assert git(repo, "show", f"{stash}:f") == "the person's edit"
     assert stash in reason and _RESOLVER in reason
     assert "the agent committed" not in reason, "a put-back may have merged it, not a commit"
-    upstream_wrote_f = main_writes == "f" or then == "rebase-twice"
+    upstream_wrote_f = main_writes == "f" or then in ("rebase-twice", "merge-committed")
     assert (_EDITED in reason) == upstream_wrote_f, "the overlap is still said"

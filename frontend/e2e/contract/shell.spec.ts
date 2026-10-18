@@ -176,6 +176,26 @@ const ROWS: Row[] = [
     },
   },
   {
+    name: "board: on a 1024px window a long repo name gives the reason room and a short one stays whole, and a wide window keeps a long reason on one line",
+    run: async (p) => {
+      await p.setViewportSize({ width: 1024, height: 768 });
+      const row = (title: string) => p.locator(".board-row").filter({ has: p.locator(".board-title", { hasText: title }) });
+      const tail = (title: string) => row(title).locator(".board-tail-text");
+      await app(p, "/");
+      // "kraft-api" beside a long reason: once cut to "kr…" when the crumb shrank with the tail.
+      const cut = await row("Add rate limit headers").locator(".board-meta-repo").evaluate((el) => el.scrollWidth > el.clientWidth);
+      expect(cut, "a short repo name is cut").toBe(false);
+      await app(p, "/", { data: "long" });
+      // Before the repo crumb was capped: 79px and 176px.
+      expect((await tail("Bump the VS Code extension").boundingBox())!.width).toBeGreaterThan(100);
+      expect((await tail("Cache the search index in place").boundingBox())!.width).toBeGreaterThan(250);
+      await p.setViewportSize({ width: 1440, height: 900 });
+      await pause(p, 300);
+      // A path's break points are the narrow row's only: one line here, not five.
+      expect((await tail("Cache the search index in place").boundingBox())!.height).toBeLessThan(30);
+    },
+  },
+  {
     name: "phone board: an in-place card never splits \"in your checkout\" across lines",
     run: async (p) => {
       await p.setViewportSize({ width: 390, height: 844 });

@@ -779,7 +779,16 @@ async def _resolve_conflict(
         return "needs_human"
     if store.is_in_place(row) and new_base is not None:
         # The resolver's own `git rebase` in the person's checkout skips the
-        # guard Kraft's rebase has: refused before it is dispatched.
+        # guard Kraft's rebase has: refused before it is dispatched, after
+        # the take, so the item's branch's ignore rules are the ones read. A
+        # refused take is the handler's to report, from its own; a pause that
+        # landed meanwhile ends the walk paused, as a task's take does.
+        try:
+            await inplace.take(db, run_dirs, row, attachments=entry.attachments_of(row), walk=True)
+        except inplace.NotRunning:
+            return "paused"
+        except inplace.CheckoutRefused:
+            pass
         try:
             await asyncio.to_thread(
                 inplace.refuse_ignored,

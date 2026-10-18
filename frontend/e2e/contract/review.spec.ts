@@ -100,10 +100,31 @@ const ROWS: Row[] = [
     run: async (p) => {
       await app(p, item("needs-gate", "/review?gate=final_review&doc=1"), { ready: (pg) => pg.locator(".review-page").waitFor({ timeout: 8000 }) });
       await expect(p.getByRole("button", { name: /^Reject/ }), "no Reject button in the review header").toHaveCount(0);
+      // Every commit counted, not one moment: the gate overlay and the finish dialog once stood together for a render.
+      await p.evaluate(() => { const w = window as unknown as { maxDialogs: number }; w.maxDialogs = 0; new MutationObserver(() => { w.maxDialogs = Math.max(w.maxDialogs, document.querySelectorAll("[role=dialog]").length); }).observe(document.body, { childList: true, subtree: true }); });
       await p.getByRole("button", { name: "Request changes" }).first().click();
       const d = p.getByRole("dialog");
       await expect(d.locator(".rv-finish-sends, .rv-outcome-sub").first()).toContainText(/back to\s+implementation/, { timeout: 2000 });
       await expect(d.getByRole("button", { name: "Request changes" })).toBeVisible();
+      expect(await p.evaluate(() => (window as unknown as { maxDialogs: number }).maxDialogs), "one modal at a time").toBe(1);
+    },
+  },
+  {
+    name: "review: the gate overlay's header keeps every button whole, on one line and in view, from 1024px down to 768px",
+    run: async (p) => {
+      await p.setViewportSize({ width: 1024, height: 700 });
+      await app(p, item("needs-gate", "/review?gate=final_review&doc=1"), { ready: (pg) => pg.locator(".rv-gate-head").waitFor({ timeout: 8000 }) });
+      for (const width of [1024, 900, 800, 768]) {
+        await p.setViewportSize({ width, height: 700 });
+        await pause(p, 200);
+        // Approve's "Unavailable while…" note and a pending comment make it the widest header there is.
+        const boxes = await p.locator(".rv-gate-head button").evaluateAll((bs) => bs.map((b) => { const r = b.getBoundingClientRect(); return { name: b.textContent || b.getAttribute("aria-label"), right: r.right, height: r.height, top: r.top }; }));
+        for (const b of boxes) {
+          expect(b.right, `${b.name} is cut off at ${width}px`).toBeLessThanOrEqual(width);
+          expect(b.height, `${b.name}'s label wraps at ${width}px`).toBeLessThan(34);
+        }
+        expect(new Set(boxes.map((b) => Math.round(b.top))).size, `the decision splits across lines at ${width}px`).toBe(1);
+      }
     },
   },
   {
