@@ -54,6 +54,16 @@ describe("ChainOverview", () => {
     expect(screen.getByText("status").nextElementSibling).toHaveTextContent(/^paused/);
   });
 
+  it("names an in-place item's checkout in words a tap can read, and a worktree item's not at all", () => {
+    const { unmount } = render(<ChainOverview item={detail({ in_place: true, worktree_path: "/src/app" })} events={[]} now={NOW} onSelect={() => {}} />);
+    const path = screen.getByText("checkout").nextElementSibling!;
+    expect(path).toHaveTextContent(/^\/src\/app$/);
+    expect(path.querySelectorAll("wbr"), "it breaks after a slash, not mid-folder").toHaveLength(2);
+    unmount();
+    render(<ChainOverview item={detail({ in_place: false })} events={[]} now={NOW} onSelect={() => {}} />);
+    expect(screen.queryByText("checkout")).toBeNull();
+  });
+
   it("lists the spec and plan attached at intake, each opening its document when the page can open one", async () => {
     const onDoc = vi.fn();
     // One name for both, as Kraft's own specs/<x>.md and plans/<x>.md have: the kind tells them apart (R11b-07).

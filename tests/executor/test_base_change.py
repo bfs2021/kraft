@@ -7,9 +7,9 @@ import shlex
 import subprocess
 
 import pytest
-from support.harness import commit_all, entry_of, git, v1_node
+from support.harness import IN_PLACE, commit_all, entry_of, git, v1_node, write
 
-from kraft import executor, store
+from kraft import executor, inplace, store
 from kraft import policy as _policy
 from kraft.executor.context import BASE_MOVED
 
@@ -191,9 +191,31 @@ async def _upstream_moves(it) -> str:
     return commit_all(it.repo, "landed upstream")
 
 
-async def test_a_conflict_handler_that_rebases_restarts_the_declared_span(item_on, script):
-    """`resolved-conflict-restarts-from-base-change-target`."""
-    it = await item_on(_chain(**_with_handler()))
+#: How the resolver is told to re-run the rebase: in a person's checkout,
+#: with `--autostash` over their edits, and to leave them alone where git
+#: invites it to touch them (Kraft-xn3zb.27).
+_RERUN = {
+    "worktree": ("the worktree is clean", "Re-run the rebase (`git rebase {sha}`)"),
+    "in-place": (
+        "This is a person's own checkout",
+        "`git -c rebase.updateRefs=false rebase --autostash {sha}`",
+        # After a finished rebase or an abort alike: never "the rebase is done".
+        "When the rebase ends and git says applying the autostash resulted in conflicts, "
+        "the conflict markers in those files are the person's to resolve: "
+        "leave those files and the stash alone",
+        "an untracked file of theirs would be overwritten, do not move or remove it",
+    ),
+}
+
+
+@pytest.mark.parametrize("where", list(_RERUN))
+async def test_a_conflict_handler_that_rebases_restarts_the_declared_span(item_on, script, where):
+    """`resolved-conflict-restarts-from-base-change-target`. In place the
+    scripted walk never takes the checkout, so the handler rebases `main`
+    there: only its note differs."""
+    in_place = where == "in-place"
+    it = await item_on(_chain(**_with_handler()), target=IN_PLACE if in_place else None)
+    folder = it.repo if in_place else it.worktree
     script.plan = {"sync": ["conflict", "done"]}
     upstream = {}
 
@@ -202,7 +224,7 @@ async def test_a_conflict_handler_that_rebases_restarts_the_declared_span(item_o
             upstream["sha"] = await _upstream_moves(it)
 
     async def rebase(_row):
-        git(it.worktree, "rebase", upstream["sha"])
+        git(folder, "rebase", upstream["sha"])
 
     script.effects = {"check": land_upstream, "resolve": rebase}
 
@@ -212,7 +234,38 @@ async def test_a_conflict_handler_that_rebases_restarts_the_declared_span(item_o
     [conflict] = it.events("node_recovery_started")
     assert conflict["payload"]["scope"] == "conflict"
     assert conflict["payload"]["tasks"] == ["rebase.on_base_changed.on_conflict.main.resolve"]
-    assert "A rebase conflict stopped this work item" in script.steers["resolve"][0].take()
+    note = script.steers["resolve"][0].take()
+    assert "A rebase conflict stopped this work item" in note
+    words = [p.format(sha=upstream["sha"]) for p in _RERUN[where]]
+    other = [p.format(sha=upstream["sha"]) for p in _RERUN["worktree" if in_place else "in-place"]]
+    assert [p for p in words if p not in note] == []
+    assert [p for p in other if p in note] == []
+
+
+async def test_an_in_place_resolver_is_not_sent_to_overwrite_an_ignored_file(item_on, script):
+    """The resolver's own rebase in the person's checkout would replace a file
+    ignored there but tracked on the newer base, as Kraft's rebase never does:
+    the item stops as `checkout` before the handler runs, the file untouched."""
+    it = await item_on(_chain(**_with_handler()), target=IN_PLACE)
+    await inplace.prepare(it.database, it.run_dirs, it.row(), base="main")
+    git(it.repo, "checkout", "-q", store.branch_for(it.row()))  # where the take leaves it
+    upstream = it.run_dirs.base / "upstream"
+    git(it.repo, "worktree", "add", "-q", str(upstream), "main")
+    write(upstream, "local.cfg", "upstream's\n")
+    git(upstream, "add", "-f", "local.cfg")
+    git(upstream, "commit", "-q", "-m", "main tracks local.cfg")
+    git(it.repo, "worktree", "remove", str(upstream))
+    (it.repo / ".git/info/exclude").write_text("local.cfg\n")
+    write(it.repo, "local.cfg", "the person's\n")
+    script.plan = {"sync": ["conflict"]}
+
+    assert await _walk(it) == "needs_human"
+
+    assert it.row()["stop_kind"] == "checkout"
+    reason = it.events("work_item_needs_human")[-1]["payload"]["reason"]
+    assert "would overwrite local.cfg, ignored here but tracked on main" in reason
+    assert not it.events("node_recovery_started"), "the handler was dispatched"
+    assert (it.repo / "local.cfg").read_text() == "the person's\n"
 
 
 async def test_a_conflict_handler_s_concerns_do_not_stop_its_resolved_rebase(item_on, script):

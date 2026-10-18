@@ -480,3 +480,138 @@ def test_a_refused_in_place_rebase_stops_the_item_as_checkout(client, repo, monk
     stop = _stop_after_rebase_raises(client, repo, monkeypatch, verb, raised)
 
     assert (stop["kind"], stop["reason"]) == ("checkout", str(raised))
+
+
+#: The conflict resolver's task, which in place runs `git rebase --autostash`
+#: in the person's checkout (`prompts._RESOLVE_IN`, Kraft-xn3zb.27).
+_RESOLVER = "implementation.on_base_changed.on_conflict.main.resolve"
+_UNDER_WAY = "has a git operation in progress"
+_EDITED = "which you had edited"
+
+
+@pytest.mark.parametrize(
+    ("main_writes", "hook", "then", "stop"),
+    [
+        ("main.txt", None, None, None),
+        ("item.txt", None, "continue", None),
+        ("f", None, None, ["f"]),
+        ("f", None, "commit-f", []),
+        ("f", None, "commit-first", ["f"]),
+        ("main.txt", ("post-rewrite", "echo the hook >> f"), None, []),
+        ("item.txt", None, "leave", _UNDER_WAY),
+        ("g", None, "elsewhere", None),
+        ("main.txt", None, "elsewhere-at-the-new-base", None),
+        ("main.txt", None, "elsewhere-at-the-tip", None),
+        ("main.txt", None, "rebase-twice", ["f"]),
+        ("main.txt", None, "elsewhere-after-a-pull", None),
+    ],
+    ids=[
+        "resolved",
+        "conflict-resolved",
+        "clash",
+        "clash-then-committed",
+        "committed-then-clash",
+        "put-back-refused",
+        "left-mid-rebase",
+        "another-worktrees-autostash",
+        "another-worktrees-autostash-at-the-new-base",
+        "another-worktree-at-the-tip",
+        "rebased-twice",
+        "pulled-then-another-at-the-new-base",
+    ],
+)
+async def test_an_agents_autostash_rebase_is_checked_after_its_task(
+    item_on, database, run_dirs, repo, tmp_path, main_writes, hook, then, stop
+):
+    """A rebase the person's edits rode through stops nothing; one whose
+    put-back clashed, or that git refused (exit 0 either way), stops as
+    `checkout` naming the stash, as Kraft's own does, and still says a path of
+    theirs the branch now changes. One left mid-conflict is the person's to
+    finish: its unmerged paths are no clash. The stash is shared: another
+    worktree's autostash is never this task's."""
+    it, branch = await _behind_origin(
+        item_on, database, run_dirs, repo, main_writes=main_writes, base_tracks="g"
+    )
+    git(repo, "checkout", "-q", branch)  # the take
+    tip = git(repo, "rev-parse", branch)
+    write(repo, "f", "the person's edit\n")
+    if hook is not None:
+        write(repo, f".git/hooks/{hook[0]}", f"#!/bin/sh\n{hook[1]}\n").chmod(0o755)
+    await inplace.mark_task(database, run_dirs, it.row(), repo, "implementation", _RESOLVER)
+
+    # At the real time, as the agent's: the check reads timed reflogs.
+    def agent_commits() -> None:
+        write(repo, "agent.txt", "the agent's\n")
+        git(repo, "add", "--", "agent.txt")
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "agent", "--", "agent.txt"], cwd=repo, check=True
+        )
+
+    def upstream_again(path: str) -> None:  # origin's main moves on again, over `path`
+        up = tmp_path / "up"
+        git(repo, "worktree", "add", "-q", "--detach", str(up), "refs/remotes/origin/main")
+        write(up, path, "upstream again\n")
+        commit_all(up, "upstream again")
+        git(up, "push", "-q", "origin", "HEAD:main")
+        git(repo, "worktree", "remove", "--force", str(up))
+
+    if then == "commit-first":  # its autostash is then on that commit, not the tip it found
+        agent_commits()
+    onto = git(repo, "rev-parse", "refs/remotes/origin/main")
+    rebases = then != "elsewhere-at-the-tip"
+    if rebases:
+        # A pull's every reflog entry is named `pull …`: only its `(start)` started it.
+        pull = ["pull", "-q", "--rebase", "--autostash", "origin", "main"]
+        how = pull if then == "elsewhere-after-a-pull" else ["rebase", "--autostash", onto]
+        done = subprocess.run(["git", *how], cwd=repo)
+        if main_writes == "item.txt":  # the conflict
+            assert done.returncode != 0
+    else:  # an ordinary task: no rebase here at all
+        agent_commits()
+    if then == "continue":  # resolved as the agent is told
+        write(repo, "item.txt", "the item's, on main's newer\n")
+        git(repo, "add", "--", "item.txt")
+        git(repo, "-c", "core.editor=true", "rebase", "--continue")
+    if then == "commit-f":  # the clashed file, resolved and committed against the prompt
+        write(repo, "f", "main's and the person's\n")
+        git(repo, "add", "--", "f")
+        git(repo, "commit", "-q", "-m", "agent", "--", "f")
+    if then == "rebase-twice":  # clean, then again from the rebased tip, clashing on f
+        upstream_again("f")
+        subprocess.run(["git", "rebase", "--autostash", "refs/remotes/origin/main"], cwd=repo)
+    if (then or "").startswith("elsewhere"):  # a pull in a second worktree clashes meanwhile
+        theirs = tmp_path / "theirs"
+        # Behind, at the local main; at the new base this checkout's rebase checked
+        # out; or at the very tip this task found.
+        at = {"elsewhere": "main", "elsewhere-at-the-tip": tip}.get(then, onto)
+        git(repo, "worktree", "add", "-q", "-b", "theirs", str(theirs), at)
+        if then != "elsewhere":
+            upstream_again("g")
+        write(theirs, "g", "their edit in the other worktree\n")
+        subprocess.run(["git", "rebase", "--autostash", "origin/main"], cwd=theirs)
+        assert git(repo, "stash", "list") == "stash@{0}: autostash"
+
+    reason = await inplace.check_task(
+        database, run_dirs, it.row(), repo, "implementation", _RESOLVER
+    )
+
+    if stop is None:
+        assert (reason, it.row()["stop_kind"]) == (None, None)
+        assert not rebases or git(repo, "merge-base", branch, onto) == onto, "rebased onto it"
+        assert (repo / "f").read_text() == "the person's edit\n"
+        assert (git(repo, "stash", "list") == "") != (then or "").startswith("elsewhere")
+        return
+    assert it.row()["stop_kind"] == "checkout"
+    facts = it.events("work_item_needs_human")[-1]["payload"]["facts"]
+    if stop == _UNDER_WAY:
+        assert _UNDER_WAY in reason and "clash" not in reason
+        assert "held by its autostash" in reason
+        assert "stash" not in facts
+        return
+    stash = git(repo, "rev-parse", "refs/stash")
+    assert (facts["paths"], facts["stash"]) == (stop, stash)
+    assert git(repo, "show", f"{stash}:f") == "the person's edit"
+    assert stash in reason and _RESOLVER in reason
+    assert "the agent committed" not in reason, "a put-back may have merged it, not a commit"
+    upstream_wrote_f = main_writes == "f" or then == "rebase-twice"
+    assert (_EDITED in reason) == upstream_wrote_f, "the overlap is still said"
