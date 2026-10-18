@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">391 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">387<span class="text"> run</span></button>
+            <span class="text">393 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">389<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">4<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_323e79e8bb4dca6e_db_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-18 00:17 +0000
+            created at 2026-10-18 01:03 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -232,9 +232,9 @@
     <p class="pln"><span class="n"><a id="t150" href="#t150">150</a></span><span class="t"><span class="str">    item is using its checkout rather than a slot being busy.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t151" href="#t151">151</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">queued</span> <span class="key">or</span> <span class="nam">queued</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">&quot;why&quot;</span><span class="op">)</span> <span class="op">!=</span> <span class="str">&quot;checkout&quot;</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t152" href="#t152">152</a></span><span class="t">        <span class="key">return</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t153" href="#t153">153</a></span><span class="t">    <span class="key">return</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t">        <span class="fst">f&quot;</span><span class="fst">waiting for the checkout: </span><span class="op">{</span><span class="nam">_or</span><span class="op">(</span><span class="nam">queued</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">&#x27;held_by_title&#x27;</span><span class="op">)</span><span class="op">,</span> <span class="str">&#x27;another item&#x27;</span><span class="op">)</span><span class="op">}</span><span class="fst"> is using it</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t155" href="#t155">155</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t153" href="#t153">153</a></span><span class="t">    <span class="nam">title</span> <span class="op">=</span> <span class="nam">queued</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">&quot;held_by_title&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t">    <span class="nam">holder</span> <span class="op">=</span> <span class="str">&quot;another item&quot;</span> <span class="key">if</span> <span class="nam">title</span> <span class="key">is</span> <span class="key">None</span> <span class="key">else</span> <span class="fst">f&quot;</span><span class="fst">&#8220;</span><span class="op">{</span><span class="nam">title</span><span class="op">}</span><span class="fst">&#8221;</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t155" href="#t155">155</a></span><span class="t">    <span class="key">return</span> <span class="fst">f&quot;</span><span class="fst">waiting for the checkout: </span><span class="op">{</span><span class="nam">holder</span><span class="op">}</span><span class="fst"> is using it</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t156" href="#t156">156</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t157" href="#t157">157</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t158" href="#t158">158</a></span><span class="t"><span class="com">#: `rowText.ts`&#x27;s `QUEUED_VERB`: the start a queued request makes, in words.</span>&nbsp;</span><span class="r"></span></p>
@@ -729,7 +729,7 @@
             <a class="nav" href="z_323e79e8bb4dca6e_db_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-18 00:17 +0000
+            created at 2026-10-18 01:03 +0000
         </p>
     </div>
 </footer>
