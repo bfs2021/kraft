@@ -14,6 +14,7 @@ import os
 import shutil
 import threading
 import time
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -460,6 +461,66 @@ def _await_artifact_docs(client, wid: str) -> list:
         if found or time.monotonic() > deadline:
             return found
         time.sleep(0.05)
+
+
+@pytest.mark.parametrize(
+    "reopened", [False, True], ids=["first-time", "indexed-by-an-earlier-approval"]
+)
+def test_a_pending_gate_lists_its_document_until_approval_indexes_it(
+    client, item_at_spec_gate, monkeypatch, reopened
+):
+    """`kraft view docs` is filed under "Reviewing before you approve", so the
+    spec a gate waits on is listed before anyone approves it. It is a draft
+    until then, so the index (what search reads) must not hold it, and approval
+    must replace the pending entry rather than add a second one. A gate that
+    opens again after an earlier approval has that approval's copy in the index;
+    the file on disk is what is being decided, so it wins."""
+    wid = item_at_spec_gate
+    name = item_paths.document_name(wid, "spec")
+    if reopened:
+        repo = client.get(f"/api/work-items/{wid}").json()["repo"]
+        client.portal.call(
+            partial(
+                client.app.state.indexer.ingest_gate_artifact,
+                repo=repo,
+                work_item_id=wid,
+                path=name,
+                content="the first approval's body\n",
+            )
+        )
+    path = _write_artifact(client, wid, "---\ntitle: A spec\n---\n\nzebrafish body\n")
+
+    docs = client.get(f"/api/work-items/{wid}/documents").json()["documents"]
+    pending = [d for d in docs if d["path"] == name]
+    assert [d["document_id"] for d in pending] == [f"gate:{wid}:spec_approval"]
+    shown = client.get(f"/api/documents/{pending[0]['document_id']}").json()
+    assert (shown["title"], shown["content"]) == ("A spec", "\nzebrafish body\n")
+    assert (
+        client.get("/api/search", params={"q": "zebrafish", "mode": "fts"}).json()["results"] == []
+    )
+    launched = []
+    with monkeypatch.context() as patched:  # off again before approval runs git
+        patched.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
+        patched.setattr("subprocess.Popen", lambda argv, **kw: launched.append(argv) or object())
+        opened = client.post(
+            f"/api/documents/{pending[0]['document_id']}/open", json={"editor": "code"}
+        )
+    assert opened.status_code == 200, opened.text
+    assert launched == [["/usr/bin/code", str(path)]]
+
+    assert client.post(f"/api/work-items/{wid}/gates/spec_approval/approve").status_code == 200
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:  # the ingest runs after the approve response
+        indexed = _await_artifact_docs(client, wid)
+        if (
+            "zebrafish"
+            in client.get(f"/api/documents/{indexed[0]['document_id']}").json()["content"]
+        ):
+            break
+        time.sleep(0.05)
+    assert [d["document_id"].startswith("gate:") for d in indexed] == [False]
+    listed = client.get(f"/api/work-items/{wid}/documents").json()["documents"]
+    assert len([d for d in listed if d["path"] == name]) == 1
 
 
 def test_approving_a_gate_ingests_its_artifact_into_the_index(client, item_at_spec_gate):
