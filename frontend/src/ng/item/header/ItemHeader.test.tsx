@@ -72,7 +72,13 @@ describe("ItemHeader", () => {
 
   it("says an in-place item runs in your checkout, beside the status", () => {
     const { unmount } = show({ display_status: "running", in_place: true, worktree_path: "/src/app" });
-    expect(screen.getByText("in your checkout")).toHaveAttribute("title", "/src/app");
+    // The path is in the house tip, on a chip a keyboard can reach, and described to a screen reader.
+    // A note, not a generic span: ARIA lets a description sit on a note.
+    const chip = screen.getByRole("note");
+    expect(chip).toHaveTextContent("in your checkout");
+    expect(chip).toHaveAttribute("data-tip", "/src/app");
+    expect(chip).toHaveAttribute("tabindex", "0");
+    expect(chip).toHaveAccessibleDescription("/src/app");
     unmount();
     show({ display_status: "running" });
     expect(screen.queryByText("in your checkout")).toBeNull();

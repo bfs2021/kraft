@@ -39,6 +39,9 @@ export function Row({ item, selected, checked, offline, now, error, onSelect, on
   const act = own ? null : admittedRowAction(item);
   // The tail clips on a narrow row (a queue line loses "is using it"): its title keeps the whole of it.
   const tail = own?.tail ?? reasonTail(item, now);
+  // A tail that says "the checkout" (a checkout wait, most checkout stops) already says in place: a narrow row gives
+  // the marker's room to it. Read from the words, not the stop kind: many checkout reasons name only the folder.
+  const saysCheckout = !own && /\bthe checkout\b/i.test(tail);
   const id = item.bead_id || shortId(item.id);
   const hot = groupOf(item) === "needs";
   const cue = hot ? stopCueOf(item) : null;
@@ -68,7 +71,7 @@ export function Row({ item, selected, checked, offline, now, error, onSelect, on
             <span className="board-tail-text" title={tail}>{tail}</span>
           </span>
           {!hideRepo && <><span className="board-sep" aria-hidden>·</span><span className="board-meta-repo" title={item.repo}>{repoName(item.repo)}</span></>}
-          {item.in_place && <><span className="board-sep" aria-hidden>·</span><span className="board-meta-inplace" title={item.repo}>{IN_YOUR_CHECKOUT}</span></>}
+          {item.in_place && <><span className={`board-sep${saysCheckout ? " is-said" : ""}`} aria-hidden>·</span><span className={`board-meta-inplace${saysCheckout ? " is-said" : ""}`} title={item.repo}>{IN_YOUR_CHECKOUT}</span></>}
           <span className="board-sep" aria-hidden>·</span>
           <span className="board-meta-id">{id}</span>
           {!hideChain && <><span className="board-sep" aria-hidden>·</span><span className="board-meta-chain">{chainOf(item)}</span></>}
