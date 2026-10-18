@@ -127,10 +127,10 @@
 | src/kraft/events.py                          |       31 |        0 |    100% |           |
 | src/kraft/executor/\_\_init\_\_.py           |       10 |        0 |    100% |           |
 | src/kraft/executor/context.py                |       57 |        2 |     96% |  227, 258 |
-| src/kraft/executor/dispatch.py               |      913 |       23 |     97% |277, 346, 382-383, 514, 665, 668, 991-992, 1157-1158, 1190-1192, 1440-1441, 1454-1455, 1910, 1918, 2645, 2998, 3004 |
+| src/kraft/executor/dispatch.py               |      913 |       24 |     97% |277, 346, 382-383, 514, 665, 668, 991-992, 1157-1158, 1190-1192, 1440-1441, 1453-1455, 1910, 1918, 2645, 2998, 3004 |
 | src/kraft/executor/entry.py                  |      190 |        1 |     99% |       450 |
 | src/kraft/executor/fallback.py               |       83 |        0 |    100% |           |
-| src/kraft/executor/gates.py                  |      388 |       10 |     97% |241, 369, 372, 375, 380, 849, 866, 980-981, 1349 |
+| src/kraft/executor/gates.py                  |      388 |        9 |     98% |241, 369, 372, 375, 380, 849, 980-981, 1349 |
 | src/kraft/executor/prompts.py                |      131 |        6 |     95% |130-137, 256 |
 | src/kraft/executor/read\_only.py             |       82 |        2 |     98% |   79, 100 |
 | src/kraft/executor/resuming.py               |       92 |        2 |     98% |  150, 193 |
