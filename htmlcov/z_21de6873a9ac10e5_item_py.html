@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_21de6873a9ac10e5_repo_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-18 16:22 +0000
+            created at 2026-10-18 16:36 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -171,7 +171,7 @@
     <p class="run"><span class="n"><a id="t89" href="#t89">89</a></span><span class="t"><span class="key">def</span> <span class="nam">_render_created</span><span class="op">(</span><span class="nam">result</span><span class="op">:</span> <span class="nam">dict</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t">    <span class="str">&quot;&quot;&quot;The created item, and, when an --autostart found every slot busy, why:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t91" href="#t91">91</a></span><span class="t"><span class="str">    what the board&#x27;s composer says too.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t">    <span class="nam">shown</span> <span class="op">=</span> <span class="nam">common</span><span class="op">.</span><span class="nam">_render_action</span><span class="op">(</span><span class="op">{</span><span class="nam">k</span><span class="op">:</span> <span class="nam">v</span> <span class="key">for</span> <span class="nam">k</span><span class="op">,</span> <span class="nam">v</span> <span class="key">in</span> <span class="nam">result</span><span class="op">.</span><span class="nam">items</span><span class="op">(</span><span class="op">)</span> <span class="key">if</span> <span class="nam">k</span> <span class="op">!=</span> <span class="str">&quot;slots&quot;</span><span class="op">}</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t">    <span class="nam">shown</span> <span class="op">=</span> <span class="nam">common</span><span class="op">.</span><span class="nam">_render_action</span><span class="op">(</span><span class="op">{</span><span class="nam">k</span><span class="op">:</span> <span class="nam">v</span> <span class="key">for</span> <span class="nam">k</span><span class="op">,</span> <span class="nam">v</span> <span class="key">in</span> <span class="nam">result</span><span class="op">.</span><span class="nam">items</span><span class="op">(</span><span class="op">)</span> <span class="key">if</span> <span class="nam">k</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">answers</span><span class="op">.</span><span class="nam">QUEUED_KEYS</span><span class="op">}</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t">    <span class="nam">said</span> <span class="op">=</span> <span class="nam">answers</span><span class="op">.</span><span class="nam">filed</span><span class="op">(</span><span class="nam">result</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t94" href="#t94">94</a></span><span class="t">    <span class="key">return</span> <span class="fst">f&quot;</span><span class="op">{</span><span class="nam">shown</span><span class="op">}</span><span class="fst">\n</span><span class="op">{</span><span class="nam">said</span><span class="op">}</span><span class="fst">&quot;</span> <span class="key">if</span> <span class="nam">said</span> <span class="key">else</span> <span class="nam">shown</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -1004,7 +1004,7 @@
             <a class="nav" href="z_21de6873a9ac10e5_repo_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-18 16:22 +0000
+            created at 2026-10-18 16:36 +0000
         </p>
     </div>
 </footer>
