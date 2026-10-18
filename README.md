@@ -82,7 +82,7 @@
 | src/kraft/config.py                          |      676 |       17 |     97% |105, 128, 185-187, 203-205, 353, 609, 857, 901-902, 944, 1120-1121, 1208 |
 | src/kraft/config\_schemas.py                 |       75 |        7 |     91% |   165-171 |
 | src/kraft/console/\_\_init\_\_.py            |        0 |        0 |    100% |           |
-| src/kraft/console/acts.py                    |       91 |        1 |     99% |        38 |
+| src/kraft/console/acts.py                    |       92 |        1 |     99% |        38 |
 | src/kraft/console/app.py                     |      463 |        4 |     99% |326-327, 383, 644 |
 | src/kraft/console/chain.py                   |      187 |        4 |     98% |207, 218, 220-221 |
 | src/kraft/console/dialogs.py                 |      212 |        2 |     99% |  230, 369 |
@@ -97,7 +97,7 @@
 | src/kraft/console/screens/addons.py          |      236 |        5 |     98% |298-301, 306, 389 |
 | src/kraft/console/screens/board.py           |      392 |        9 |     98% |374, 377, 388, 515, 551-555 |
 | src/kraft/console/screens/item.py            |      481 |       13 |     97% |393, 395-396, 446, 458-459, 482, 531, 621-622, 637, 696-697 |
-| src/kraft/console/screens/item\_chain.py     |      137 |        5 |     96% |66-67, 82, 169, 189 |
+| src/kraft/console/screens/item\_chain.py     |      137 |        4 |     97% |66-67, 169, 189 |
 | src/kraft/console/screens/item\_menu.py      |       96 |        0 |    100% |           |
 | src/kraft/console/screens/new\_item.py       |       74 |        1 |     99% |       141 |
 | src/kraft/console/screens/repos.py           |       84 |        2 |     98% |   105-106 |
@@ -130,7 +130,7 @@
 | src/kraft/executor/dispatch.py               |      913 |       24 |     97% |277, 346, 382-383, 514, 665, 668, 991-992, 1157-1158, 1190-1192, 1440-1441, 1453-1455, 1910, 1918, 2645, 2998, 3004 |
 | src/kraft/executor/entry.py                  |      190 |        1 |     99% |       450 |
 | src/kraft/executor/fallback.py               |       83 |        0 |    100% |           |
-| src/kraft/executor/gates.py                  |      388 |        9 |     98% |241, 369, 372, 375, 380, 849, 980-981, 1349 |
+| src/kraft/executor/gates.py                  |      388 |       10 |     97% |241, 369, 372, 375, 380, 849, 866, 980-981, 1349 |
 | src/kraft/executor/prompts.py                |      131 |        6 |     95% |130-137, 256 |
 | src/kraft/executor/read\_only.py             |       82 |        2 |     98% |   79, 100 |
 | src/kraft/executor/resuming.py               |       92 |        2 |     98% |  150, 193 |
@@ -243,7 +243,7 @@
 | src/kraft/worker/tree\_walk.py               |       99 |       12 |     88% |71-72, 132-133, 135-136, 171-172, 181-182, 185-186 |
 | src/kraft/worker/worktree\_read.py           |       90 |        8 |     91% |52, 165-167, 170-174, 182-183 |
 | src/kraft/ws.py                              |       72 |        3 |     96% |     77-79 |
-| **TOTAL**                                    | **42694** | **1849** | **96%** |           |
+| **TOTAL**                                    | **42695** | **1849** | **96%** |           |
 
 
 ## Setup coverage badge
