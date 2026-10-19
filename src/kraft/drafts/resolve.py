@@ -158,7 +158,7 @@ def _expand(library: TemplateLibrary | None, path: Path, key: str, data: object)
     fails part-way: such a chain diffs as written."""
     if library is None or not isinstance(data, Mapping):
         return (data if isinstance(data, Mapping) else {}), None
-    resolution = _Resolution(library, ComponentSource(path, Namespace.NODES, key))
+    resolution = _Resolution(library, ComponentSource(path, Namespace.NODES, key, chain=True))
     try:
         return resolution.expand_chain({**data, "id": key}), resolution
     except TemplateLibraryError:
@@ -204,13 +204,18 @@ def _chains(st, key: str, raw: dict, files: dict, published: dict) -> dict:
         {**_not_a_mapping(old), "message": f"repo {repo} defaults to it"}
         for repo in (impact["repos"] if files.get(old) is None else ())
     ]
+    # Nor a chain that extends it: children are not rewritten.
+    problems += [
+        {**_not_a_mapping(old), "message": f"chain {child} extends it"}
+        for child in (impact["extended_by"] if files.get(old) is None else ())
+    ]
     if data is not None and not isinstance(data, dict):
         problems = [_not_a_mapping(name)]
     elif library is not None and library.addon_of(key) is not None:
         # An add-on's chain is read-only and already in the library: resolved
         # as loaded, never re-added as a local chain (its id has a `:`).
         try:
-            resolved = settings._resolved_view(library.resolve_chain(key))
+            resolved = settings._resolved_view(library.resolve_chain(key), library.provenance(key))
         except TemplateLibraryError as exc:
             problems = [{**_not_a_mapping(name), "message": str(exc)}]
     elif data is not None:
@@ -226,13 +231,27 @@ def _chains(st, key: str, raw: dict, files: dict, published: dict) -> dict:
             except TemplateLibraryError:
                 pass
             else:
-                resolved = settings._resolved_view(chain)
-                sources = _sources(
-                    authored.normalise(copy.deepcopy(data)),
-                    _library_model(st, files),
-                    chain,
-                    deps.instance_policy(st),
-                )
+                resolved = settings._resolved_view(chain, candidate.provenance(id))
+                # Each local child, against the chain as this draft leaves it.
+                for child in (c for c in candidate.extended_by(id) if ":" not in c):
+                    try:
+                        candidate.resolve_chain(child)
+                    except TemplateLibraryError as exc:
+                        problems.append(
+                            {
+                                **_not_a_mapping(name),
+                                "message": f"chain {child} extends it and would stop "
+                                f"resolving: {exc}",
+                            }
+                        )
+                # `_sources` walks authored `nodes`, which an extending chain has none of.
+                if "extends" not in data:
+                    sources = _sources(
+                        authored.normalise(copy.deepcopy(data)),
+                        _library_model(st, files),
+                        chain,
+                        deps.instance_policy(st),
+                    )
     return {
         "resolved": resolved,
         "problems": problems,
@@ -296,8 +315,13 @@ def _impact(st, key: str) -> dict:
             (key, key, *ENDED),
         ).fetchone()[0]
     )
+    library = getattr(st, "library", None)
     return {
         "running": running,
+        # The instance's own chains: an add-on's cannot extend a local one.
+        "extended_by": [c for c in library.extended_by(key) if ":" not in c]
+        if library is not None
+        else [],
         "repos": [
             r.path
             for r in _repos(st)

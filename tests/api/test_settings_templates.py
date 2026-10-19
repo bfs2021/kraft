@@ -403,3 +403,14 @@ def test_a_policy_save_writes_a_retired_wait_maximum_under_its_new_name(client, 
     saved = yaml.safe_load((templates_dir / "policy.yaml").read_text())["maxima"]
     assert saved == {"tasks": {"total_time_cap_minutes": 600}}
     assert client.app.state.instance_policy.maxima.tasks.total_time_cap_minutes == 600
+
+
+def test_a_chain_summary_names_its_parent_and_its_children(client):
+    middle = "id: middle\nextends: default\ndescription: Ours.\nremove: [external_approval]\n"
+    for id, text in [("middle", middle), ("team", "id: team\nextends: middle\n")]:
+        assert client.put(f"/api/templates/chains/{id}", json={"text": text}).status_code == 200
+    listed = {t["id"]: t for t in client.get("/api/templates/chains").json()}
+    assert (listed["team"]["extends"], listed["team"]["extended_by"]) == ("middle", [])
+    assert listed["default"]["extended_by"] == ["middle", "team"]
+    # A child that writes no description shows the one it inherits.
+    assert listed["team"]["description"] == "Ours."
