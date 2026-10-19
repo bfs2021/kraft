@@ -9,6 +9,7 @@ from functools import partial
 
 import pytest
 from support.console_board import GATE, _settled
+from textual.color import Color
 from textual.widgets import Checkbox, Input, OptionList, RichLog
 
 from kraft.console import theme
@@ -43,8 +44,9 @@ def test_a_dialog_keeps_the_screen_behind_it_in_sight(console, dialog, look):
 @pytest.mark.parametrize("look", ["kraft-dark", "kraft-light"])
 def test_scrollbars_and_focus_frames_stay_quieter_than_the_work(console, look):
     """One cell wide, the thumb in the faint colour, not the text's; a focused
-    field's frame is not the accent at full strength, and an unfocused one
-    is not the surface it sits on (it would read as disabled)."""
+    field's frame is the neutral focus colour at half strength, never the
+    accent, and an unfocused one is not the surface it sits on (it would read
+    as disabled)."""
     tokens = theme.DARK if look == "kraft-dark" else theme.LIGHT
 
     async def scenario(app, pilot):
@@ -69,6 +71,8 @@ def test_scrollbars_and_focus_frames_stay_quieter_than_the_work(console, look):
     assert width == 1
     assert thumb.lower() == tokens["text-faint"]
     assert focused.lower() not in (tokens["accent"], tokens["surface"])
+    half_focus = Color.parse(tokens["surface"]).blend(Color.parse(tokens["focus"]), 0.5)
+    assert focused.lower() == half_focus.hex.lower()
     assert blurred.lower() == tokens["border"]
 
 
@@ -162,3 +166,16 @@ def test_a_focused_button_is_underlined_not_inverted(console):
 
     style = console.run(scenario)
     assert "underline" in style and "reverse" not in style
+
+
+@pytest.mark.parametrize("tokens", [theme.DARK, theme.LIGHT], ids=["dark", "light"])
+def test_selection_and_focus_stay_neutral_when_the_look_has_an_accent(tokens):
+    """The default look's accent is violet, but a menu's cursor, a focused
+    frame and a primary button stay the text colour, as on the web; the
+    accent is `$kraft-accent`, for the console's own marks."""
+    from kraft.console.app import _theme
+
+    look = _theme("kraft-test", tokens, dark=tokens is theme.DARK)
+    assert tokens["accent"] != tokens["selection"]
+    assert look.primary.lower() == tokens["selection"]
+    assert look.variables["kraft-accent"] == tokens["brand"]

@@ -95,8 +95,12 @@ def release_impact(prs: list[dict]) -> str:
 
 #: A list item at the left margin: one of an entry's own bullets, not a nested one.
 _TOP_ITEM = re.compile(r"^(?:[-*+]|\d+[.)]) ")
-#: A line that ends the text of the bullet above it: a nested item or a fence.
-_NOT_PROSE = re.compile(r"^\s*(?:[-*+] |\d+[.)] |```|~~~)")
+#: A line that ends the text of the bullet above it, so the number stays on the
+#: words: a nested item, a fence, a line that opens on a Markdown image (`![…]`,
+#: linked `[![…](…)](…)`, with a title, or two side by side), or an `<img …>`
+#: tag alone, which is what GitHub's editor writes for a dropped image. Any other
+#: picture, a dropped video too, goes after a blank line (CONTRIBUTING.md).
+_NOT_PROSE = re.compile(r"^\s*(?:[-*+] |\d+[.)] |```|~~~|!\[|\[!\[|<img\b[^<>]*>\s*$)")
 _FENCE = re.compile(r"^\s*(```|~~~)")
 
 
