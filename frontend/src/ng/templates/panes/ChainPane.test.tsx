@@ -5,7 +5,7 @@ import * as api from "../../../api";
 import type { ConfigDraft } from "../draft/useConfigDraft";
 import { DEFAULT_VIEW } from "../draft/fixture.default";
 import { EXT, EXTENDING_VIEW } from "../draft/fixture.extending";
-import { INHERITED } from "../../ui/reasons";
+import { INHERITED, INHERITED_NOTE } from "../../ui/reasons";
 import type { DraftView, Result } from "../draft/types";
 import { resolvedNode } from "../draft/view";
 import { ChainPane } from "./ChainPane";
@@ -410,7 +410,8 @@ describe("an extending chain", () => {
     expect(screen.getByRole("button", { name: "Remove node" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Move to library…" })).toBeNull();
     expect(screen.getByRole("button", { name: `Rename ${EXT.first}` })).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByText(INHERITED("default"))).toBeInTheDocument();
+    // Its fields stay editable, so the note says where a change goes, not only that it is locked.
+    expect(screen.getByText(INHERITED_NOTE("default"))).toBeInTheDocument();
   });
 
   it("refuses removing what is inside an inherited node, saying why", () => {
@@ -428,7 +429,7 @@ describe("an extending chain", () => {
     mount("security_scan", extra, EXTENDING_VIEW);
     expect(screen.getByRole("button", { name: "Move to library…" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Rename security_scan" })).toBeNull();
-    expect(screen.queryByText(INHERITED("default"))).toBeNull();
+    expect(screen.queryByText(INHERITED_NOTE("default"))).toBeNull();
   });
 
   it("resets every override of an inherited component", async () => {
@@ -469,8 +470,11 @@ describe("an extending chain", () => {
     await userEvent.click(within(menu).getByRole("option", { name: /quick-task/ }));
     expect(draft.ops).toHaveBeenCalledWith([{ op: "chain_base_check", base: "quick-task" }], { preview: true });
     const card = await screen.findByRole("dialog", { name: "Change base of team" });
-    expect(card).toHaveTextContent("overrides implementation");
-    expect(card).toHaveTextContent("remove spec_approval · quick-task has no node spec_approval");
+    expect(within(card).getByRole("list", { name: "Keeps" })).toHaveTextContent("overrides implementation");
+    const drops = within(card).getByRole("list", { name: "Drops" });
+    expect(drops).toHaveTextContent("remove spec_approval");
+    // Why it goes is a line of its own, under the edit.
+    expect(within(drops).getByText("quick-task has no node spec_approval")).toHaveClass("cb-why");
     // It drops an edit: the button is the danger one.
     expect(within(card).getByRole("button", { name: "Change base" })).toHaveClass("btn-danger");
     await userEvent.click(within(card).getByRole("button", { name: "Change base" }));

@@ -227,7 +227,7 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
     if (to.kind === "switch") return navigate(chainUrl(to.id));
     const source = to.kind === "dup" ? { from: chain } : to.kind === "extend" ? { extends: chain } : {};
     const a = await postOps("chains", to.id, [{ op: "new_chain", ...source }]);
-    if (a.status !== 200) return showToast(detailOf(a.body));
+    if (a.status !== 200) return showToast(detailOf(a.body), { tone: "error" });
     draftsChanged();
     showToast(to.kind === "dup" ? `${readOnly ? "Copied to your library" : "Duplicated"} as ${to.id}` : to.kind === "extend" ? `${to.id} extends ${chain}` : `New chain ${to.id} · add its first node with +`);
     navigate(chainUrl(to.id));
@@ -309,7 +309,8 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
         <span className="tpl-crumb-sep" aria-hidden>›</span>
         <Switcher chain={chain} renamedTo={liveId !== chain ? liveId : undefined} onGo={requestGo} startDup={dupTick} copy={readOnly} extend={!addonRepo(addon)} />
         {addon && <AddonBadge addon={addon} />}
-        {parent && <Badge mono>extends {parent}</Badge>}
+        {/* Set as the add-on badge beside it and a node's own "extends" badge are: mono is for ids and caps words. */}
+        {parent && <Badge>extends {parent}</Badge>}
         {s.level === "node" && s.node && (
           <>
             <span className="tpl-crumb-sep" aria-hidden>›</span>
