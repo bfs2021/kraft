@@ -8,6 +8,7 @@ import re
 from types import SimpleNamespace
 
 import pytest
+from support.drafts import draft_state
 
 from kraft.drafts import authored, resolve
 from kraft.policy import InstancePolicy, InstancePolicyInput
@@ -26,13 +27,7 @@ nodes:
 
 @pytest.fixture
 def st(templates_dir, database):
-    return SimpleNamespace(
-        templates_dir=templates_dir,
-        library=TemplateLibrary.from_yaml_dir(templates_dir),
-        instance_policy=None,
-        skills_dir=None,
-        db=database,
-    )
+    return draft_state(templates_dir, database)
 
 
 def scratch(st, text, *, published=None, **kw):

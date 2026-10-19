@@ -307,7 +307,7 @@ class Draft:
 
         ponytail: node-level containers only; a step's or a task's own
         `on_failure` under a library parent is not checked."""
-        for node in _dicts(self._chain.get("nodes")):
+        for node in [*_dicts(self._chain.get("nodes")), *authored.added_nodes(self._chain)]:
             id = node.get("id")
             if not (isinstance(id, str) and node.get("extends")):
                 continue
@@ -425,6 +425,29 @@ def _id(obj: dict) -> str:
     return id if isinstance(id, str) else ""
 
 
+def _addressed(path: str) -> str:
+    """What canonical chain path `path` names: a node, a step, a task, or a
+    handler's or fix loop's shape."""
+    segs = path.split(PATH_SEPARATOR)
+    kind, i = "node", 1
+    while i < len(segs):
+        seg = segs[i]
+        if kind == "node" and seg == "escalation":
+            kind, i = "task", i + 1  # its id follows
+        elif kind == "node" and seg == AUTO_REVIEW_SEGMENT:
+            kind = "task"
+        elif kind == "node" and seg == "on_base_changed":
+            kind, i = "shape", i + 1  # `on_conflict` follows
+        elif kind in ("node", "shape") and seg == JUDGE_SEGMENT:
+            kind = "task"
+        elif kind != "shape" and seg in ("on_failure", "fix_loop"):
+            kind = "shape"
+        else:
+            kind = "task" if kind == "step" else "step"
+        i += 1
+    return kind
+
+
 def _components(data: Mapping, file: str) -> list[tuple[dict, Namespace, str]]:
     """Every node, step and task of an authored file (`authored.load`'s) with
     the namespace its `extends` names and its canonical path."""
@@ -461,8 +484,14 @@ def _components(data: Mapping, file: str) -> list[tuple[dict, Namespace, str]]:
             shape(base_change.get("on_conflict"), _join(path, "on_base_changed", "on_conflict"))
 
     if file == authored.CHAIN:
-        for n in _dicts(data.get("nodes")):
+        for n in [*_dicts(data.get("nodes")), *authored.added_nodes(data)]:
             node(n, _id(n))
+        # An extending chain's overrides: each value is (part of) the component at its key.
+        overrides = data.get("overrides")
+        walkers = {"node": node, "shape": shape, "step": step, "task": task}
+        for path, body in overrides.items() if isinstance(overrides, dict) else ():
+            if isinstance(path, str) and isinstance(body, dict):
+                walkers[_addressed(path)](body, path)
         return out
     for namespace, walk in (
         (Namespace.NODES, node),
