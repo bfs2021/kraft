@@ -258,7 +258,7 @@ describe("Chains page: the chain canvas", () => {
     vi.mocked(d.getDraft).mockImplementation(() => ok(EXTENDING_VIEW));
     mount(`/templates/chains/team/nodes/${node}`);
     await screen.findByRole("complementary", { name: `${node} pane` });
-    expect(screen.queryAllByText("Inherited from default: change it in YAML, or detach the chain.", { selector: ".tpl-note" })).toHaveLength(locked ? 1 : 0);
+    expect(screen.queryAllByText("Inherited from default: change it in YAML, or detach the chain.", { selector: ".tpl-banner" })).toHaveLength(locked ? 1 : 0);
     expect(screen.queryAllByRole("button", { name: /add a task|Add a step/i }).length > 0).toBe(!locked);
   });
 

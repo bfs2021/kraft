@@ -435,6 +435,17 @@ describe("an extending chain", () => {
     expect(draft.ops).toHaveBeenCalledWith([{ op: "reset_field", path: EXT.overridden }]);
   });
 
+  it("reads an inherited gate's reject_to from its parent", () => {
+    mount("local_review", {}, EXTENDING_VIEW);
+    expect(screen.getByRole("button", { name: /^reject to, implementation\. Edit$/ })).toBeInTheDocument();
+  });
+
+  it("names the chain it extends in place of the library it uses", () => {
+    mount("", {}, EXTENDING_VIEW);
+    expect(screen.getByText("extends").nextSibling).toHaveTextContent("default");
+    expect(screen.queryByText("library")).toBeNull();
+  });
+
   it("restores a removed node", async () => {
     const { draft } = mount(EXT.removed, {}, EXTENDING_VIEW);
     expect(screen.getByText(/Removed from default/)).toBeInTheDocument();

@@ -314,7 +314,7 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
         <span className="tpl-crumb-sep" aria-hidden>›</span>
         <Switcher chain={chain} renamedTo={liveId !== chain ? liveId : undefined} onGo={requestGo} startDup={dupTick} startExtend={extendTick} copy={readOnly} extend={!addonRepo(addon)} />
         {addon && <AddonBadge addon={addon} />}
-        {parent && <Badge className="tpl-extends">extends {parent}</Badge>}
+        {parent && <Badge mono>extends {parent}</Badge>}
         {s.level === "node" && s.node && (
           <>
             <span className="tpl-crumb-sep" aria-hidden>›</span>
@@ -353,13 +353,14 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
           ? (addonRepo(addon) ? null : <><Button onClick={() => setExtendTick((k) => k + 1)}>Extend</Button><Button variant="primary" onClick={() => setDupTick((k) => k + 1)}>Copy to my library</Button></>)
           : <Button variant={review ? undefined : "primary"} disabled={!review && !view.draft} aria-describedby={view.draft || review ? undefined : `${publishedId} ${publishedId}-why`} onClick={review ? endReview : startReview}>{review ? "Back to editing" : REVIEW_AND_PUBLISH}</Button>}
       </HeaderActions>
-      {parent && s.level === "chain" && r.extending?.nodes === null && (
-        <div className="tpl-note" role="note">
-          {liveId}'s edits don't apply to {parent}. Fix them in YAML.
-        </div>
-      )}
-      {inheritedNode && <div className="tpl-note" role="note">{INHERITED(parent!)}</div>}
       <div className={`tpl-area${s.level === "node" ? " has-strip" : ""}${s.level === "node" && selNode && kindOf(r, selNode) === "exec" ? " has-bottom" : ""}`}>
+        {/* Over the canvas, which fills the area. */}
+        {parent && s.level === "chain" && r.extending?.nodes === null && (
+          <div className="tpl-banner" role="note">
+            {liveId}'s edits don't apply to {parent}. Fix them in YAML.
+          </div>
+        )}
+        {inheritedNode && <div className="tpl-banner is-under-strip" role="note">{INHERITED(parent!)}</div>}
         {s.level === "chain" ? (
           <ChainCanvas
             scope={scope}

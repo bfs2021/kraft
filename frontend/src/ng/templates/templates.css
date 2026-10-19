@@ -3,6 +3,9 @@
 .tpl-note h1 { margin: 0 0 6px; font-size: var(--fs-h2); font-weight: 500; color: var(--text); }
 .tpl-page { position: relative; height: calc(100vh - 44px); overflow: hidden; }
 .tpl-area { position: absolute; inset: 0; }
+/* A note over the canvas (an extending chain's edits that don't apply, a node it inherits). */
+.tpl-banner { position: absolute; z-index: 4; left: 16px; top: 12px; max-width: min(560px, calc(100% - 460px)); padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: var(--fs-meta); color: var(--text-sub); }
+.tpl-banner.is-under-strip { top: 52px; }
 .tpl-empty-chain { position: absolute; left: 50%; top: 54%; transform: translateX(-50%); pointer-events: none; }
 
 /* Header tail (brief Decided 8): the chain, its node, the draft state, the problems badge. */
