@@ -7,11 +7,14 @@ view and Detach (`docs/intent/templates-editor.md`)."""
 
 from __future__ import annotations
 
+import copy
+import functools
 from typing import Literal
 
 from kraft.drafts import authored, ops
 from kraft.drafts.ops import Draft, OpError, _check_id, _position
 from kraft.drafts.ops import _extending as parent_of
+from kraft.templates.extension import IDENTITY
 from kraft.templates.library import ComponentSource, Namespace, TemplateLibraryError, _Resolution
 from kraft.templates.models import PATH_SEPARATOR
 
@@ -177,15 +180,174 @@ def restore(d: Draft, node: str) -> None:
     _prune(d, "remove")
 
 
-def _inside(d: Draft, path: str, fn, **fields):
+def _inside(d: Draft, address: str, fn, /, **fields):
     """`fn` on a component the file holds (the chain, or a node it adds); a
     refusal naming the way out otherwise."""
-    who = owner(d, path)
+    who = owner(d, address)
     if who in ("chain", "added"):
         return fn(d, **fields)
     if who == "removed":
+        raise OpError(f"{address.split(PATH_SEPARATOR)[0]} is removed; restore it first")
+    raise OpError(_inherited_message(d, address))
+
+
+def _in_added(fn, *keys: str):
+    """`fn` as an extending chain's op: run when its address (the first of
+    `keys` given) is the file's, refused otherwise."""
+
+    @functools.wraps(fn)
+    def op(d: Draft, **fields):
+        address = next((fields[k] for k in keys if fields.get(k) is not None), "")
+        return _inside(d, address, fn, **fields)
+
+    return op
+
+
+# ── field ops: an inherited component's are overrides ──
+
+
+def _override(d: Draft, path: str) -> dict:
+    if not isinstance(d.chain.get("overrides"), dict):
+        authored.put(d.chain, "", "overrides", {})
+    overrides = d.chain["overrides"]
+    if not isinstance(overrides.get(path), dict):
+        overrides[path] = {}
+    return overrides[path]
+
+
+def _unset_override(d: Draft, path: str, field: str | None) -> None:
+    """Delete `overrides[path].<field>` (all of `overrides[path]` with no
+    field), and every mapping that leaves empty."""
+    overrides = d.chain.get("overrides")
+    if not isinstance(overrides, dict) or not isinstance(overrides.get(path), dict):
+        return
+    if field is None:
+        del overrides[path]
+    else:
+        ops._unset(overrides[path], field)
+        if not overrides[path]:
+            del overrides[path]
+    _prune(d, "overrides")
+
+
+def _put(obj: dict, field: str, value: object) -> None:
+    *outer, last = field.split(PATH_SEPARATOR)
+    for key in outer:
+        if not isinstance(obj.get(key), dict):
+            obj[key] = {}
+        obj = obj[key]
+    obj[last] = value
+
+
+def _writable(d: Draft, path: str) -> None:
+    """Refuse an override at `path` that item 1 refuses at resolve: a removed
+    node's, or one under an ancestor override that replaces its list."""
+    if owner(d, path) == "removed":
         raise OpError(f"{path.split(PATH_SEPARATOR)[0]} is removed; restore it first")
-    raise OpError(_inherited_message(d, path))
+    if d.inherited(path) is None:
+        raise OpError(f"nothing at {path!r}")
+    overrides = d._chain.get("overrides")
+    for key, body in overrides.items() if isinstance(overrides, dict) else ():
+        if not path.startswith(f"{key}{PATH_SEPARATOR}"):
+            continue
+        sub = body
+        for seg in path[len(key) + 1 :].split(PATH_SEPARATOR):
+            if not isinstance(sub, dict):
+                break
+            if "steps" in sub or "tasks" in sub:
+                raise OpError(
+                    f"{path} sits in the list overrides.{key} replaces; edit it in the YAML view"
+                )
+            sub = sub.get(seg)
+
+
+def set_field(d: Draft, path: str, field: str, value: object) -> None:
+    if field in ("reject_to", "on_base_changed.restart_from") and value in _removed(d):
+        raise OpError(
+            f"{path}'s {field} would name {value}, which this chain removes; restore it first"
+        )
+    if owner(d, path) in ("chain", "added"):
+        return ops.set_field(d, path, field, value)
+    _writable(d, path)
+    # Item 1 refuses an identity key at any depth of an override.
+    if fixed := next((seg for seg in field.split(PATH_SEPARATOR) if seg in IDENTITY), None):
+        root = path.split(PATH_SEPARATOR)[0]
+        raise OpError(f"an override can't change {fixed}; remove {root} and add your own")
+    if value in (None, "") or (field == "artifact_required" and value is False):
+        _unset_override(d, path, field)
+        if field == "artifact":
+            _unset_override(d, path, "artifact_required")
+        return None
+    over = _override(d, path)
+    _put(over, field, value)
+    # One route: item 1's merge displaces the inherited one, so the other
+    # half goes here, before comparing with what the component inherits.
+    if field == "profile":
+        over.pop("model", None)
+        over.pop("effort", None)
+    elif field in ("model", "effort"):
+        over.pop("profile", None)
+    without = copy.deepcopy(d.chain)
+    ops._unset(without["overrides"][path], field)
+    if ops._get(d.inherited(path, without), field) == value:
+        _unset_override(d, path, field)
+    return None
+
+
+def reset_field(d: Draft, path: str, field: str | None = None) -> None:
+    if owner(d, path) in ("chain", "added"):
+        return ops.reset_field(d, path, field)
+    _writable(d, path)
+    if field is None and path not in (d._chain.get("overrides") or {}):
+        raise OpError(f"{path} has no override to reset")
+    _unset_override(d, path, field)
+    return None
+
+
+# ── a node the chain adds: renamed and moved to the library in its entry ──
+
+
+def rename(d: Draft, path: str, id: str) -> dict:
+    if not path:
+        return ops.rename(d, path, id)
+    if PATH_SEPARATOR in path:
+        return _inside(d, path, ops.rename, path=path, id=id)
+    if owner(d, path) != "added":
+        raise OpError(
+            f"renaming {path} would replace {parent_of(d)}'s node; "
+            "remove it and add your own, or detach the chain"
+        )
+    if id == path:
+        return {"updated": []}
+    nodes = _order(d)
+    _check_id(id, [*(n.get("id") for n in nodes), *_removed(d)])
+    refs = ops.references(nodes, path)
+    node = _list(d, "add")[_entry(d, path)]["node"]
+    node["id"] = id
+    if ops._restart_from(node) == path:
+        node["on_base_changed"]["restart_from"] = id
+    for ref in refs:
+        # An added node's own field, or an override of an inherited one.
+        set_field(d, ref["path"], ref["field"], id)
+    return {"updated": refs}
+
+
+def move_to_library(d: Draft, path: str, name: str) -> dict:
+    if PATH_SEPARATOR in path:
+        return _inside(d, path, ops.move_to_library, path=path, name=name)
+    if owner(d, path) != "added":
+        raise OpError(_inherited_message(d, path))
+    entry = _list(d, "add")[_entry(d, path)]
+    if (d.inherited(path) or {}).get("kind") == "gate":  # as `ops.move_to_library` checks
+        raise OpError("only an exec node or a task moves to the library")
+    if not isinstance(d.library.get(Namespace.NODES.value), dict):
+        authored.put(d.library, "", Namespace.NODES.value, {}, file=authored.LIBRARY)
+    entries = d.library[Namespace.NODES.value]
+    _check_id(name, entries)
+    entries[name] = {k: v for k, v in entry["node"].items() if k != "id"}
+    entry["node"] = {"id": path, "extends": name}
+    d.dirty.add(ops.LIBRARY_FILE)
+    return {"path": f"{Namespace.NODES.value}{PATH_SEPARATOR}{name}"}
 
 
 def expansion_error(d: Draft) -> str | None:
@@ -209,4 +371,15 @@ OPS = {
     "move": move,
     "remove": remove,
     "restore": restore,
+    "rename": rename,
+    "set_field": set_field,
+    "reset_field": reset_field,
+    "move_to_library": move_to_library,
+    "add_step": _in_added(ops.add_step, "container"),
+    "add_task": _in_added(ops.add_task, "container", "node"),
+    "add_handler": _in_added(ops.add_handler, "path"),
+    "remove_handler": _in_added(ops.remove_handler, "path"),
+    "extend": _in_added(ops.extend, "node"),
+    "change_base": _in_added(ops.change_base, "node"),
+    "set_fragment": _in_added(ops.set_fragment, "path"),
 }

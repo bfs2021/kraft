@@ -139,8 +139,229 @@ async def test_moving_an_added_node_rewrites_its_entry(st, to_after):
             ],
             "restore spec first",
         ),
+        (
+            [
+                (
+                    "set_field",
+                    {"path": "local_review", "field": "reject_to", "value": "external_approval"},
+                )
+            ],
+            "reject_to would name external_approval",
+        ),
     ],
-    ids=["remove-an-anchor", "remove-a-pointer-target", "restore-a-pointer-to-a-removed-node"],
+    ids=[
+        "remove-an-anchor",
+        "remove-a-pointer-target",
+        "restore-a-pointer-to-a-removed-node",
+        "point-at-a-removed-node",
+    ],
 )
 async def test_the_editor_leaves_nothing_naming_a_removed_node(st, batch, error):
     assert error in no(st, *batch)
+
+
+FINAL_MESSAGE = "Review the complete work item and merge-request summary."
+
+
+@pytest.mark.parametrize(
+    ("batch", "path", "expected"),
+    [
+        (
+            [
+                (
+                    "set_field",
+                    {"path": "final_review", "field": "message", "value": "The lead signs off."},
+                )
+            ],
+            "final_review",
+            {"message": "The lead signs off."},
+        ),
+        (
+            [("set_field", {"path": IMPLEMENT, "field": "model", "value": "opus"})],
+            IMPLEMENT,
+            {"prompt": "Implement it carefully.", "model": "opus"},
+        ),
+        (
+            [
+                ("set_field", {"path": IMPLEMENT, "field": "model", "value": "opus"}),
+                ("set_field", {"path": IMPLEMENT, "field": "profile", "value": "strong"}),
+            ],
+            IMPLEMENT,
+            {"prompt": "Implement it carefully."},
+        ),
+        (
+            [
+                (
+                    "set_field",
+                    {"path": "verification", "field": "policy.time_cap_minutes", "value": 30},
+                )
+            ],
+            "verification",
+            {"policy": {"time_cap_minutes": 30}},
+        ),
+        (
+            [
+                ("set_field", {"path": "final_review", "field": "message", "value": "x"}),
+                (
+                    "set_field",
+                    {"path": "final_review", "field": "message", "value": FINAL_MESSAGE},
+                ),
+            ],
+            "final_review",
+            None,
+        ),
+    ],
+    ids=[
+        "node-field",
+        "task-model",
+        "task-route-back-to-inherited",
+        "dotted-policy-field",
+        "back-to-the-inherited-value",
+    ],
+)
+async def test_an_inherited_field_edit_is_an_override(st, batch, path, expected):
+    assert (team(st, *batch).model.get("overrides") or {}).get(path) == expected
+
+
+@pytest.mark.parametrize(
+    ("resets", "expected"),
+    [
+        ([{"field": "prompt"}], {IMPLEMENT: {"effort": "high"}}),
+        ([{}], None),
+        ([{"field": "prompt"}, {"field": "effort"}], None),
+    ],
+    ids=["one-field", "every-field", "the-last-field"],
+)
+async def test_resetting_an_inherited_field_deletes_its_override(st, resets, expected):
+    r = team(
+        st,
+        ("set_field", {"path": IMPLEMENT, "field": "effort", "value": "high"}),
+        *(("reset_field", {"path": IMPLEMENT, **reset}) for reset in resets),
+    )
+    assert r.model.get("overrides") == expected
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("id", "x"), ("kind", "exec"), ("extends", "x"), ("chain_finalized", False)],
+    ids=["id", "kind", "extends", "chain_finalized"],
+)
+async def test_an_editor_override_keeps_identity(st, field, value):
+    why = no(st, ("set_field", {"path": "final_review", "field": field, "value": value}))
+    assert f"an override can't change {field}" in why
+
+
+@pytest.mark.parametrize(
+    ("batch", "error"),
+    [
+        (("move", {"path": "spec", "to": 3}), "keeps its parent's order"),
+        (("rename", {"path": "spec", "id": "specify"}), "would replace"),
+        (("add_step", {"container": "verification", "at": 0}), "inherited from default"),
+        (
+            ("add_task", {"container": "verification", "step": "tests", "kind": "subprocess"}),
+            "inherited from default",
+        ),
+        (("remove", {"path": "verification.review.code_review"}), "inherited from default"),
+        (
+            ("set_fragment", {"path": "spec", "yaml": "id: spec\nkind: exec\n"}),
+            "inherited from default",
+        ),
+        (("extend", {"node": "spec", "base": "implementation"}), "inherited from default"),
+        (("move_to_library", {"path": "spec", "name": "speccy"}), "inherited from default"),
+    ],
+    ids=[
+        "move-node",
+        "rename-node",
+        "add_step",
+        "add_task",
+        "remove-task",
+        "set_fragment",
+        "extend",
+        "move_to_library",
+    ],
+)
+async def test_an_inherited_component_refuses_what_has_no_edit(st, batch, error):
+    assert error in no(st, batch)
+
+
+def _tasks(node):
+    return [t["id"] for t in node["steps"][0]["tasks"]]
+
+
+LINT = (
+    "add_task",
+    {"container": "security_scan", "step": "main", "kind": "subprocess", "id": "lint"},
+)
+
+
+@pytest.mark.parametrize(
+    ("batch", "check"),
+    [
+        ([LINT], lambda node: _tasks(node) == ["scan", "lint"]),
+        (
+            [
+                (
+                    "set_field",
+                    {"path": "security_scan.main.scan", "field": "command", "value": "make scan"},
+                )
+            ],
+            lambda node: node["steps"][0]["tasks"][0]["command"] == "make scan",
+        ),
+        (
+            [LINT, ("remove", {"path": "security_scan.main.lint"})],
+            lambda node: _tasks(node) == ["scan"],
+        ),
+        (
+            [("move_to_library", {"path": "security_scan", "name": "security_scan"})],
+            lambda node: node == {"id": "security_scan", "extends": "security_scan"},
+        ),
+    ],
+    ids=["add_task", "set_field", "remove-task", "move_to_library"],
+)
+async def test_an_op_inside_an_added_node_edits_its_entry(st, batch, check):
+    assert check(team(st, *batch).model["add"][0]["node"])
+
+
+@pytest.mark.parametrize(
+    ("pointer", "read"),
+    [
+        (
+            [
+                ("add_node", {"at": 10, "id": "scan_ok", "kind": "gate"}),
+                ("set_field", {"path": "scan_ok", "field": "reject_to", "value": "security_scan"}),
+            ],
+            lambda m: next(e for e in m["add"] if e["node"]["id"] == "scan_ok")["node"][
+                "reject_to"
+            ],
+        ),
+        (
+            [
+                (
+                    "set_field",
+                    {"path": "local_review", "field": "reject_to", "value": "security_scan"},
+                )
+            ],
+            lambda m: m["overrides"]["local_review"]["reject_to"],
+        ),
+    ],
+    ids=["added-gate", "inherited-gate-override"],
+)
+async def test_renaming_an_added_node_renames_its_pointers(st, pointer, read):
+    r = team(st, *pointer, ("rename", {"path": "security_scan", "id": "sast"}))
+    assert read(r.model) == "sast"
+    assert r.answers[-1]["updated"]
+
+
+@pytest.mark.parametrize(
+    "batch",
+    [
+        [
+            ("add_node", {"at": 19, "id": "sign_off", "kind": "gate"}),
+            ("set_field", {"path": "sign_off", "field": "chain_finalized", "value": True}),
+        ],
+        [("set_field", {"path": IMPLEMENT, "field": "policy.time_cap_minutes", "value": 500})],
+    ],
+    ids=["a-second-final-gate", "a-looser-policy"],
+)
+async def test_no_op_leaves_the_edits_not_applying(st, batch):
+    assert "would leave team not resolving" in no(st, *batch)
