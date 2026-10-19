@@ -2,7 +2,7 @@ import { Fragment, useContext, useState } from "react";
 import { Pencil, RotateCcw } from "lucide-react";
 import { IconButton } from "../../ui/IconButton";
 import { Switch } from "../../ui/Switch";
-import { authoredAt, chainCapGroups, rowChanged, settingRows, sourceWord } from "../draft/view";
+import { authoredAt, chainCapGroups, expandedRows, rowChanged, settingRows, sourceWord } from "../draft/view";
 import { fieldMeta, parse, RECOVERY_NOTE, show, type FieldMeta } from "../fields";
 import { Fold, Head, Note } from "./controls";
 import type { PaneKind } from "./describe";
@@ -44,6 +44,17 @@ export function Config({ kind, ctx }: { kind: PaneKind; ctx: PaneCtx }) {
   const rows: Row[] = settingRows(r, path);
   // An add-on's chain answers no `sources`: what each part sets is in its YAML.
   if (!rows.length && readOnly) return <Note>An add-on's settings are in the YAML tab.</Note>;
+  // An extending chain that does not validate yet: its values with the edits applied, its own ones marked.
+  const expanded = !rows.length && !r.resolved ? expandedRows(r, scope, path) : [];
+  if (expanded.length) {
+    return (
+      <>
+        <Head>Config with this chain's overrides</Head>
+        <Note>Where each inherited value comes from shows once the draft resolves.</Note>
+        <Rows rows={expanded} ctx={ctx} />
+      </>
+    );
+  }
   if (!rows.length) return <Note>{r.resolved ? "Nothing to configure here." : "The resolved config shows once the draft resolves."}</Note>;
   return (
     <>

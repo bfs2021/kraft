@@ -113,6 +113,7 @@ describe("An add-on's chain on the Chains page", () => {
     await screen.findByRole("group", { name: "app:ship" });
     expect(screen.getAllByText("repo library app").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Copy to my library" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Extend" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Review & publish/ })).toBeNull();
   });
 
@@ -123,20 +124,23 @@ describe("An add-on's chain on the Chains page", () => {
     expect(screen.getByRole("option", { name: /^default/ })).not.toHaveTextContent("release@acme");
   });
 
-  it("Copy to my library asks for an id, sends new_chain from the add-on's chain, and opens the copy's draft", async () => {
+  it.each([
+    { action: "Copy to my library", field: "Duplicate id", initial: "ship", source: { from: "release:ship" } },
+    { action: "Extend", field: "Extending chain id", initial: "ship_ext", source: { extends: "release:ship" } },
+  ])("$action asks for an id, sends new_chain on the add-on's chain, and opens the new draft", async ({ action, field, initial, source }) => {
     const posts = serve(200, { ...LOCAL, draft: true, ops: [] });
     mount("release:ship");
-    await userEvent.click(await screen.findByRole("button", { name: "Copy to my library" }));
-    const id = await screen.findByRole("textbox", { name: "Duplicate id" });
-    // The bare name: `release:ship_copy` would not be an id.
-    expect(id).toHaveValue("ship");
+    await userEvent.click(await screen.findByRole("button", { name: action }));
+    const id = await screen.findByRole("textbox", { name: field });
+    // From the bare name: `release:ship_copy` would not be an id.
+    expect(id).toHaveValue(initial);
     await waitFor(() => expect(id).toHaveFocus());
     await userEvent.clear(id);
     await userEvent.type(id, "default");
     expect(screen.getByText("default is taken.")).toBeInTheDocument();
     await userEvent.clear(id);
     await userEvent.type(id, "my_ship{Enter}");
-    await waitFor(() => expect(posts()).toEqual([["/api/drafts/chains/my_ship/ops", { ops: [{ op: "new_chain", from: "release:ship" }] }]]));
+    await waitFor(() => expect(posts()).toEqual([["/api/drafts/chains/my_ship/ops", { ops: [{ op: "new_chain", ...source }] }]]));
     await waitFor(() => expect(where).toBe("/templates/chains/my_ship"));
   });
 

@@ -2,6 +2,8 @@
 export const NOTHING_TO_PUBLISH = "nothing to publish";
 export const ADD_TITLE = "Add a title to create it.";
 export const fixProblems = (n: number) => `Fix the ${n} ${n === 1 ? "problem" : "problems"} first.`;
+/** A component an extending chain inherits from its parent: its structure is the parent's. */
+export const INHERITED = (parent: string) => `Inherited from ${parent}: change it in YAML, or detach the chain.`;
 export const CHAIN_IN_USE = (repos: string[]) => `Can't delete: ${repos.join(", ")} default to it.`;
 export const WEBHOOK_OFF = (urlSet: boolean, typing = false) => (urlSet ? "Turn on the webhook first." : typing ? "Press Enter to save the URL first." : "Set a webhook URL first.");
 export const CHOOSE_REPO = "Choose a repo to create it in.";

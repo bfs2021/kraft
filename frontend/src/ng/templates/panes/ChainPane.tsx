@@ -4,10 +4,10 @@ import type { useResizable } from "../../graph/useResizable";
 import { Button } from "../../ui/Button";
 import { repoName } from "../../../format";
 import { useReason } from "../../ui/Reason";
-import { CHAIN_IN_USE } from "../../ui/reasons";
+import { CHAIN_IN_USE, INHERITED } from "../../ui/reasons";
 import type { Scope } from "../draft/types";
 import type { ConfigDraft } from "../draft/useConfigDraft";
-import { authoredAt, authoredNodes, liveChainId, nodeGlyph, normalise, problemsAt, resolvedAt, valueAt, type NodeA } from "../draft/view";
+import { authoredAt, authoredNodes, extendsOf, liveChainId, nodeGlyph, normalise, originOf, problemsAt, resolvedAt, valueAt, type NodeA } from "../draft/view";
 import { problemText } from "../problems";
 import { Config } from "./Config";
 import { ItemYaml } from "./ItemYaml";
@@ -81,6 +81,13 @@ export function ChainPane({ draft, scope, path, open, size, onCollapse, onExpand
   const d = describe(r, scope, path);
   // A chain renamed in the draft is titled and crumbed by its new id (R10b-02).
   const chain = scope.area === "chains" ? liveChainId(r.model, scope.key) : scope.key;
+  // An extending chain: a component it inherits keeps its parent's structure, and edits only its fields.
+  const parentChain = extendsOf(r, scope);
+  const root = path.split(".")[0];
+  const removed = parentChain && path ? r.extending?.removed.find((g) => g.id === path) : undefined;
+  const inherited = parentChain && path && !removed && originOf(r, root) !== "added" ? parentChain : null;
+  const locked = inherited ? INHERITED(inherited) : undefined;
+  const lockedWhy = useReason(locked ?? null);
   const ctx: PaneCtx = { r, scope, path, draft, goTo };
   const own = authoredAt(r, scope, path);
   const res = resolvedAt(r, path) ?? own;
@@ -92,7 +99,8 @@ export function ChainPane({ draft, scope, path, open, size, onCollapse, onExpand
   const crumbs = d.kind === "chain"
     ? [{ label: "Chains" }]
     : [{ label: chain, onClick: () => goTo("") }, ...crumbPath(path, loneMain).map((c) => ({ label: c.label, onClick: () => goTo(c.path) }))];
-  const overrides = own?.extends ? Object.keys(own).filter((k) => !NOT_OVERRIDES.has(k)).length : 0;
+  // An inherited component's `own` is its override, which every key of is.
+  const overrides = inherited ? Object.keys(own ?? {}).length : own?.extends ? Object.keys(own).filter((k) => !NOT_OVERRIDES.has(k)).length : 0;
   const ext = typeof own?.extends === "string" ? ` · extends ${own.extends}${overrides ? ` · ${plural(overrides, "override")}` : ""}` : "";
   const taskKind = String(valueAt(r, scope, path, "kind") ?? "");
   const sub = (() => {
@@ -145,7 +153,7 @@ export function ChainPane({ draft, scope, path, open, size, onCollapse, onExpand
     if (d.kind === "task") return (((resolvedAt(r, parent) ?? authoredAt(r, scope, parent))?.tasks as { id: string }[] | undefined) ?? []).map((x) => x.id);
     return [];
   })();
-  const renameable = !readOnly && !["fixloop", "judge"].includes(d.kind);
+  const renameable = !readOnly && !inherited && !["fixloop", "judge"].includes(d.kind);
   // Removing a task a node inherits makes this chain own that step's list (Decisions §9 Inherited items).
   const nodeOwn = d.node ? authoredAt(r, scope, d.node) : null;
   const inherits = (d.kind === "task" || d.kind === "step") && !!nodeOwn?.extends && !nodeOwn.steps;
@@ -178,7 +186,7 @@ export function ChainPane({ draft, scope, path, open, size, onCollapse, onExpand
   };
 
   // R47: an exec node or a task that extends nothing can become a library component.
-  const moveWhat = movable(path, own, d.kind);
+  const moveWhat = inherited ? null : movable(path, own, d.kind);
   const footer = readOnly ? undefined : d.kind === "chain" ? (
     asking ? (
       <>
@@ -206,9 +214,31 @@ export function ChainPane({ draft, scope, path, open, size, onCollapse, onExpand
       {overrides > 0 && <Button onClick={() => draft.ops([{ op: "reset_field", path }])}>Reset all overrides</Button>}
       {moveWhat && <Button onClick={(e) => { at(e.currentTarget); setCard({ t: "move" }); }}>Move to library…</Button>}
       <span className="bp-gap" />
-      {removeLabel && <Button variant="danger" onClick={(e) => { at(e.currentTarget); setCard({ t: "remove" }); onMarking?.(refs.map((x) => x.node)); }}>{removeLabel}</Button>}
+      {/* An inherited node is removed whole (`remove`); what is inside it is its parent's. */}
+      {removeLabel && inherited && path !== root && <>{lockedWhy.note}<Button variant="danger" disabled {...lockedWhy.attrs}>{removeLabel}</Button></>}
+      {removeLabel && !(inherited && path !== root) && <Button variant="danger" onClick={(e) => { at(e.currentTarget); setCard({ t: "remove" }); onMarking?.(refs.map((x) => x.node)); }}>{removeLabel}</Button>}
     </>
   );
+
+  if (removed && parentChain) {
+    // A parent node this chain removes, drawn as a ghost: nothing to edit, one way back.
+    return (
+      <Inspector
+        id="chains-pane"
+        open={open}
+        size={size}
+        crumbs={[{ label: chain, onClick: () => goTo("") }]}
+        gate={removed.kind === "gate"}
+        title={path}
+        sub={`${removed.kind === "gate" ? "gate" : "exec node"} · removed`}
+        onCollapse={onCollapse}
+        onExpand={onExpand}
+        footer={readOnly ? undefined : <><span className="bp-gap" /><Button onClick={() => void draft.ops([{ op: "restore", node: path }])}>Restore</Button></>}
+      >
+        <p className="pane-note">Removed from {parentChain}. Restore puts it back where it was.</p>
+      </Inspector>
+    );
+  }
 
   return (
     <>
@@ -230,6 +260,7 @@ export function ChainPane({ draft, scope, path, open, size, onCollapse, onExpand
       onExpand={onExpand}
       onFocus={node && onFocus ? onFocus : undefined}
       onTitle={renameable ? () => { setRefused(null); setRenaming(path); } : undefined}
+      titleLocked={locked}
       titleEdit={renameable && renaming === path ? (
         <RenameTitle key={path} what={d.kind === "chain" ? "chain" : d.kind === "gate" ? "gate" : d.kind === "node" ? "node" : d.kind === "step" ? "step" : "task"} id={d.kind === "chain" ? chain : d.id} taken={siblings} refs={refs} refused={refused} chain={d.kind === "chain"} onGo={(id) => void rename(id)} onCancel={endRename} />
       ) : undefined}
@@ -243,8 +274,9 @@ export function ChainPane({ draft, scope, path, open, size, onCollapse, onExpand
           <Overview kind={d.kind} ctx={ctx} />
         </>
       ) : shownTab === "config" ? <Config kind={d.kind} ctx={ctx} />
-        : shownTab === "yaml" ? <ItemYaml key={path} draft={draft} scope={scope} path={path} extendsName={typeof own?.extends === "string" ? own.extends : undefined} />
+        : shownTab === "yaml" ? <ItemYaml key={path} draft={draft} scope={scope} path={path} extendsName={typeof own?.extends === "string" ? own.extends : undefined} locked={locked} />
           : <>
+            {locked && <p className="pane-note">{locked}</p>}
             {typeof own?.extends === "string" && (d.kind === "node" || d.kind === "task") && <LibraryHint section={d.kind === "node" ? "nodes" : "tasks"} name={own.extends} />}
             <Overview kind={d.kind} ctx={ctx} />
           </>}

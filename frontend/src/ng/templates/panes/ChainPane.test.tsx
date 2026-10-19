@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../../api";
 import type { ConfigDraft } from "../draft/useConfigDraft";
 import { DEFAULT_VIEW } from "../draft/fixture.default";
+import { EXT, EXTENDING_VIEW } from "../draft/fixture.extending";
+import { INHERITED } from "../../ui/reasons";
 import type { DraftView, Result } from "../draft/types";
 import { resolvedNode } from "../draft/view";
 import { ChainPane } from "./ChainPane";
@@ -11,8 +13,8 @@ import { resetHarnessOptions } from "./useHarnessOptions";
 
 const SIZE = { width: 380, overlay: false, handle: undefined };
 
-function mount(path: string, result: Partial<Result> = {}) {
-  const view: DraftView = { ...DEFAULT_VIEW, result: { ...DEFAULT_VIEW.result, ...result } };
+function mount(path: string, result: Partial<Result> = {}, base: DraftView = DEFAULT_VIEW) {
+  const view: DraftView = { ...base, result: { ...base.result, ...result } };
   const draft = {
     view,
     field: vi.fn(),
@@ -21,7 +23,7 @@ function mount(path: string, result: Partial<Result> = {}) {
     resolvedNode: (id: string) => resolvedNode(view.result, id),
   } as unknown as ConfigDraft;
   const goTo = vi.fn();
-  render(<ChainPane draft={draft} scope={{ area: "chains", key: "default" }} path={path} open size={SIZE} onCollapse={() => {}} onExpand={() => {}} goTo={goTo} />);
+  render(<ChainPane draft={draft} scope={{ area: "chains", key: view.key }} path={path} open size={SIZE} onCollapse={() => {}} onExpand={() => {}} goTo={goTo} />);
   return { draft, goTo };
 }
 
@@ -399,5 +401,57 @@ describe("an agent task's fallback list", () => {
     expect(rowOf("fallback")).toHaveTextContent("codex · strong, claude · model opus · effort high");
     expect(within(rowOf("fallback")).queryByRole("button", { name: "Edit fallback" })).toBeNull();
     expect(within(rowOf("fallback")).getByText("on Overview")).toBeInTheDocument();
+  });
+});
+
+describe("an extending chain", () => {
+  it("locks an inherited node's structure, and keeps its Remove", () => {
+    mount(EXT.first, {}, EXTENDING_VIEW);
+    expect(screen.getByRole("button", { name: "Remove node" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Move to library…" })).toBeNull();
+    expect(screen.getByRole("button", { name: `Rename ${EXT.first}` })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText(INHERITED("default"))).toBeInTheDocument();
+  });
+
+  it("refuses removing what is inside an inherited node, saying why", () => {
+    mount(`${EXT.first}.main.author`, {}, EXTENDING_VIEW);
+    const remove = screen.getByRole("button", { name: "Remove task" });
+    expect(remove).toBeDisabled();
+    expect(remove).toHaveAccessibleDescription(INHERITED("default"));
+  });
+
+  it("leaves an added node fully editable", () => {
+    mount("security_scan", {}, EXTENDING_VIEW);
+    expect(screen.getByRole("button", { name: "Move to library…" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Rename security_scan" })).toBeNull();
+    expect(screen.queryByText(INHERITED("default"))).toBeNull();
+  });
+
+  it("resets every override of an inherited component", async () => {
+    const { draft } = mount(EXT.overridden, {}, EXTENDING_VIEW);
+    // Its override is all its file holds: nothing to move to the library.
+    expect(screen.queryByRole("button", { name: "Move to library…" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Reset all overrides" }));
+    expect(draft.ops).toHaveBeenCalledWith([{ op: "reset_field", path: EXT.overridden }]);
+  });
+
+  it("restores a removed node", async () => {
+    const { draft } = mount(EXT.removed, {}, EXTENDING_VIEW);
+    expect(screen.getByText(/Removed from default/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    expect(draft.ops).toHaveBeenCalledWith([{ op: "restore", node: EXT.removed }]);
+  });
+
+  it("shows an inherited component's values under its overrides while the draft does not resolve", async () => {
+    const path = `${EXT.overridden}.main.implement`;
+    const model = structuredClone(EXTENDING_VIEW.result.model);
+    model["chains/team.yaml"].overrides = { [path]: { prompt: "Mine." } };
+    mount(path, { resolved: null, sources: {}, model }, EXTENDING_VIEW);
+    await configTab();
+    expect(screen.getByText("Config with this chain's overrides")).toBeInTheDocument();
+    await showDefaults();
+    expect(rowOf("harness")).toHaveTextContent("inherited");
+    expect(rowOf("harness")).not.toHaveClass("is-own");
+    expect(rowOf("prompt")).toHaveClass("is-own");
   });
 });

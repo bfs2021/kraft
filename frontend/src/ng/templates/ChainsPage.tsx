@@ -19,9 +19,11 @@ import { Dialog } from "../ui/Dialog";
 import { draftsChanged, postOps } from "./draft/draftApi";
 import * as api from "../../api";
 import { Button } from "../ui/Button";
-import { NOTHING_TO_PUBLISH } from "../ui/reasons";
+import { INHERITED, NOTHING_TO_PUBLISH } from "../ui/reasons";
 import { useConfigDraft, type ConfigDraft } from "./draft/useConfigDraft";
-import { authoredNodes, chainFile, counts, extendsOf, kindOf, liveChainId } from "./draft/view";
+import { authoredNodes, chainFile, counts, extendsOf, kindOf, liveChainId, originOf } from "./draft/view";
+import { DetachCard } from "./cards/DetachCard";
+import { Badge } from "../ui/Badge";
 import { addonRepo } from "../library/types";
 import { AddonBadge, ReadOnly } from "./addon";
 import { pathOf, selOf, type TSel } from "./sel";
@@ -94,6 +96,10 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
   // Leaving a chain with a draft asks first (Decisions §9 Unpublished changes, brief Decided 5).
   const [pendingGo, setPendingGo] = useState<SwitchTo | null>(null);
   const [dupTick, setDupTick] = useState(0);
+  const [extendTick, setExtendTick] = useState(0);
+  // Detach's card, at the header button that opened it.
+  const detachAt = useRef<HTMLElement | null>(null);
+  const [detaching, setDetaching] = useState(false);
   // The nodes an open remove card lists, marked red on the canvas (Decisions §9 Remove).
   const [marked, setMarked] = useState<string[]>([]);
   const [strip, setStrip] = useState<{ ok: boolean; text: string } | null>(null);
@@ -185,8 +191,10 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
 
   /** The published file: the YAML diffs' left side, and where removed nodes stood. */
   const loadPublished = useCallback(() => {
-    api.getTemplate(chain).then((f) => {
-      const nodes = ((f.chain.nodes as { id: string; kind?: string; extends?: string }[] | undefined) ?? []).map((n) => ({ id: n.id, kind: (n.kind === "gate" ? "gate" : "exec") as "exec" | "gate" }));
+    api.getTemplate(chain).then(async (f) => {
+      // An extending chain's file lists no nodes: where its removed ones stood is the resolved chain's order.
+      const resolved = typeof f.chain.extends === "string" ? (await api.getResolvedTemplate(chain).catch(() => null))?.nodes : undefined;
+      const nodes = (resolved ?? (f.chain.nodes as { id: string; kind?: string; extends?: string }[] | undefined) ?? []).map((n) => ({ id: n.id, kind: (n.kind === "gate" ? "gate" : "exec") as "exec" | "gate" }));
       setPublished({ text: f.text, nodes });
     }).catch(() => setPublished(null));
     api.getLibrary().then((l) => setLibText(l.text)).catch(() => setLibText(null));
@@ -222,10 +230,11 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
   const perform = async (to: SwitchTo) => {
     setPendingGo(null);
     if (to.kind === "switch") return navigate(chainUrl(to.id));
-    const a = await postOps("chains", to.id, [{ op: "new_chain", ...(to.kind === "dup" ? { from: chain } : {}) }]);
+    const source = to.kind === "dup" ? { from: chain } : to.kind === "extend" ? { extends: chain } : {};
+    const a = await postOps("chains", to.id, [{ op: "new_chain", ...source }]);
     if (a.status !== 200) return showToast(detailOf(a.body));
     draftsChanged();
-    showToast(to.kind === "dup" ? `${readOnly ? "Copied to your library" : "Duplicated"} as ${to.id}` : `New chain ${to.id} · add its first node with +`);
+    showToast(to.kind === "dup" ? `${readOnly ? "Copied to your library" : "Duplicated"} as ${to.id}` : to.kind === "extend" ? `${to.id} extends ${chain}` : `New chain ${to.id} · add its first node with +`);
     navigate(chainUrl(to.id));
   };
   const requestGo = (to: SwitchTo) => {
@@ -290,10 +299,11 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
   const latest = useRef({ selPath, level: s.level, node: s.node });
   latest.current = { selPath, level: s.level, node: s.node };
   const nodes = authoredNodes(r, scope);
-  // An extending chain's canvas shows its resolved nodes and edits none: its
-  // edits are written in YAML until the editor knows them.
+  // An extending chain: every canvas action writes one of its edits (`remove`, `add`, `overrides`).
   const parent = extendsOf(r, scope);
   const selNode = sel.kind === "chain" ? null : nodes.find((x) => x.id === sel.node);
+  // A node it inherits keeps its parent's structure: its node view and bottom pane only read.
+  const inheritedNode = !!parent && s.level === "node" && !!s.node && originOf(r, s.node) !== "added";
   const isGate = !!selNode && sel.kind === "node" && kindOf(r, selNode) === "gate";
 
   return (
@@ -302,8 +312,9 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
       <h1 className="tpl-sr">Chain {liveId}</h1>
       <HeaderTail>
         <span className="tpl-crumb-sep" aria-hidden>›</span>
-        <Switcher chain={chain} renamedTo={liveId !== chain ? liveId : undefined} onGo={requestGo} startDup={dupTick} copy={readOnly} />
+        <Switcher chain={chain} renamedTo={liveId !== chain ? liveId : undefined} onGo={requestGo} startDup={dupTick} startExtend={extendTick} copy={readOnly} extend={!addonRepo(addon)} />
         {addon && <AddonBadge addon={addon} />}
+        {parent && <Badge className="tpl-extends">extends {parent}</Badge>}
         {s.level === "node" && s.node && (
           <>
             <span className="tpl-crumb-sep" aria-hidden>›</span>
@@ -337,17 +348,18 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
         )}
         {/* With no draft there is nothing to publish: the server would answer 404 (R8b-04), as Repos, Policy and Harnesses already know. */}
         {/* A repo library's chain is edited in its repository's `.kraft/`: the server refuses a copy. */}
+        {parent && !readOnly && !review && <Button onClick={(e) => { detachAt.current = e.currentTarget; setDetaching(true); }}>Detach…</Button>}
         {readOnly
-          ? (addonRepo(addon) ? null : <Button variant="primary" onClick={() => setDupTick((k) => k + 1)}>Copy to my library</Button>)
+          ? (addonRepo(addon) ? null : <><Button onClick={() => setExtendTick((k) => k + 1)}>Extend</Button><Button variant="primary" onClick={() => setDupTick((k) => k + 1)}>Copy to my library</Button></>)
           : <Button variant={review ? undefined : "primary"} disabled={!review && !view.draft} aria-describedby={view.draft || review ? undefined : `${publishedId} ${publishedId}-why`} onClick={review ? endReview : startReview}>{review ? "Back to editing" : REVIEW_AND_PUBLISH}</Button>}
       </HeaderActions>
-      {parent && s.level === "chain" && (
+      {parent && s.level === "chain" && r.extending?.nodes === null && (
         <div className="tpl-note" role="note">
-          {liveId} extends {parent}. Edit it in YAML; the canvas shows the resolved chain.
+          {liveId}'s edits don't apply to {parent}. Fix them in YAML.
         </div>
       )}
+      {inheritedNode && <div className="tpl-note" role="note">{INHERITED(parent!)}</div>}
       <div className={`tpl-area${s.level === "node" ? " has-strip" : ""}${s.level === "node" && selNode && kindOf(r, selNode) === "exec" ? " has-bottom" : ""}`}>
-        <ReadOnly.Provider value={readOnly || !!parent}>
         {s.level === "chain" ? (
           <ChainCanvas
             scope={scope}
@@ -394,6 +406,7 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
             }}
           />
         ) : (
+          <ReadOnly.Provider value={readOnly || inheritedNode}>
           <NodeView
             scope={scope}
             node={s.node!}
@@ -410,8 +423,10 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
             }}
             onFocusNode={(id) => focusNode(id)}
           />
+          </ReadOnly.Provider>
         )}
         {s.level === "node" && s.node && selNode && kindOf(r, selNode) === "exec" && (
+          <ReadOnly.Provider value={readOnly || inheritedNode}>
           <BottomPane
             scope={scope}
             node={s.node}
@@ -431,8 +446,8 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
             onOpen={(p) => dispatch({ type: "expand", sel: selOf(p, taskPaths) })}
             onLeave={() => dispatch({ type: "background" })}
           />
+          </ReadOnly.Provider>
         )}
-        </ReadOnly.Provider>
         {surface === "yaml" && s.level === "chain" && !review && <YamlView draft={draft} scope={scope} published={published === undefined ? undefined : published?.text ?? null} />}
         {review ? (
           <ReviewPane
@@ -489,6 +504,19 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
           />
         )}
       </div>
+      {detaching && parent && (
+        <DetachCard
+          anchor={detachAt}
+          chain={liveId}
+          parent={parent}
+          onDetach={async () => {
+            setDetaching(false);
+            const a = await draft.ops([{ op: "detach" }]);
+            if (a.status === 200) showToast(`${liveId} no longer follows ${parent}`);
+          }}
+          onClose={() => setDetaching(false)}
+        />
+      )}
       {pendingGo && (
         <Dialog
           title="You have unpublished changes"
@@ -516,7 +544,7 @@ function Editor({ chain, node, draft }: { chain: string; node?: string; draft: C
           <div className="unsaved">
             <p>
               {chain} has {neverPublished ? "never been published" : `${n.changes} unpublished change${n.changes === 1 ? "" : "s"}`}. Publish or discard {neverPublished ? "it" : "them"} before{" "}
-              {pendingGo.kind === "switch" ? `switching to ${pendingGo.id}` : pendingGo.kind === "dup" ? `duplicating it as ${pendingGo.id}` : `creating ${pendingGo.id}`}.
+              {pendingGo.kind === "switch" ? `switching to ${pendingGo.id}` : pendingGo.kind === "dup" ? `duplicating it as ${pendingGo.id}` : pendingGo.kind === "extend" ? `extending it as ${pendingGo.id}` : `creating ${pendingGo.id}`}.
             </p>
             {n.problems > 0 && <p>{n.problems} problem{n.problems === 1 ? "" : "s"} block publishing. Review them first, or discard.</p>}
           </div>
