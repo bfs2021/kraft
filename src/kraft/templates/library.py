@@ -879,12 +879,19 @@ class _Resolution:
         self.provenance: dict[str, object] | None = None
         #: Every chain this one extends, nearest first.
         self.ancestors: tuple[str, ...] = ()
+        #: The chain as written and its expanded node ids, for `split` to place
+        #: a location in an extending chain's edits.
+        self._written: Mapping[str, object] = {}
+        self._order: list[object] = []
 
     # ── expansion ──
 
     def expand_chain(self, data: Mapping[str, object]) -> Mapping[str, object]:
+        self._written = data
         if "extends" in data:
-            return self._extend(data)
+            out = self._extend(data)
+            self._order = [n.get("id") for n in out["nodes"] if isinstance(n, Mapping)]
+            return out
         if written := [key for key in extension.EDIT_KEYS if key in data]:
             # Said here, rather than letting the author read pydantic's "Extra
             # inputs are not permitted" (`edits-need-a-parent`).
@@ -1392,7 +1399,15 @@ class _Resolution:
 
     def split(self, loc: tuple[object, ...]) -> tuple[str | None, tuple[object, ...]]:
         """The canonical path of the deepest expanded component `loc` walks to,
-        and the rest of `loc` below it; `None` and all of `loc` for none."""
+        and the rest of `loc` below it; `None` and all of `loc` for none. A
+        location in an extending chain's edits lands on the component the edit
+        addresses (`a-problem-in-an-edit-lands-on-its-component`)."""
+        found = extension.edit_location(self._written, loc) if "extends" in self._written else None
+        if found is not None:
+            if loc[2:3] != ("node",) or found[0] not in self._order:
+                return found
+            # Inside an added node: its expanded location knows the deeper path.
+            loc = ("nodes", self._order.index(found[0]), *found[1])
         key = next((k for k in _prefixes(loc) if k in self._located), None)
         return (None, loc) if key is None else (self._located[key].path, loc[len(key) :])
 
