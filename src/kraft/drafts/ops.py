@@ -277,12 +277,18 @@ class Draft:
         raw = authored.parse(authored.dump(self.chain if chain is None else chain))
         if self.file == authored.LIBRARY:
             return authored.normalise(_expand_library(raw, self.st.templates_dir / self.name))
+        library = self.resolving_library()
+        data, _ = resolve._expand(library, self.st.templates_dir / self.name, self.key, raw)
+        return authored.normalise(dict(data))
+
+    def resolving_library(self) -> TemplateLibrary | None:
+        """The library this draft's chain resolves against: the loaded one, or
+        one with the draft's own `library.yaml` when it holds one."""
         library = getattr(self.st, "library", None)
         if LIBRARY_FILE in self.files or LIBRARY_FILE in self.dirty:
             # As written: `parse(dump(…))` puts the shorthand back.
             library = resolve.draft_library(self.st, authored.parse(authored.dump(self.library)))
-        data, _ = resolve._expand(library, self.st.templates_dir / self.name, self.key, raw)
-        return authored.normalise(dict(data))
+        return library
 
     # ── writing ──
 
@@ -1040,10 +1046,14 @@ def copy_component(d: Draft, ref: str, name: str) -> dict:
     return {"path": _join(section, name)}
 
 
-#: The ops an extending chain still takes: they act on the chain as a whole,
-#: never on a node it inherits (`the-editor-leaves-an-extending-chain-to-yaml`).
-#: Renaming the chain itself (`rename` at `path: ""`) is one too.
-_WHOLE_CHAIN = frozenset({"new_chain", "delete_chain"})
+def restore(d: Draft, node: str) -> None:
+    """Put back a node an extending chain removes (`drafts.extending.restore`)."""
+    raise OpError(f"{d.key} extends nothing, so no node is removed from a parent")
+
+
+def detach(d: Draft) -> dict:
+    """Make an extending chain a chain of its own (`drafts.extending.detach`)."""
+    raise OpError(f"{d.key} extends nothing, so there is nothing to detach")
 
 
 def _extending(d: Draft) -> str | None:
@@ -1078,6 +1088,8 @@ OPS: dict[str, Callable[..., dict | None]] = {
     "add_component": add_component,
     "move_to_library": move_to_library,
     "copy_component": copy_component,
+    "restore": restore,
+    "detach": detach,
 }
 
 
@@ -1093,6 +1105,18 @@ def _refuse_addon_address(d: Draft, path: object) -> None:
             raise AddonReadOnly(why)
 
 
+def _extending_ops() -> Mapping[str, Callable]:
+    from kraft.drafts import extending  # it builds on this module
+
+    return extending.OPS
+
+
+def _extending_error(d: Draft) -> str | None:
+    from kraft.drafts import extending
+
+    return extending.expansion_error(d)
+
+
 def apply(d: Draft, ops: list, table: Mapping[str, Callable] = OPS) -> list[dict]:
     """Run `ops` on `d` in order, each looked up in `table`; each one's own
     answer. Raises `OpError` with `.index` set to the op that failed."""
@@ -1102,13 +1126,10 @@ def apply(d: Draft, ops: list, table: Mapping[str, Callable] = OPS) -> list[dict
             if not isinstance(op, dict) or op.get("op") not in table:
                 name = op.get("op") if isinstance(op, dict) else op
                 raise OpError(f"no op {name!r}")
-            fn = table[op["op"]]
+            # Per op: `new_chain {extends}` and `detach` change the shape mid-batch.
+            extending = table is OPS and _extending(d) is not None
+            fn = (_extending_ops() if extending else table)[op["op"]]
             fields = {k: v for k, v in op.items() if k != "op"}
-            # The canvas edits `nodes:`, which an extending chain has none of:
-            # until the editor knows its edits, the YAML view is where it changes.
-            whole = op["op"] in _WHOLE_CHAIN or (op["op"] == "rename" and fields.get("path") == "")
-            if (parent := _extending(d)) is not None and not whole:
-                raise OpError(f"{d.key} extends {parent}; edit it in the YAML view")
             # Every way an op names where it acts.
             for address in ("path", "container", "node"):
                 _refuse_addon_address(d, fields.get(address))
@@ -1116,7 +1137,12 @@ def apply(d: Draft, ops: list, table: Mapping[str, Callable] = OPS) -> list[dict
                 inspect.signature(fn).bind(d, **fields)
             except TypeError as exc:
                 raise OpError(f"{op['op']}: {exc}") from None
+            # An extending chain whose edits stop applying has no nodes to draw
+            # or to edit back, so no op may leave it so (`templates-editor.md`).
+            applied = extending and _extending_error(d) is None
             result = fn(d, **fields)
+            if applied and _extending(d) is not None and (why := _extending_error(d)):
+                raise OpError(f"{op['op']} would leave {d.key} not resolving: {why}")
         except OpError as exc:
             exc.index = index
             raise
