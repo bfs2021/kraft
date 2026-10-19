@@ -133,7 +133,8 @@ def test_an_extending_chains_inherited_fragment_is_its_component_with_the_edits(
         "overrides:\n  implementation.main.implement: {prompt: Implement it carefully.}\n"
     )
     assert client.put("/api/templates/chains/team", json={"text": team}).status_code == 200
-    answer = client.get("/api/drafts/chains/team/fragment", params={"path": "implementation.main.implement"})
+    path = {"path": "implementation.main.implement"}
+    answer = client.get("/api/drafts/chains/team/fragment", params=path)
     assert answer.status_code == 200, answer.text
     assert yaml.safe_load(answer.json()["text"])["prompt"] == "Implement it carefully."
 
