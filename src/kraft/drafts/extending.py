@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import functools
+from collections.abc import Mapping
 from typing import Literal
 
 from kraft.drafts import authored, ops
@@ -350,6 +351,63 @@ def move_to_library(d: Draft, path: str, name: str) -> dict:
     return {"path": f"{Namespace.NODES.value}{PATH_SEPARATOR}{name}"}
 
 
+# ── detach ──
+
+
+def _touched(library, data: Mapping) -> set[str]:
+    """Every node id an `overrides` key names, in `data` or any chain it extends."""
+    overrides = data.get("overrides")
+    ids = {str(key).split(PATH_SEPARATOR)[0] for key in overrides or ()}
+    parent = data.get("extends")
+    if isinstance(parent, str) and parent in library.chain_ids:
+        ids |= _touched(library, library.chain_data(parent))
+    return ids
+
+
+def _authored_node(library, data: Mapping, id: str) -> dict:
+    """Node `id` as the file that defines it writes it: an `add` entry here, or
+    up the parents to the chain whose `nodes:` holds it."""
+    for entry in data.get("add") or ():
+        if isinstance(entry, Mapping) and (entry.get("node") or {}).get("id") == id:
+            return entry["node"]
+    parent = data.get("extends")
+    if isinstance(parent, str):
+        return _authored_node(library, library.chain_data(parent), id)
+    return next(n for n in data.get("nodes") or () if isinstance(n, Mapping) and n.get("id") == id)
+
+
+def detach(d: Draft) -> dict:
+    """The chain written as one of its own, keeping its id: its resolved
+    description, policy and nodes in order, and no `extends` or edits. A node
+    an override at any level names is written resolved; every other one as
+    the file that defines it writes it, so it keeps its library `extends`."""
+    parent = parent_of(d)
+    library = d.resolving_library()
+    if library is None:
+        raise OpError("the template library does not load")
+    raw = authored.parse(authored.dump(d.chain))
+    try:
+        candidate, id = library.with_chain(d.st.templates_dir / d.name, {**raw, "id": d.key})
+        chain = candidate.resolve_chain(id).chain
+    except TemplateLibraryError as exc:
+        raise OpError(f"{d.key} does not resolve, so it can't be detached: {exc}") from None
+    resolved = chain.model_dump(mode="json", exclude_unset=True)
+    touched = _touched(candidate, raw)
+    flat: dict = {"id": d.key}
+    for key in ("description", "policy"):
+        if resolved.get(key) is not None:
+            flat[key] = resolved[key]
+    flat["nodes"] = [
+        copy.deepcopy(
+            n if n["id"] in touched else ops.plain(_authored_node(candidate, raw, n["id"]))
+        )
+        for n in resolved["nodes"]
+    ]
+    d._chain = authored.normalise(flat)
+    d.dirty.add(d.name)
+    return {"detached_from": parent}
+
+
 def expansion_error(d: Draft) -> str | None:
     """Why `d`'s chain does not expand (its edits don't apply to its parent),
     or None when it does."""
@@ -382,4 +440,5 @@ OPS = {
     "extend": _in_added(ops.extend, "node"),
     "change_base": _in_added(ops.change_base, "node"),
     "set_fragment": _in_added(ops.set_fragment, "path"),
+    "detach": detach,
 }

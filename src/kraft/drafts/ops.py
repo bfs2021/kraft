@@ -774,11 +774,25 @@ def change_base(d: Draft, node: str, base: str) -> dict:
 
 
 def new_chain(d: Draft, **source: str) -> None:
+    """A new chain: empty; a copy of the chain `from` names; or, with
+    `extends`, one that follows that chain and holds only its edits."""
     d.chains_only("new_chain")
-    if set(source) - {"from"}:
-        raise OpError(f"unexpected {', '.join(sorted(set(source) - {'from'}))}")
+    if unexpected := set(source) - {"from", "extends"}:
+        raise OpError(f"unexpected {', '.join(sorted(unexpected))}")
+    if "from" in source and "extends" in source:
+        raise OpError("give from (a copy) or extends (a chain that follows it), not both")
     if d.exists:
         raise OpError(f"chain {d.key!r} already exists")
+    if "extends" in source:
+        parent, library = source["extends"], getattr(d.st, "library", None)
+        if not isinstance(parent, str) or library is None or parent not in library.chain_ids:
+            raise OpError(f"there is no chain {parent!r} to extend")
+        if why := catalogue.repo_library_copy(library, parent):  # as a copy is refused
+            raise OpError(why)
+        d._chain = {"id": d.key, "extends": parent}
+        d.exists = True
+        d.dirty.add(d.name)
+        return
     origin = source.get("from")
     if origin is None:
         d._chain = {"id": d.key, "description": "", "nodes": []}

@@ -365,3 +365,68 @@ async def test_renaming_an_added_node_renames_its_pointers(st, pointer, read):
 )
 async def test_no_op_leaves_the_edits_not_applying(st, batch):
     assert "would leave team not resolving" in no(st, *batch)
+
+
+async def test_a_new_chain_can_extend_a_chain(st):
+    r = apply_ops(st, ("new_chain", {"extends": "default"}), key="mine")
+    assert r.model == {"id": "mine", "extends": "default"}
+    assert r.resolved_order == apply_ops(st).resolved_order
+
+
+@pytest.mark.parametrize(
+    ("fields", "error"),
+    [
+        ({"extends": "nope"}, "there is no chain 'nope' to extend"),
+        ({"extends": "default", "from": "default"}, "not both"),
+    ],
+    ids=["unknown", "with-from"],
+)
+async def test_a_new_chain_cannot_extend_what_it_may_not(st, fields, error):
+    assert error in refused(st, ("new_chain", fields), key="mine")
+
+
+async def test_detach_writes_the_resolved_chain(st):
+    before = team(st).resolved_order
+    describe = ("set_field", {"path": "", "field": "description", "value": "Ours."})
+    r = team(st, describe, ("detach", {}))
+    assert r.answers == [None, {"detached_from": "default"}]
+    assert set(r.model) == {"id", "description", "nodes"} and r.order == before
+    assert r.model["description"] == "Ours."
+    implement = r.nodes["implementation"]
+    assert "extends" not in implement
+    assert implement["steps"][0]["tasks"][0]["prompt"] == "Implement it carefully."
+    assert r.resolved_order == before
+
+
+TEAM2 = """id: team2
+extends: team
+overrides:
+  spec.main.author: {prompt: Write the spec.}
+"""
+SCAN = {
+    "id": "security_scan",
+    "kind": "exec",
+    "steps": [{"id": "main", "tasks": [{"id": "scan", "kind": "subprocess", "command": "true"}]}],
+}
+
+
+@pytest.mark.parametrize(
+    ("key", "node", "expected"),
+    [
+        ("team", "verification", {"id": "verification", "extends": "verification"}),
+        ("team", "security_scan", SCAN),
+        ("team2", "verification", {"id": "verification", "extends": "verification"}),
+    ],
+    ids=["inherited", "added", "two-levels"],
+)
+async def test_detach_keeps_untouched_nodes_as_authored(st, key, node, expected):
+    (st.templates_dir / "chains" / "team2.yaml").write_text(TEAM2)
+    r = apply_ops(draft_state(st.templates_dir, st.db), ("detach", {}), key=key)
+    assert r.nodes[node] == expected
+    if key == "team2":
+        # Touched one level down: written resolved, the override's prompt in it.
+        spec_task = r.nodes["spec"]["steps"][0]["tasks"][0]
+        assert spec_task["prompt"] == "Write the spec." and "extends" not in spec_task
+        # Touched by `team`, the chain between: resolved too.
+        implement = r.nodes["implementation"]["steps"][0]["tasks"][0]
+        assert implement["prompt"] == "Implement it carefully."

@@ -77,6 +77,17 @@ def test_a_chain_that_extends_an_addon_component_is_the_operators_to_edit(loaded
     assert answer.status_code == 200, answer.text
 
 
+def test_a_new_chain_can_extend_an_addon_chain(loaded):
+    op = {"op": "new_chain", "extends": "release:ship"}
+    answer = loaded.post("/api/drafts/chains/mine/ops", json={"ops": [op]})
+    assert answer.status_code == 200, answer.text
+    draft = loaded.get("/api/drafts/chains/mine").json()
+    written = yaml.safe_load(draft["files"]["chains/mine.yaml"])
+    assert written == {"id": "mine", "extends": "release:ship"}
+    assert loaded.post("/api/drafts/chains/mine/publish").status_code == 200
+    assert not loaded.get("/api/health").json()["invalid_templates"]
+
+
 def _copy_chain(client):
     op = {"op": "new_chain", "from": "release:ship"}
     answer = client.post("/api/drafts/chains/mine/ops", json={"ops": [op]})
@@ -134,6 +145,13 @@ _IN_ITS_REPO = "edit it in that repository's .kraft/"
             "mine",
             f"app:ship is in app's repo library, visible only to items in app; {_IN_ITS_REPO}",
             id="repo-library-chain",
+        ),
+        pytest.param(
+            {"op": "new_chain", "extends": "app:ship"},
+            "chains",
+            "mine",
+            f"app:ship is in app's repo library, visible only to items in app; {_IN_ITS_REPO}",
+            id="repo-library-extend",
         ),
         pytest.param(
             {"op": "copy_component", "ref": "tasks.app:base", "name": "mine"},
