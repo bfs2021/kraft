@@ -640,12 +640,6 @@ The system SHALL report, for each node of a resolved extending chain, whether it
 enforced-by: tests/templates/test_extension.py::test_a_resolved_node_says_where_it_came_from, tests/cli/test_templates.py::test_show_resolved_marks_where_each_node_came_from, tests/api/test_templates_inspection.py::test_the_resolved_chain_marks_where_each_node_came_from
 origin: src/kraft/templates/library.py §provenance
 
-## REQ the-editor-leaves-an-extending-chain-to-yaml
-
-IF a Templates editor op other than renaming, deleting or creating a chain addresses an extending chain, THEN the system SHALL refuse it with 422 and SHALL NOT write the chain.
-enforced-by: tests/drafts/test_ops.py::test_an_op_on_an_extending_chain_is_refused[move], tests/drafts/test_ops.py::test_an_op_on_an_extending_chain_is_refused[remove], tests/drafts/test_ops.py::test_an_op_on_an_extending_chain_is_refused[add_node], tests/drafts/test_ops.py::test_an_op_on_an_extending_chain_is_refused[set_field], tests/drafts/test_ops.py::test_an_op_on_an_extending_chain_is_refused[set_fragment]
-origin: src/kraft/drafts/ops.py §apply
-
 ## REQ a-chain-others-extend-is-not-deleted-or-renamed-silently
 
 WHEN a draft deletes or renames a chain another chain extends, or edits it so a child no longer resolves, the system SHALL report each such child as a problem.
