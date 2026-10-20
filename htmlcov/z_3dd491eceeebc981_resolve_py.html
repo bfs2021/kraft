@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_3dd491eceeebc981_store_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-20 21:59 +0000
+            created at 2026-10-20 23:29 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -300,7 +300,7 @@
     <p class="pln"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">        <span class="com"># An add-on&#x27;s chain is read-only and already in the library: resolved</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">        <span class="com"># as loaded, never re-added as a local chain (its id has a `:`).</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t220" href="#t220">220</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t">            <span class="nam">resolved</span> <span class="op">=</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">_resolved_view</span><span class="op">(</span><span class="nam">library</span><span class="op">.</span><span class="nam">resolve_chain</span><span class="op">(</span><span class="nam">key</span><span class="op">)</span><span class="op">,</span> <span class="nam">library</span><span class="op">.</span><span class="nam">provenance</span><span class="op">(</span><span class="nam">key</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t">            <span class="nam">resolved</span> <span class="op">=</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">library_resolved_view</span><span class="op">(</span><span class="nam">library</span><span class="op">,</span> <span class="nam">key</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t222" href="#t222">222</a></span><span class="t">        <span class="key">except</span> <span class="nam">TemplateLibraryError</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t223" href="#t223">223</a></span><span class="t">            <span class="nam">problems</span> <span class="op">=</span> <span class="op">[</span><span class="op">{</span><span class="op">**</span><span class="nam">_not_a_mapping</span><span class="op">(</span><span class="nam">name</span><span class="op">)</span><span class="op">,</span> <span class="str">&quot;message&quot;</span><span class="op">:</span> <span class="nam">str</span><span class="op">(</span><span class="nam">exc</span><span class="op">)</span><span class="op">}</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t224" href="#t224">224</a></span><span class="t">    <span class="key">elif</span> <span class="nam">data</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -316,7 +316,7 @@
     <p class="run"><span class="n"><a id="t234" href="#t234">234</a></span><span class="t">            <span class="key">except</span> <span class="nam">TemplateLibraryError</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t235" href="#t235">235</a></span><span class="t">                <span class="key">pass</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t236" href="#t236">236</a></span><span class="t">            <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t237" href="#t237">237</a></span><span class="t">                <span class="nam">resolved</span> <span class="op">=</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">_resolved_view</span><span class="op">(</span><span class="nam">chain</span><span class="op">,</span> <span class="nam">candidate</span><span class="op">.</span><span class="nam">provenance</span><span class="op">(</span><span class="nam">id</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t237" href="#t237">237</a></span><span class="t">                <span class="nam">resolved</span> <span class="op">=</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">library_resolved_view</span><span class="op">(</span><span class="nam">candidate</span><span class="op">,</span> <span class="nam">id</span><span class="op">,</span> <span class="nam">chain</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t238" href="#t238">238</a></span><span class="t">                <span class="com"># Each local child, against the chain as this draft leaves it.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t239" href="#t239">239</a></span><span class="t">                <span class="key">for</span> <span class="nam">child</span> <span class="key">in</span> <span class="op">(</span><span class="nam">c</span> <span class="key">for</span> <span class="nam">c</span> <span class="key">in</span> <span class="nam">candidate</span><span class="op">.</span><span class="nam">extended_by</span><span class="op">(</span><span class="nam">id</span><span class="op">)</span> <span class="key">if</span> <span class="str">&quot;:&quot;</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">c</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t240" href="#t240">240</a></span><span class="t">                    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -999,7 +999,7 @@
             <a class="nav" href="z_3dd491eceeebc981_store_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-20 21:59 +0000
+            created at 2026-10-20 23:29 +0000
         </p>
     </div>
 </footer>
