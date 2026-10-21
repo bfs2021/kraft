@@ -4,10 +4,19 @@ watching, what is held for a person, and where the outcome is recorded."""
 import shutil
 
 import pytest
-from support.addons import AGENT, chain, edit_addons_yaml, instance, make_collection, publish
+from support.addons import (
+    AGENT,
+    chain,
+    child_manifest,
+    edit_addons_yaml,
+    instance,
+    make_collection,
+    make_tree,
+    publish,
+)
 from support.harness import git
 
-from kraft.addons import fetch, update
+from kraft.addons import fetch, load, review, update
 from kraft.addons.config import AddonEntry, AddonsLock
 
 ID = "release@acme"
@@ -103,6 +112,34 @@ def test_auto_update_holds(home, new, why):
     assert update.read_status(addons_dir)[ID]["outcome"] == "held"
 
 
+def _member(addon_id, reach):
+    return review.Review(addon_id, "1.0.0", "1.1.0", reach=("gate removed",) if reach else ())
+
+
+@pytest.mark.parametrize(
+    "reaches, expected",
+    [
+        ({"release@acme": False}, {}),
+        ({"release@acme": True}, {"release@acme": "gate removed"}),
+        (
+            {"company@acme": True, "team@acme": False},
+            {"company@acme": "gate removed", "team@acme": "with company@acme: gate removed"},
+        ),
+        (
+            {"company@acme": True, "team@acme": True},
+            {"company@acme": "gate removed", "team@acme": "gate removed"},
+        ),
+    ],
+    ids=["one-clean", "one-held", "relative-holds", "each-own-reason"],
+)
+def test_a_group_is_held_whole(reaches, expected):
+    """A relative that widens nothing is held with the one that does; a group
+    of one is held for its own reason, as before."""
+    group = review.Group(tuple(_member(i, reach) for i, reach in reaches.items()))
+
+    assert update.unattended_holds(group) == expected
+
+
 def _listed_not_locked(repo, config_dir):
     publish(repo, "extra", **RELEASE)
     edit_addons_yaml(
@@ -193,3 +230,118 @@ def test_a_person_taking_a_held_update_clears_its_warning(home):
 
     assert update.read_status(addons_dir) == {}
     assert _versions(config_dir)[ID] == "1.1.0"
+
+
+def test_a_range_held_auto_update_waits(tmp_path):
+    """A parent's release that an installed child's range rejects waits, with
+    the range that holds it, for the child to accept it or a person to act."""
+    company, team = RELEASE, {**RELEASE, "parent": ("company@corp", "1")}
+    repos, (config_dir, addons_dir) = make_tree(
+        tmp_path, {"company@corp": company, "team@corp": team}
+    )
+    on = {"company@corp": {"auto_update": True}}
+    edit_addons_yaml(config_dir, lambda w: w["addons"].update(on))
+    publish(repos["corp"], "company", version="2.0.0")
+    before = (config_dir / "addons.lock").read_text()
+
+    outcome = update.auto_update(config_dir, addons_dir)["company@corp"]
+
+    assert outcome == {
+        "outcome": "held",
+        "message": "company@corp 2.0.0 is outside team@corp's range 1 (needs 1.x); run kraft "
+        "admin addon update to move it with its relatives, or wait for a release that fits",
+    }
+    assert (config_dir / "addons.lock").read_text() == before
+
+
+def test_auto_update_takes_no_relatives(tmp_path, monkeypatch):
+    """A relative whose own auto-update is off is not moved by its parent's,
+    and its collection is not fetched for it, though its waiting release is
+    the one that would let the parent move."""
+    company, team = RELEASE, {**RELEASE, "parent": ("company@corp", "1")}
+    repos, (config_dir, addons_dir) = make_tree(
+        tmp_path, {"company@corp": company, "team@payments": team}
+    )
+    on = {"company@corp": {"auto_update": True}}
+    edit_addons_yaml(config_dir, lambda w: w["addons"].update(on))
+    publish(repos["corp"], "company", version="2.0.0")
+    publish(
+        repos["payments"], "team", version="1.1.0", manifest=child_manifest("company@corp", "2")
+    )
+    before = (config_dir / "addons.lock").read_text()
+    fetched = []
+    real = fetch.fetch
+
+    def spy(addons_dir, name, url, ref):
+        fetched.append(url)
+        return real(addons_dir, name, url, ref)
+
+    monkeypatch.setattr(fetch, "fetch", spy)
+
+    outcomes = update.auto_update(config_dir, addons_dir)
+
+    assert outcomes == {
+        "company@corp": {
+            "outcome": "held",
+            "message": "company@corp 2.0.0 is outside team@payments's range 1 (needs 1.x); run "
+            "kraft admin addon update to move it with its relatives, or wait for a release "
+            "that fits",
+        }
+    }
+    assert (config_dir / "addons.lock").read_text() == before
+    assert fetched == [repos["corp"].as_uri()]
+
+
+@pytest.mark.parametrize(
+    ("team_library", "outcome"),
+    [
+        ({"tasks": {"pci_review": AGENT}}, "held"),
+        ({"tasks": {"mine": AGENT}}, "applied"),
+    ],
+    ids=["descendant-shadows-a-new-name", "descendant-unaffected"],
+)
+def test_a_descendants_reach_holds_its_parents_auto_update(tmp_path, team_library, outcome):
+    """company's release adds a task, a plain addition for company; a child
+    that declares the name now overrides it, and that holds the move for a
+    person though the child's own auto-update is off."""
+    company, team = RELEASE, {**RELEASE, "library": team_library, "parent": ("company@corp", "1")}
+    repos, (config_dir, addons_dir) = make_tree(
+        tmp_path, {"company@corp": company, "team@corp": team}
+    )
+    on = {"company@corp": {"auto_update": True}}
+    edit_addons_yaml(config_dir, lambda w: w["addons"].update(on))
+    library = {"tasks": {**RELEASE["library"]["tasks"], "pci_review": AGENT}}
+    publish(repos["corp"], "company", version="1.1.0", library=library)
+
+    result = update.auto_update(config_dir, addons_dir)["company@corp"]
+
+    assert result["outcome"] == outcome, result
+    if outcome == "held":
+        assert (
+            "team@corp: its task pci_review now overrides company@corp's new task pci_review"
+            in result["message"]
+        ), result
+        assert _versions(config_dir)["company@corp"] == "1.0.0"
+
+
+def test_a_descendant_that_cannot_be_read_holds_its_parents_auto_update(tmp_path):
+    """team's store was changed behind the lock's back, so company's release
+    cannot show what it does to team: the move waits for a person."""
+    team = {**RELEASE, "library": {"tasks": {"mine": AGENT}}, "parent": ("company@corp", "1")}
+    repos, (config_dir, addons_dir) = make_tree(
+        tmp_path, {"company@corp": RELEASE, "team@corp": team}
+    )
+    on = {"company@corp": {"auto_update": True}}
+    edit_addons_yaml(config_dir, lambda w: w["addons"].update(on))
+    mine = next(a for a in load.installed(config_dir, addons_dir) if a.id == "team@corp")
+    ship = mine.root / "chains/ship.yaml"
+    ship.parent.chmod(0o755)
+    ship.parent.joinpath("also.yaml").hardlink_to(ship)
+    library = {"tasks": {**RELEASE["library"]["tasks"], "other": AGENT}}
+    publish(repos["corp"], "company", version="1.1.0", library=library)
+
+    result = update.auto_update(config_dir, addons_dir)["company@corp"]
+
+    assert result["outcome"] == "held", result
+    assert "team@corp: its store does not read" in result["message"], result
+    assert _versions(config_dir)["company@corp"] == "1.0.0"
