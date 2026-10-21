@@ -13,10 +13,11 @@ setup:
 
 # superpowers and impeccable, for every agent this repo is worked on with.
 #
-# Claude Code: .claude/settings.json turns both plugins on, but committing
-# `enabledPlugins` does not download a plugin from an outside source, so each
-# machine installs them once, into ~/.claude, which every checkout and worktree
-# shares.
+# Claude Code: also ponytail, techdocs-authoring, and the engineering and
+# design plugins from anthropics/knowledge-work-plugins. .claude/settings.json
+# turns them all on, but committing `enabledPlugins` does not download a plugin
+# from an outside source, so each machine installs them once, into ~/.claude,
+# which every checkout and worktree shares.
 #
 # Every other agent Kraft runs (Codex, Cursor, Gemini CLI, OpenCode, Amp,
 # Antigravity) and GitHub Copilot reads skills from .agents/skills/. The
@@ -29,11 +30,12 @@ setup:
 # refresh: `claude plugin update <id>` and `npx skills update -p`.
 #
 # superpowers is off in Kraft workers (its skills ask a person questions, and
-# push or merge, which a worker never does). For Claude Code the hook
-# .claude/hooks/kraft-worker-superpowers.sh does that. For the other agents, a
+# push or merge, which a worker never does), and so is ponytail (its own coding
+# mode, where a worker follows Kraft's instructions). For Claude Code the hook
+# .claude/hooks/kraft-worker-plugins.sh does that. For the other agents, a
 # setup Kraft runs ($KRAFT_DAEMON_PID is set in everything the daemon starts)
 # copies only impeccable into the worktree's .agents/skills/.
-[doc("Install superpowers and impeccable for Claude Code and every other agent")]
+[doc("Install superpowers, impeccable and the other Claude Code plugins for every agent")]
 setup-plugins:
     #!/usr/bin/env bash
     set -uo pipefail
@@ -43,12 +45,34 @@ setup-plugins:
     limit() {
         if command -v timeout >/dev/null; then timeout 300 "$@"; else "$@"; fi
     }
+    # What .claude/settings.json turns on, read from it so the list lives in one
+    # place: `plugin@marketplace` ids, and `name=owner/repo` marketplaces.
+    # claude-plugins-official is built in, so settings never lists it.
+    settings() {
+        python3 -I -c 'import json, sys
+    d = json.load(open(".claude/settings.json"))
+    if sys.argv[1] == "plugins":
+        print(" ".join(k for k, on in d.get("enabledPlugins", {}).items() if on is True))
+    else:
+        known = {"claude-plugins-official": {"source": {"repo": "anthropics/claude-plugins-official"}}}
+        known.update(d.get("extraKnownMarketplaces", {}))
+        print(" ".join(n + "=" + m["source"]["repo"] for n, m in known.items()))' "$1"
+    }
+    read -ra claude_plugin_ids <<<"$(settings plugins)"
+    read -ra claude_marketplaces <<<"$(settings marketplaces)"
+    marketplaces="${CLAUDE_CODE_PLUGIN_CACHE_DIR:-$HOME/.claude/plugins}/known_marketplaces.json"
+    # Only what is missing: Kraft runs this on every dispatch, and each call is
+    # a download with a time limit.
     claude_plugins() {
-        local failed=0
-        limit claude plugin marketplace add anthropics/claude-plugins-official >/dev/null || failed=1
-        limit claude plugin marketplace add pbakaus/impeccable >/dev/null || failed=1
-        limit claude plugin install superpowers@claude-plugins-official --scope project || failed=1
-        limit claude plugin install impeccable@impeccable --scope project || failed=1
+        local failed=0 marketplace plugin
+        for marketplace in "${claude_marketplaces[@]}"; do
+            grep -qs "\"${marketplace%%=*}\"" "$marketplaces" && continue
+            limit claude plugin marketplace add "${marketplace#*=}" >/dev/null || failed=1
+        done
+        for plugin in "${claude_plugin_ids[@]}"; do
+            grep -qs "\"$plugin\"" "$installed" && continue
+            limit claude plugin install "$plugin" --scope project || failed=1
+        done
         return $failed
     }
     sources=(obra/superpowers pbakaus/impeccable)
@@ -66,6 +90,10 @@ setup-plugins:
                 --copy -y >/dev/null || return 1
         done
     }
+    all_installed() {
+        local plugin
+        for plugin in "${claude_plugin_ids[@]}"; do grep -qs "\"$plugin\"" "$installed" || return 1; done
+    }
     all_present() {
         local marker
         for marker in "${markers[@]}"; do [[ -f $marker ]] || return 1; done
@@ -75,8 +103,9 @@ setup-plugins:
     installed="${CLAUDE_CODE_PLUGIN_CACHE_DIR:-$HOME/.claude/plugins}/installed_plugins.json"
     if ! command -v claude >/dev/null; then
         echo "claude not installed; skipping the Claude Code plugins"
-    elif grep -qs '"superpowers@claude-plugins-official"' "$installed" &&
-        grep -qs '"impeccable@impeccable"' "$installed"; then
+    elif [[ ${#claude_plugin_ids[@]} -eq 0 ]]; then
+        echo "warning: could not read the plugins from .claude/settings.json (needs python3); skipping them" >&2
+    elif all_installed; then
         echo "Claude Code plugins already installed"
     elif ! claude_plugins; then
         echo "warning: could not install the Claude Code plugins; run 'just setup-plugins' to retry" >&2
