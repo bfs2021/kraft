@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Coverage for src/kraft/worker/os_seccomp.py: 100%</title>
+    <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
+    <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
+    <script src="coverage_html_cb_15cffcd0.js" defer></script>
+</head>
+<body class="pyfile">
+<header>
+    <div class="content">
+        <h1>
+            <span class="text">Coverage for </span><b>src<span class="sep">/</span>kraft<span class="sep">/</span>worker<span class="sep">/</span>os_seccomp.py</b>:
+            <span class="pc_cov">100%</span>
+        </h1>
+        <aside id="help_panel_wrapper">
+            <input id="help_panel_state" type="checkbox">
+            <label for="help_panel_state">
+                <img id="keyboard_icon" src="keybd_closed_cb_900cfef5.png" alt="Show/hide keyboard shortcuts">
+            </label>
+            <div id="help_panel">
+                <p class="legend">Shortcuts on this page</p>
+                <div class="keyhelp">
+                    <p>
+                        <kbd>r</kbd>
+                        <kbd>m</kbd>
+                        <kbd>x</kbd>
+                        &nbsp; toggle line displays
+                    </p>
+                    <p>
+                        <kbd>j</kbd>
+                        <kbd>k</kbd>
+                        &nbsp; next/prev highlighted chunk
+                    </p>
+                    <p>
+                        <kbd>0</kbd> &nbsp; (zero) top of page
+                    </p>
+                    <p>
+                        <kbd>1</kbd> &nbsp; (one) first highlighted chunk
+                    </p>
+                    <p>
+                        <kbd>[</kbd>
+                        <kbd>]</kbd>
+                        &nbsp; prev/next file
+                    </p>
+                    <p>
+                        <kbd>u</kbd> &nbsp; up to the index
+                    </p>
+                    <p>
+                        <kbd>?</kbd> &nbsp; show/hide this help
+                    </p>
+                </div>
+            </div>
+        </aside>
+        <h2>
+            <span class="text">34 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">34<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
+        </h2>
+        <p class="text">
+            <a id="prevFileLink" class="nav" href="z_f793c2de04763fd3_os_init_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
+            <a id="nextFileLink" class="nav" href="z_f793c2de04763fd3_reattach_py.html">&#xbb; next</a>
+            &nbsp; &nbsp; &nbsp;
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
+            created at 2026-10-21 23:31 +0000
+        </p>
+        <aside class="hidden">
+            <button type="button" class="button_next_chunk" data-shortcut="j"></button>
+            <button type="button" class="button_prev_chunk" data-shortcut="k"></button>
+            <button type="button" class="button_top_of_page" data-shortcut="0"></button>
+            <button type="button" class="button_first_chunk" data-shortcut="1"></button>
+            <button type="button" class="button_prev_file" data-shortcut="["></button>
+            <button type="button" class="button_next_file" data-shortcut="]"></button>
+            <button type="button" class="button_to_index" data-shortcut="u"></button>
+            <button type="button" class="button_show_hide_help" data-shortcut="?"></button>
+        </aside>
+    </div>
+</header>
+<main id="source">
+    <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="str">&quot;&quot;&quot;The os sandbox&#x27;s seccomp filter: classic BPF, stdlib only, nothing of Kraft&#x27;s imported.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t2" href="#t2">2</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">bwrap reads it from a file descriptor (`--seccomp N`). It allows only the host&#x27;s</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">native architecture, answers ENOSYS to any other (a foreign ABI would bypass the</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t"><span class="str">table by its own syscall numbers), and answers EPERM to the denied calls and</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="str">to the `ioctl` requests that type into a terminal.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t"><span class="str">&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="key">from</span> <span class="nam">__future__</span> <span class="key">import</span> <span class="nam">annotations</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t"><span class="key">import</span> <span class="nam">errno</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t"><span class="key">import</span> <span class="nam">platform</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t"><span class="key">import</span> <span class="nam">struct</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t"><span class="com">#: The mount API of Linux 5.2+ (5.12&#x27;s mount_setattr, 6.15&#x27;s open_tree_attr): numbered</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="com">#: alike on both arches.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t"><span class="nam">_NEW_MOUNT_API</span> <span class="op">=</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t">    <span class="str">&quot;open_tree&quot;</span><span class="op">:</span> <span class="num">428</span><span class="op">,</span> <span class="str">&quot;move_mount&quot;</span><span class="op">:</span> <span class="num">429</span><span class="op">,</span> <span class="str">&quot;fsopen&quot;</span><span class="op">:</span> <span class="num">430</span><span class="op">,</span> <span class="str">&quot;fsconfig&quot;</span><span class="op">:</span> <span class="num">431</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t">    <span class="str">&quot;fsmount&quot;</span><span class="op">:</span> <span class="num">432</span><span class="op">,</span> <span class="str">&quot;fspick&quot;</span><span class="op">:</span> <span class="num">433</span><span class="op">,</span> <span class="str">&quot;mount_setattr&quot;</span><span class="op">:</span> <span class="num">442</span><span class="op">,</span> <span class="str">&quot;open_tree_attr&quot;</span><span class="op">:</span> <span class="num">467</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t"><span class="op">}</span>  <span class="com"># fmt: skip</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t"><span class="com"># Kernel syscall numbers: x86_64 from asm/unistd_64.h, aarch64 from the generic table.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t"><span class="nam">DENY</span><span class="op">:</span> <span class="nam">dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">int</span><span class="op">]</span><span class="op">]</span> <span class="op">=</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">    <span class="str">&quot;x86_64&quot;</span><span class="op">:</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t">        <span class="str">&quot;keyctl&quot;</span><span class="op">:</span> <span class="num">250</span><span class="op">,</span> <span class="str">&quot;add_key&quot;</span><span class="op">:</span> <span class="num">248</span><span class="op">,</span> <span class="str">&quot;request_key&quot;</span><span class="op">:</span> <span class="num">249</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t">        <span class="str">&quot;io_uring_setup&quot;</span><span class="op">:</span> <span class="num">425</span><span class="op">,</span> <span class="str">&quot;io_uring_enter&quot;</span><span class="op">:</span> <span class="num">426</span><span class="op">,</span> <span class="str">&quot;io_uring_register&quot;</span><span class="op">:</span> <span class="num">427</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t">        <span class="str">&quot;bpf&quot;</span><span class="op">:</span> <span class="num">321</span><span class="op">,</span> <span class="str">&quot;perf_event_open&quot;</span><span class="op">:</span> <span class="num">298</span><span class="op">,</span> <span class="str">&quot;userfaultfd&quot;</span><span class="op">:</span> <span class="num">323</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t">        <span class="str">&quot;kexec_load&quot;</span><span class="op">:</span> <span class="num">246</span><span class="op">,</span> <span class="str">&quot;kexec_file_load&quot;</span><span class="op">:</span> <span class="num">320</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">        <span class="str">&quot;init_module&quot;</span><span class="op">:</span> <span class="num">175</span><span class="op">,</span> <span class="str">&quot;finit_module&quot;</span><span class="op">:</span> <span class="num">313</span><span class="op">,</span> <span class="str">&quot;delete_module&quot;</span><span class="op">:</span> <span class="num">176</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">        <span class="str">&quot;mount&quot;</span><span class="op">:</span> <span class="num">165</span><span class="op">,</span> <span class="str">&quot;umount2&quot;</span><span class="op">:</span> <span class="num">166</span><span class="op">,</span> <span class="str">&quot;pivot_root&quot;</span><span class="op">:</span> <span class="num">155</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">        <span class="op">**</span><span class="nam">_NEW_MOUNT_API</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">    <span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t">    <span class="str">&quot;aarch64&quot;</span><span class="op">:</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t">        <span class="str">&quot;keyctl&quot;</span><span class="op">:</span> <span class="num">219</span><span class="op">,</span> <span class="str">&quot;add_key&quot;</span><span class="op">:</span> <span class="num">217</span><span class="op">,</span> <span class="str">&quot;request_key&quot;</span><span class="op">:</span> <span class="num">218</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t">        <span class="str">&quot;io_uring_setup&quot;</span><span class="op">:</span> <span class="num">425</span><span class="op">,</span> <span class="str">&quot;io_uring_enter&quot;</span><span class="op">:</span> <span class="num">426</span><span class="op">,</span> <span class="str">&quot;io_uring_register&quot;</span><span class="op">:</span> <span class="num">427</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">        <span class="str">&quot;bpf&quot;</span><span class="op">:</span> <span class="num">280</span><span class="op">,</span> <span class="str">&quot;perf_event_open&quot;</span><span class="op">:</span> <span class="num">241</span><span class="op">,</span> <span class="str">&quot;userfaultfd&quot;</span><span class="op">:</span> <span class="num">282</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t">        <span class="str">&quot;kexec_load&quot;</span><span class="op">:</span> <span class="num">104</span><span class="op">,</span> <span class="str">&quot;kexec_file_load&quot;</span><span class="op">:</span> <span class="num">294</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t">        <span class="str">&quot;init_module&quot;</span><span class="op">:</span> <span class="num">105</span><span class="op">,</span> <span class="str">&quot;finit_module&quot;</span><span class="op">:</span> <span class="num">273</span><span class="op">,</span> <span class="str">&quot;delete_module&quot;</span><span class="op">:</span> <span class="num">106</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t">        <span class="str">&quot;mount&quot;</span><span class="op">:</span> <span class="num">40</span><span class="op">,</span> <span class="str">&quot;umount2&quot;</span><span class="op">:</span> <span class="num">39</span><span class="op">,</span> <span class="str">&quot;pivot_root&quot;</span><span class="op">:</span> <span class="num">41</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">        <span class="op">**</span><span class="nam">_NEW_MOUNT_API</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t">    <span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t41" href="#t41">41</a></span><span class="t"><span class="op">}</span>  <span class="com"># fmt: skip</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t42" href="#t42">42</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t43" href="#t43">43</a></span><span class="t"><span class="com">#: `ioctl`, allowed but for the requests that push input into a terminal</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t44" href="#t44">44</a></span><span class="t"><span class="com">#: (CVE-2017-5226): TIOCSTI fakes typed input, TIOCLINUX can paste the selection.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t45" href="#t45">45</a></span><span class="t"><span class="nam">IOCTL</span> <span class="op">=</span> <span class="op">{</span><span class="str">&quot;x86_64&quot;</span><span class="op">:</span> <span class="num">16</span><span class="op">,</span> <span class="str">&quot;aarch64&quot;</span><span class="op">:</span> <span class="num">29</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t46" href="#t46">46</a></span><span class="t"><span class="nam">DENIED_IOCTLS</span> <span class="op">=</span> <span class="op">{</span><span class="str">&quot;TIOCSTI&quot;</span><span class="op">:</span> <span class="num">0x5412</span><span class="op">,</span> <span class="str">&quot;TIOCLINUX&quot;</span><span class="op">:</span> <span class="num">0x541C</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t47" href="#t47">47</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t48" href="#t48">48</a></span><span class="t"><span class="nam">_AUDIT_ARCH</span> <span class="op">=</span> <span class="op">{</span><span class="str">&quot;x86_64&quot;</span><span class="op">:</span> <span class="num">0xC000003E</span><span class="op">,</span> <span class="str">&quot;aarch64&quot;</span><span class="op">:</span> <span class="num">0xC00000B7</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t49" href="#t49">49</a></span><span class="t"><span class="nam">_X32_BIT</span> <span class="op">=</span> <span class="num">0x40000000</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t50" href="#t50">50</a></span><span class="t"><span class="nam">_RET_ERRNO</span> <span class="op">=</span> <span class="num">0x00050000</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t51" href="#t51">51</a></span><span class="t"><span class="nam">_RET_ALLOW</span> <span class="op">=</span> <span class="num">0x7FFF0000</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t52" href="#t52">52</a></span><span class="t"><span class="nam">_LD_ARCH</span> <span class="op">=</span> <span class="op">(</span><span class="num">0x20</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">4</span><span class="op">)</span>  <span class="com"># BPF_LD|W|ABS of seccomp_data.arch</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t53" href="#t53">53</a></span><span class="t"><span class="nam">_LD_NR</span> <span class="op">=</span> <span class="op">(</span><span class="num">0x20</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">0</span><span class="op">)</span>  <span class="com"># ... of seccomp_data.nr</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t54" href="#t54">54</a></span><span class="t"><span class="com"># ... of the low word of seccomp_data.args[1], both arches being little-endian: the</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t55" href="#t55">55</a></span><span class="t"><span class="com"># kernel reads an ioctl&#x27;s request as an unsigned int, so the high word is ignored.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t56" href="#t56">56</a></span><span class="t"><span class="nam">_LD_ARG1_LO</span> <span class="op">=</span> <span class="op">(</span><span class="num">0x20</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">24</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t57" href="#t57">57</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t59" href="#t59">59</a></span><span class="t"><span class="key">def</span> <span class="nam">machine</span><span class="op">(</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t60" href="#t60">60</a></span><span class="t">    <span class="str">&quot;&quot;&quot;The filter&#x27;s key for this host, from `platform.machine()`.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t61" href="#t61">61</a></span><span class="t">    <span class="key">return</span> <span class="op">{</span><span class="str">&quot;amd64&quot;</span><span class="op">:</span> <span class="str">&quot;x86_64&quot;</span><span class="op">,</span> <span class="str">&quot;arm64&quot;</span><span class="op">:</span> <span class="str">&quot;aarch64&quot;</span><span class="op">}</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">m</span> <span class="op">:=</span> <span class="nam">platform</span><span class="op">.</span><span class="nam">machine</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">lower</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="nam">m</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t62" href="#t62">62</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t63" href="#t63">63</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t64" href="#t64">64</a></span><span class="t"><span class="key">def</span> <span class="nam">build</span><span class="op">(</span><span class="nam">arch</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">bytes</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t">    <span class="str">&quot;&quot;&quot;The filter as little-endian `struct sock_filter` entries (8 bytes each).&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t66" href="#t66">66</a></span><span class="t">    <span class="key">if</span> <span class="nam">arch</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">DENY</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="fst">f&quot;</span><span class="fst">no seccomp filter for architecture </span><span class="op">{</span><span class="nam">arch</span><span class="op">!</span><span class="nam">r</span><span class="op">}</span><span class="fst">&quot;</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t">    <span class="nam">enosys</span><span class="op">,</span> <span class="nam">eperm</span> <span class="op">=</span> <span class="nam">_RET_ERRNO</span> <span class="op">|</span> <span class="nam">errno</span><span class="op">.</span><span class="nam">ENOSYS</span><span class="op">,</span> <span class="nam">_RET_ERRNO</span> <span class="op">|</span> <span class="nam">errno</span><span class="op">.</span><span class="nam">EPERM</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t">    <span class="nam">prog</span> <span class="op">=</span> <span class="op">[</span><span class="nam">_LD_ARCH</span><span class="op">,</span> <span class="op">(</span><span class="num">0x15</span><span class="op">,</span> <span class="num">1</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="nam">_AUDIT_ARCH</span><span class="op">[</span><span class="nam">arch</span><span class="op">]</span><span class="op">)</span><span class="op">,</span> <span class="op">(</span><span class="num">0x06</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="nam">enosys</span><span class="op">)</span><span class="op">,</span> <span class="nam">_LD_NR</span><span class="op">]</span>  <span class="com"># JEQ, RET</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t">    <span class="key">if</span> <span class="nam">arch</span> <span class="op">==</span> <span class="str">&quot;x86_64&quot;</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t">        <span class="nam">prog</span> <span class="op">+=</span> <span class="op">[</span><span class="op">(</span><span class="num">0x35</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">1</span><span class="op">,</span> <span class="nam">_X32_BIT</span><span class="op">)</span><span class="op">,</span> <span class="op">(</span><span class="num">0x06</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="nam">enosys</span><span class="op">)</span><span class="op">]</span>  <span class="com"># JGE: x32 numbers</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t">    <span class="nam">nrs</span> <span class="op">=</span> <span class="nam">sorted</span><span class="op">(</span><span class="nam">DENY</span><span class="op">[</span><span class="nam">arch</span><span class="op">]</span><span class="op">.</span><span class="nam">values</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t">    <span class="nam">cmds</span> <span class="op">=</span> <span class="nam">sorted</span><span class="op">(</span><span class="nam">DENIED_IOCTLS</span><span class="op">.</span><span class="nam">values</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">    <span class="com"># JEQ ioctl: into its request checks, else past them (the checks and their ALLOW).</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">    <span class="nam">prog</span> <span class="op">+=</span> <span class="op">[</span><span class="op">(</span><span class="num">0x15</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="nam">len</span><span class="op">(</span><span class="nam">cmds</span><span class="op">)</span> <span class="op">+</span> <span class="num">2</span><span class="op">,</span> <span class="nam">IOCTL</span><span class="op">[</span><span class="nam">arch</span><span class="op">]</span><span class="op">)</span><span class="op">,</span> <span class="nam">_LD_ARG1_LO</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t">    <span class="key">for</span> <span class="nam">i</span><span class="op">,</span> <span class="nam">cmd</span> <span class="key">in</span> <span class="nam">enumerate</span><span class="op">(</span><span class="nam">cmds</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t77" href="#t77">77</a></span><span class="t">        <span class="com"># A hit jumps over the other requests, the ALLOW, the denied numbers and theirs.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t">        <span class="nam">prog</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="op">(</span><span class="num">0x15</span><span class="op">,</span> <span class="nam">len</span><span class="op">(</span><span class="nam">cmds</span><span class="op">)</span> <span class="op">-</span> <span class="nam">i</span> <span class="op">+</span> <span class="nam">len</span><span class="op">(</span><span class="nam">nrs</span><span class="op">)</span> <span class="op">+</span> <span class="num">1</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="nam">cmd</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t">    <span class="nam">prog</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="op">(</span><span class="num">0x06</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="nam">_RET_ALLOW</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t80" href="#t80">80</a></span><span class="t">    <span class="key">for</span> <span class="nam">i</span><span class="op">,</span> <span class="nam">nr</span> <span class="key">in</span> <span class="nam">enumerate</span><span class="op">(</span><span class="nam">nrs</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t">        <span class="nam">prog</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="op">(</span><span class="num">0x15</span><span class="op">,</span> <span class="nam">len</span><span class="op">(</span><span class="nam">nrs</span><span class="op">)</span> <span class="op">-</span> <span class="nam">i</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="nam">nr</span><span class="op">)</span><span class="op">)</span>  <span class="com"># JEQ: hit jumps to the EPERM return</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t">    <span class="nam">prog</span> <span class="op">+=</span> <span class="op">[</span><span class="op">(</span><span class="num">0x06</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="nam">_RET_ALLOW</span><span class="op">)</span><span class="op">,</span> <span class="op">(</span><span class="num">0x06</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="num">0</span><span class="op">,</span> <span class="nam">eperm</span><span class="op">)</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t83" href="#t83">83</a></span><span class="t">    <span class="key">return</span> <span class="str">b&quot;&quot;</span><span class="op">.</span><span class="nam">join</span><span class="op">(</span><span class="nam">struct</span><span class="op">.</span><span class="nam">pack</span><span class="op">(</span><span class="str">&quot;&lt;HBBI&quot;</span><span class="op">,</span> <span class="op">*</span><span class="nam">insn</span><span class="op">)</span> <span class="key">for</span> <span class="nam">insn</span> <span class="key">in</span> <span class="nam">prog</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+</main>
+<footer>
+    <div class="content">
+        <p>
+            <a class="nav" href="z_f793c2de04763fd3_os_init_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
+            <a class="nav" href="z_f793c2de04763fd3_reattach_py.html">&#xbb; next</a>
+            &nbsp; &nbsp; &nbsp;
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
+            created at 2026-10-21 23:31 +0000
+        </p>
+    </div>
+</footer>
+</body>
+</html>
