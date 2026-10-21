@@ -1,0 +1,2 @@
+{"id": "kd-b4e6e865", "at": "2026-10-21T17:08:47Z", "slice": null, "question": "Mode for this run", "answer": "we'll use feature branch", "why": "set by the user", "held": false, "answered_by": "controller", "answered_at": "2026-10-21T17:08:47Z", "reported": false, "seq": 1}
+{"id": "kd-70b35a0e", "at": "2026-10-21T17:08:48Z", "slice": null, "question": "Where children run", "answer": "use cloud sessions", "why": "set by the user", "held": false, "answered_by": "controller", "answered_at": "2026-10-21T17:08:48Z", "reported": false, "seq": 1}
