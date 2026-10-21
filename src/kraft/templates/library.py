@@ -178,6 +178,18 @@ class Namespace(StrEnum):
 #: composable component.
 _EXTENDABLE = (Namespace.TASKS, Namespace.STEPS, Namespace.NODES)
 
+#: The namespace of what an authored key holds, where its place says it:
+#: `TemplateLibrary.flattened` reads a nested `extends` in it.
+_PLACED = {
+    "nodes": Namespace.NODES,
+    "node": Namespace.NODES,
+    "steps": Namespace.STEPS,
+    "tasks": Namespace.TASKS,
+    JUDGE_SEGMENT: Namespace.TASKS,
+    "escalation": Namespace.TASKS,
+    AUTO_REVIEW_SEGMENT: Namespace.TASKS,
+}
+
 
 @dataclass(frozen=True)
 class ComponentSource:
@@ -785,6 +797,68 @@ class TemplateLibrary:
         """`data`, an entry as authored, with every name in a hidden layer
         written as `public_name` writes it: what a listing shows."""
         return inherit.public(data, self._layers) if self._layers else data
+
+    def flattened(self, data: object, namespace: Namespace | None = None) -> object:
+        """`data`, an entry as authored (`namespace`'s, else found by its
+        place), with every component that `extends` a hidden layer merged
+        onto that layer's entry, itself flattened, as `extends` merges it: what
+        a copy into the local library writes (`an-addon-copy-resolves-locally`).
+        Every other reference is kept, so one late-bound to a child add-on
+        names the child's own entry and the copy runs what the child serves.
+        A component that reaches a hidden layer is merged onto its whole
+        `extends` line as authored, then what it holds is flattened: the
+        resolver's order (`_Resolution._node` merges a node's line before it
+        expands each slot's task), so the copy runs exactly what it does. An
+        `extends` that names nothing stays, written by its public name: no
+        hidden level's name is returned. Raises `TemplateLibraryError` for an
+        entry that changes its parent's kind. Unchanged for a library with no
+        child add-on."""
+        if not self._layers:
+            return data
+        if isinstance(data, list):
+            return [self.flattened(item, namespace) for item in data]
+        if not isinstance(data, Mapping):
+            return data
+        name = data.get("extends")
+        if isinstance(name, str) and inherit.is_layer(name):
+            data = self._merged_line(data, namespace, seen=())
+        return self._flattened_inside(data)
+
+    def _flattened_inside(self, data: Mapping[str, object]) -> dict[str, object]:
+        """`data` with what each of its keys holds `flattened`."""
+        return {key: self.flattened(value, _PLACED.get(key)) for key, value in data.items()}
+
+    def _merged_line(
+        self, own: Mapping[str, object], namespace: Namespace | None, *, seen: tuple[str, ...]
+    ) -> dict[str, object]:
+        """`own`, as authored, merged onto its `extends` parent, itself merged
+        onto its own, down to the root, as `_Resolution._merge_chain` merges
+        them: whole lines first, so a nested slot is merged before what it
+        `extends` is. A parent that is missing, of no namespace or in a cycle
+        stays its `extends`, by its public name. Raises
+        `TemplateLibraryError` where an entry changes its parent's `kind`
+        (`extends-cannot-change-kind`), naming the parent publicly."""
+        name = own.get("extends")
+        if not isinstance(name, str):
+            return dict(own)
+        where = namespace or self.namespace_of(name)
+        parent = None if where is None or name in seen else self.component(where, name)
+        if parent is None:
+            return {**own, "extends": self.public_name(name)}
+        base = self._merged_line(parent.data, where, seen=(*seen, name))
+        child = {key: value for key, value in own.items() if key != "extends"}
+        inherited, declared = base.get("kind"), child.get("kind")
+        if inherited is not None and declared is not None and inherited != declared:
+            raise TemplateLibraryError(
+                f"extends {self.public_name(name)!r} and cannot change kind "
+                f"{str(inherited)!r} to {str(declared)!r}"
+            )
+        if where is Namespace.TASKS:
+            displaced = displaced_route(child)
+            base = {key: value for key, value in base.items() if key not in displaced}
+        merged = _merge(base, child)
+        assert isinstance(merged, dict)
+        return merged
 
     def _humanize(self, text: str) -> str:
         return inherit.humanize(text, self._layers) if self._layers else text

@@ -28,6 +28,11 @@ def chain(extends: str) -> dict:
     return {"nodes": [{"id": "n", "kind": "exec", "tasks": [{"id": "t", "extends": extends}]}]}
 
 
+def exec_node(id: str, task: str, extends: str) -> dict:
+    """Execution node `id` with one task, `task`, extending `extends`."""
+    return {"id": id, "kind": "exec", "tasks": [{"id": task, "extends": extends}]}
+
+
 def task_node(extends: str) -> dict:
     """A chain revision's added node `x`: one task extending `extends`."""
     return {"id": "x", "tasks": [{"id": "t", "extends": extends}]}
@@ -97,13 +102,15 @@ def example_tree(
     dept: dict | None = None,
     team: dict | None = None,
     alias: str | None = None,
+    team_alias: str | None = None,
 ) -> tuple[InstalledAddon, InstalledAddon, InstalledAddon]:
     """`(company, platform_dept, team_payments)`, root first: three stores that
     each hold a `.kraft/addon.json` naming their parent with range `"1"`, and
     the `InstalledAddon`s that say so. Each keyword is a dict of `installed`
     keyword arguments laid over the defaults; `alias` is platform-dept's
-    namespace. Company ships a task `security_scan` that names the skill
-    `deploy-review` ("company method") and the profiles `slow` and `fast`."""
+    namespace and `team_alias` team-payments'. Company ships a task
+    `security_scan` that names the skill `deploy-review` ("company method")
+    and the profiles `slow` and `fast`."""
     given = {"company": company, "platform-dept": dept, "team-payments": team}
     out: list[InstalledAddon] = []
     parent: InstalledAddon | None = None
@@ -115,7 +122,8 @@ def example_tree(
             **(wanted.get("files") or {}),
             manifest.ADDON_JSON: json.dumps(declared),
         }
-        made = installed(tmp_path, name, alias=alias if name == "platform-dept" else None, **wanted)
+        aliased = {"platform-dept": alias, "team-payments": team_alias}.get(name)
+        made = installed(tmp_path, name, alias=aliased, **wanted)
         if parent:
             made = replace(made, parent=parent.id, parent_range="1")
         out.append(made)
@@ -481,16 +489,18 @@ def inherited_tree(
     dept: dict | None = None,
     team: dict | None = None,
     dept_alias: str | None = None,
+    team_alias: str | None = None,
 ) -> tuple[InstalledAddon, InstalledAddon, InstalledAddon]:
     """`example_tree` with `COMPANY`, `DEPT` and `TEAM` as the default specs,
     for the checks that need their chains, steering and overrides; a keyword
-    replaces one, and `dept_alias` is the dept's namespace."""
+    replaces one; `dept_alias` is the dept's namespace and `team_alias` the team's."""
     return example_tree(
         tmp_path,
         company=company or COMPANY,
         dept=dept or DEPT,
         team=team or TEAM,
         alias=dept_alias,
+        team_alias=team_alias,
     )
 
 
@@ -508,10 +518,11 @@ def repo_library_child(
     )
 
 
-def load_tree(client, tmp_path: Path, **specs) -> None:
+def load_tree(client, tmp_path: Path, *, aliases: dict[str, str] | None = None, **specs) -> Path:
     """`tree_collection` of `COMPANY`, `DEPT` and `TEAM` (`specs` replaces one
     by `company`, `dept` or `team`) installed into a running test server,
-    parents first, and loaded."""
+    parents first, and loaded. `aliases` maps an add-on's name to the
+    namespace it is installed under. Returns the collection, for `publish`."""
     from kraft.api import deps
 
     st = client.app.state
@@ -519,8 +530,11 @@ def load_tree(client, tmp_path: Path, **specs) -> None:
         tmp_path, **{"company": COMPANY, "dept": DEPT, "team": TEAM, **specs}
     )
     for addon_id in TREE:
-        install(st.templates_dir, st.run_dirs.addons, collection, addon_id.split("@")[0])
+        name = addon_id.split("@")[0]
+        alias = (aliases or {}).get(name)
+        install(st.templates_dir, st.run_dirs.addons, collection, name, alias=alias)
     deps._reload_templates(st)
+    return collection
 
 
 def install_release(
