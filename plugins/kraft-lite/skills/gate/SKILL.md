@@ -14,8 +14,8 @@ the node's `status` is `blocked`; otherwise stop and invoke `kraft-lite:next`, b
 `approve` closes whatever node is current, hooks unrun.
 
 Then show the human what the gate is actually about - the spec, the plan, the diff,
-the findings. A gate answered without the artefact in front of the person is a gate
-that has stopped meaning anything.
+the findings, the slicing proposal. A gate answered without the artefact in front of
+the person is a gate that has stopped meaning anything.
 
 A good presentation names the artefact, says where it lives, and puts the one question
 the gate asks, for example: "`plan_approval`: the plan is `docs/plan.md` (read it, or I
@@ -30,6 +30,22 @@ an earlier "just do it", is not an answer.
     python3 "$CLAUDE_PLUGIN_ROOT/kl.py" approve --chain-id <id>
     python3 "$CLAUDE_PLUGIN_ROOT/kl.py" reject --note "<their reason>" --chain-id <id>
 
+At `chain_finalized`, `state`'s `sliced` and the proposal file say which
+command records the answer:
+
+- `sliced` null and `.kraft-lite/proposals/<chain-id>.json` exists: the proposal
+  is this gate's artefact, the one section 1 presents. An approval carries it:
+
+      python3 "$CLAUDE_PLUGIN_ROOT/kl.py" approve --slices .kraft-lite/proposals/<chain-id>.json --chain-id <id>
+
+  A plain `approve` here leaves the chain unsliced. If it refuses, naming
+  nodes or a gate the chain lacks, tell the human and ask whether to approve
+  unsliced.
+- `sliced` null and no proposal file: a plain `approve`.
+- A rejection: also `rm .kraft-lite/proposals/<chain-id>.json`, so it cannot be
+  approved later. No slices exist yet; the proposal is redrawn when the node
+  reopens.
+
 A plain reject reopens the node being gated. That is right for a gate on the node
 that made the artefact - a rejected spec re-runs the spec node. It is wrong for a
 gate on work an earlier node produced: rejecting `human_review_approval` would
@@ -41,6 +57,18 @@ something built further back, name where it goes:
 That reopens that node and every node after it, so the redone work is verified
 again on the way back rather than skipped. An unknown `<node>` makes the verb list
 the chain's nodes.
+
+In a sliced run (`sliced` not null), where it lands decides the slices' fate:
+
+- `chain_review` or earlier: the plan or its slicing is redone, so the rewind
+  retires every slice. Archive their children. `slices` then lists none, and the
+  chain is sliced again, from a new proposal, at `chain_review`.
+- `implementation`, to redo some slices: reopen each slice to redo first,
+  `python3 "$CLAUDE_PLUGIN_ROOT/kl.py" slice-set --slice <key> --status running --chain-id <id>`,
+  then rewind. With every slice still done the rewind is refused, as
+  `implementation` would close at once. `kraft-lite:run-slices` reopens their
+  children.
+- Later: the slices stay as they are.
 
 `--chain-id` is what stops an answer landing on the wrong chain, and with two
 unfinished chains in the directory the verb refuses to guess. `--note` is

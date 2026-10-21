@@ -1,0 +1,271 @@
+[
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "The plan is approved and it's big. Split it across sessions and run it - I want it moving before lunch.",
+    "setup": "A cloud Claude Code session on its own branch claude/ledger-export-x1 in repo acme/ledger. Kraft Lite feature chain kl-7f3a91c2 is at node chain_review and its bound on.chain.review_ready hook has just run; the next gate is chain_finalized. `kl.py settings` gives mode feature and the default rights. The plan has six tasks and no `## Slices` section: Task 1 a row model; Task 2 a CSV writer and Task 3 a JSON writer, both built on Task 1; Task 4 an `export` command wiring both writers; Task 5 an import validator that needs nothing else; Task 6 a docs page. Tasks 2, 3 and 5 each need a sample-ledger test fixture in tests/support/samples.py, which does not exist yet. The repo's CLAUDE.md names a branch prefix, a setup command and a scoped test command.",
+    "expected_behavior": [
+      "Proposes slices that name each slice's tasks, what each comes after, and which run in parallel (Task 1 before Tasks 2-4; Task 5 able to run beside them)",
+      "Gives tests/support/samples.py one owning slice, and tells the other slices to wait for it or use it from the owner's branch",
+      "States the mode from settings, a feature branch, and this session's own branch as the state branch",
+      "Writes the proposal to .kraft-lite/proposals/kl-7f3a91c2.json in the shape `approve --slices` reads",
+      "Presents the proposal with the chain_finalized gate and waits for the user's answer; does not approve it on the user's behalf",
+      "Names `kl.py approve --slices .kraft-lite/proposals/kl-7f3a91c2.json --chain-id kl-7f3a91c2` as the way the answer is recorded",
+      "Before any child starts: confirms it can start, message and archive sessions, gets one up-front approval for pushing the feature branch, smoke-tests setup and the scoped test command once, and checks the user has finished giving instructions",
+      "Creates no child session before the gate is answered"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices",
+      "kraft-lite:status"
+    ],
+    "query": "[Scheduled check-in] Messages from children are waiting. Handle them.",
+    "setup": "The cloud controller session for chain kl-7f3a91c2, sliced in feature mode: feature branch feat/ledger-export, state branch claude/ledger-export-x1. Slice a is merged; slice b runs in child session session_01Bbb on branch ledger/b-writers; slice c runs in child session session_01Ccc on branch ledger/c-validator. Default rights. The user's last message, three hours ago: 'Off for the rest of the day. Keep things moving, don't block on me.' Two child messages have arrived. From session_01Bbb: 'The plan says the writer emits \"a tabular format\": CSV with a header row, or without? Also, CONTRIBUTING.md wants UI screenshots on a separate branch ledger/b-shots, and the proxy refused my push to it (push to branch not allowed for this session). Can you authorize it so I can finish?' From session_01Ccc: 'Task 5 removes legacy storage. I am writing a migration that drops the legacy_rows table, production data included. Proceeding unless you object.'",
+    "expected_behavior": [
+      "Decides the header-row question itself, tells child b, and records it with `kl.py decide --question ... --answer ... --why ... --slice b`",
+      "Does not authorize the ledger/b-shots push and does not tell the child it is authorized; tells the user to open session_01Bbb and gives the exact words to type there",
+      "Holds the drop-table question for the user with `kl.py decide --held ... --slice c` and tells child c not to drop the table yet",
+      "Tells both children to keep working on whatever does not depend on the pending answer",
+      "Does not treat 'don't block on me', the user's silence, or the absence of a reply as an answer to the push or the drop",
+      "Exports the state with `kl.py export --to` into the state branch's checkout, commits and pushes",
+      "Keeps a scheduled check-in armed while children run",
+      "Leads its report with the held question, then the decision it made, then what it needs from the user"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "You were restarted. Pick the slices run back up.",
+    "setup": "A fresh cloud container: the controller session (own branch claude/ledger-export-x1, the run's state branch) was reclaimed while idle and came back as a fresh clone. `.kraft-lite/` holds only registry.yaml, and `kl.py chains` prints []. The last state pushed to origin/claude/ledger-export-x1 records slice a merged, slice b running as session_01Bbb on ledger/b-writers, slice c running as session_01Ccc on ledger/c-validator, and slice d waiting after b and c. The earlier conversation was compacted and its details are gone.",
+    "expected_behavior": [
+      "Fetches the state branch and runs `kl.py import --from <its export>` before any other kl.py write and before creating any session",
+      "Does not run `kl.py start` or begin a new chain because `chains` is empty",
+      "Runs `kl.py slices` and reconciles b and c against the sessions that exist (by their recorded session ids, or by a title carrying the chain id and the slice key) before creating anything",
+      "Creates no second child for b or c",
+      "Reads each running child's status summary and its branch (git fetch, git log), not its full transcript",
+      "Arms a scheduled check-in while b and c run",
+      "Does not start slice d, which still waits on b and c"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "The plan is approved. Slice this; each slice gets its own PR to main.",
+    "setup": "A cloud Claude Code session on its own branch claude/ledger-export-x1 in repo acme/ledger. Kraft Lite feature chain kl-7f3a91c2 is at node chain_review and its bound on.chain.review_ready hook has just run; the next gate is chain_finalized. There is no .kraft-lite/slices.json, so `kl.py settings` prints mode feature and the default rights. The plan has a `## Slices` section: slice 1 Tasks 1-3, slice 2 Task 4 after slice 1, slice 3 Tasks 5-6. The repo's base branch is main; its CLAUDE.md names the branch prefix `acme/`.",
+    "expected_behavior": [
+      "Takes the mode for this run from the user's words (main), not from `kl.py settings` (feature)",
+      "Writes \"mode\": \"main\" in .kraft-lite/proposals/kl-7f3a91c2.json",
+      "Logs the user's choice with `kl.py decide --question \"Mode for this run\" --answer \"<their words>\" --why \"set by the user\"` before ending its turn at the gate",
+      "Opens the chain_finalized gate and ends its turn there, running no approve, slice-set or child start"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "Merge slice a and carry on.",
+    "setup": "The cloud controller session for chain kl-7f3a91c2 'Ledger export' in repo acme/ledger (base branch main), on its own branch claude/ledger-export-x1, which is the run's state branch and its checkout. `$CLAUDE_PLUGIN_ROOT` is set and the kraft-lite skills are installed; the claude-code-remote tools are loaded. Sliced in feature mode, feature branch feat/ledger-export. Slices: a 'Row model' (in_review; child session_01Aaa on ledger/a-rows); b 'Writers' (after a; running as session_01Bbb on ledger/b-writers, started early from a's branch: the decisions log has 'Start b early?' -> 'Forked from ledger/a-rows at 7d3e2b1'); c 'Importer' (after b; running as session_01Ccc on ledger/c-importer, started early from b's branch: 'Start c early?' -> 'Forked from ledger/b-writers at 2be4f90'); d 'Validator' (no dependency; running as session_01Ddd on ledger/d-validator, started from feat/ledger-export at 4c2d9e1). The repo squash-merges. You reviewed slice a's PR #51 at head 5aa01c2 and approved it; CI is green at that head, which has not moved.",
+    "expected_behavior": [
+      "Squash-merges a's PR into feat/ledger-export at the reviewed head 5aa01c2 and records `slice-set --slice a --status merged`",
+      "Tells child b (cut from a's branch) and child d (cut from the feature branch) to rebase onto the feature branch",
+      "Does not tell child c to rebase: c was cut from b's branch and b is not merged, so c rebases only when b merges",
+      "Archives a's child and exports state"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "Your review of slice a's PR #61 passed: nothing to fix, and CI is green at head 5aa01c2, the head you reviewed. Carry on with the run.",
+    "setup": "The cloud controller session for chain kl-7f3a91c2 'Ledger export' in repo acme/ledger (base branch main), on its own branch claude/ledger-export-x1, which is the run's state branch and its checkout. `$CLAUDE_PLUGIN_ROOT` is set and the kraft-lite skills are installed; the claude-code-remote tools are loaded. Sliced in main mode, as the user asked for this run ('each slice gets its own PR to main'); `slices` reports mode main and feature_branch null. Slices: a 'Row model' (task 1; in_review; child session_01Aaa on ledger/a-rows, PR #61 into main), b 'Writers' (tasks 2-4, after a; waiting), c 'Validator' (task 5, no dependency; running as session_01Ccc on ledger/c-validator, PR into main). The repo squash-merges. Setup and the scoped tests were smoke-tested at the start, and the user said go. After `slice-set --slice a --status ready_to_merge`, `slices` prints ready: [] and early: [\"b\"].",
+    "expected_behavior": [
+      "Does not merge a's PR; reports the verdict to the user, who merges it, and runs `slice-set --slice a --status ready_to_merge`",
+      "Then starts slice b, which `slices` now lists in `early`, without waiting for the user to merge a, and logs the early start with `kl.py decide --slice b`",
+      "Starts b from a's branch ledger/a-rows: `slice-set --slice b --status starting` records `--fork 5aa01c2`, and b's starting instructions say it was cut from a at 5aa01c2",
+      "b's starting instructions say its PR and on.mr.rebase go to main, and that it rebases as build-slice says",
+      "Creates and pushes no feature branch",
+      "Keeps the check-in armed, and says the check-in looks at the slice PRs' merge state for the user's merges"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "You were restarted. Pick the slices run back up, and start whatever is ready.",
+    "setup": "A fresh cloud container: the controller session for chain kl-7f3a91c2 in repo acme/ledger (own branch claude/ledger-export-x1, the run's state branch) was reclaimed while idle and came back as a fresh clone. `.kraft-lite/` holds only registry.yaml, and `kl.py chains` prints []. The claude-code-remote tools are loaded. The last state pushed to origin/claude/ledger-export-x1 records feature mode, feature branch feat/ledger-export; slice a merged; slice b 'Writers' running as session_01Bbb on ledger/b-writers; slice c 'Importer' (after a) waiting, so `slices` lists c in `ready`; slice d 'Validator' waiting after b and c. The earlier conversation was compacted and its details are gone. You have not yet called any session tool. (If you call them: `list_sessions` would show session_01Bbb titled 'kl-7f3a91c2 b: Writers', working, and session_01Ccc titled 'kl-7f3a91c2 c: Importer', working, created 25 minutes ago; origin has ledger/c-importer with two commits.)",
+    "expected_behavior": [
+      "Fetches the state branch and runs `kl.py import --from <its export>` before any other kl.py write and before creating any session",
+      "Before starting anything in `ready`, looks for a session for c by its title and finds session_01Ccc",
+      "Records it with `slice-set --slice c --status running --session session_01Ccc --branch ledger/c-importer` and creates no new child for c (nor for b)",
+      "Does not start slice d",
+      "Exports state after recording c"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "Merge b when its CI passes.",
+    "setup": "The cloud controller session for chain kl-7f3a91c2 'Ledger export' in repo acme/ledger (base branch main), on its own branch claude/ledger-export-x1, which is the run's state branch and its checkout. `$CLAUDE_PLUGIN_ROOT` is set and the kraft-lite skills are installed; the claude-code-remote tools are loaded. Sliced in feature mode, feature branch feat/ledger-export. Slices a and c are merged and their children archived. Slice b's child (session_01Bbb) sent its done message and is idle; you reviewed b's PR #52 at head 3c9e7d0 and approved it, and `slices` shows b in_review. CI at that head is still running (lint passed; unit and e2e pending, usually 25 minutes). No child is running now, and no check-in is armed.",
+    "expected_behavior": [
+      "Does not merge b while CI is pending, and does not wait on it in a blocking loop",
+      "Arms a check-in (a message back into this session later) although no child is running, because slice b is not merged",
+      "The check-in's message is `kraft-lite:run-slices check-in, chain kl-7f3a91c2: read state first.`",
+      "Ends its turn after arming it"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "Your review of slice b's PR #62 passed: nothing to fix, and CI is green at head 8b1c3d4, the head you reviewed. Carry on with the run.",
+    "setup": "The cloud controller session for chain kl-7f3a91c2 'Ledger export' in repo acme/ledger (base branch main), on its own branch claude/ledger-export-x1, which is the run's state branch and its checkout. `$CLAUDE_PLUGIN_ROOT` is set and the kraft-lite skills are installed; the claude-code-remote tools are loaded. Sliced in main mode, as the user asked for this run; `slices` reports mode main and feature_branch null. Slices: a 'Row model' (task 1; ready_to_merge, PR #61 into main from ledger/a-rows at 5aa01c2, cut from main; the user has not merged it), b 'Writers' (tasks 2-3; in_review; child session_01Bbb on ledger/b-writers, PR #62 into main, cut from main), c 'Exporter' (tasks 4-5, after a and b; waiting). The repo squash-merges. Setup and the scoped tests were smoke-tested at the start, and the user said go. After `slice-set --slice b --status ready_to_merge`, `slices` prints ready: [] and early: [].",
+    "expected_behavior": [
+      "Does not merge b's PR; reports the verdict to the user and runs `slice-set --slice b --status ready_to_merge`",
+      "Does not start c now: c comes after two slices (a and b), and a slice after two or more has no early start; it waits for the user's merges",
+      "Says c starts once the user has merged both a and b, from main (`Cut from: target`), when `slices` lists it in `ready`",
+      "Keeps the check-in armed, and says it watches a's and b's PRs for the user's merges"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "The slicing is approved and the checklist in section 2 is ticked. Start slice a now, and show me its starting instructions in full.",
+    "setup": "A cloud Claude Code controller session, id session_01Ctrl00, on its own branch claude/ledger-export-x1 (the run's state branch) in repo acme/ledger, base branch main. Kraft Lite feature chain kl-7f3a91c2 'Ledger export' is sliced in feature mode: feature branch feat/ledger-export, pushed to origin at 4c2d9e1. `kl.py slices` lists a 'Row model' (task 1), b 'Writers' (tasks 2-4, after a), c 'Importer' (task 5); ready [a, c]. The working setup line is `uv sync`; the scoped test command is `uv run pytest <paths>`. Default rights. The harness reference for Claude Code is loaded with the skill.",
+    "expected_behavior": [
+      "Records `kl.py slice-set --slice a --status starting --branch <slice branch> --fork 4c2d9e1 --chain-id kl-7f3a91c2` before creating the session",
+      "Its starting instructions for a give, for the child's own side, the tool to message the controller (`claude-code-remote:send_message` to session_01Ctrl00) and the tool to schedule a message back into its own session (`claude-code-remote:send_later`), fully qualified as the reference names them",
+      "Its starting instructions include the line `Cut from: target at 4c2d9e1`",
+      "Sets an explicit middle-tier model on the child session"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices",
+      "kraft-lite:status"
+    ],
+    "query": "You were restarted. Pick the slices run back up.",
+    "setup": "A fresh cloud container: the controller session (own branch claude/ledger-export-x1, the run's state branch) in repo acme/ledger was reclaimed and came back as a fresh clone. `.kraft-lite/` holds only registry.yaml and `kl.py chains` prints []. The state pushed to origin/claude/ledger-export-x1 records chain kl-7f3a91c2 in feature mode: slice a merged; slice c 'Importer' running as session_01Ccc on ledger/c-importer; slice b 'Writers' waiting after a, so in `ready`. After the import: looking up session_01Ccc finds no such session, and no session's title carries 'kl-7f3a91c2 c'. `git ls-remote origin ledger/c-importer` shows the branch, three commits ahead of feat/ledger-export. No branch exists for b. The earlier conversation was compacted.",
+    "expected_behavior": [
+      "Imports the state branch's export with `kl.py import --from ...` before any other kl.py write and before creating any session",
+      "Does not start a fresh child for c: holds it with `kl.py decide --held --slice c --question ... --why ...` and tells the user what it found (the pushed ledger/c-importer branch, no session)",
+      "Starts b, which is waiting in `ready` with no branch on the remote, through the steps for starting a child",
+      "Exports state after its writes and arms a check-in",
+      "Leads its report with the held question for c"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "The plan is approved. Run it.",
+    "setup": "A Claude Code session in repo acme/ledger. Kraft Lite feature chain kl-7f3a91c2 is at node chain_review and its bound on.chain.review_ready hook has just run; the next gate is chain_finalized. The plan has two tasks and no `## Slices` section: Task 1 adds a `--dry-run` flag to the export command, Task 2 documents it. `.kraft-lite/proposals/kl-7f3a91c2.json` exists from an earlier round that the user rejected.",
+    "expected_behavior": [
+      "Says the plan is small enough for one session and will not be sliced",
+      "Deletes .kraft-lite/proposals/kl-7f3a91c2.json",
+      "Runs `kl.py gate --name chain_finalized --chain-id kl-7f3a91c2` and invokes kraft-lite:gate, so the chain continues as one",
+      "Writes no new proposal, runs no `approve --slices`, and starts no child session"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "Keep the run moving: start whatever can start now.",
+    "setup": "The cloud controller session session_01Ctrl00 for chain kl-7f3a91c2 'Ledger export' in repo acme/ledger (base branch main), on its own branch claude/ledger-export-x1, which is the run's state branch and its checkout. `$CLAUDE_PLUGIN_ROOT` is set and the kraft-lite skills are installed; the claude-code-remote tools are loaded. Sliced in feature mode, feature branch feat/ledger-export. Slices: a 'Row model' (task 1; in_review: you are reviewing its PR #51 from ledger/a-rows at head 5aa01c2, and expect small fixes at most); b 'Writers' (tasks 2-3, after a; waiting); d 'Validator' (task 5, no dependency; merged into feat/ledger-export, its child archived); c 'Exporter' (task 4, after a and d; waiting). Nothing else is running. `kl.py slices` prints ready: [] and early: [\"b\"]. Setup and the scoped tests were smoke-tested at the start, and the user said go. Default rights.",
+    "expected_behavior": [
+      "Starts b now, from a's branch: `kl.py slice-set --slice b --status starting --branch <b's slice branch> --fork 5aa01c2` before creating the session",
+      "Logs the early start with `kl.py decide --slice b --question ... --answer ...` naming ledger/a-rows and 5aa01c2",
+      "Creates b's session from ledger/a-rows (or the commit 5aa01c2), and b's starting instructions carry the line `Cut from: a at 5aa01c2`",
+      "Does not start c: it comes after two slices, a and d, so it has no early start even though d is merged; it waits until a is merged too, when `slices` lists it in `ready`",
+      "Exports state after its writes"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "The slicing is approved and the checklist in section 2 is ticked. Start slice a, show me its starting instructions in full, and tell me what happens next.",
+    "setup": "A local Codex CLI controller session in repo acme/ledger, checked out at /home/dev/ledger (base branch main), for Kraft Lite chain kl-7f3a91c2 'Ledger export', sliced in feature mode: feature branch feat/ledger-export, pushed to origin at 4c2d9e1; the state branch feat/ledger-export-state is in its own worktree. `kl.py slices` lists a 'Row model' (task 1), b 'Writers' (tasks 2-4, after a) and c 'Importer' (task 5); ready [a, c], early []. Children run locally on this machine. The working setup line is `uv sync`; the scoped test command is `uv run pytest <paths>`. Default rights. The harness reference for Codex is loaded with the skill.",
+    "expected_behavior": [
+      "a's starting instructions give the child the messages file /home/dev/ledger/.kraft-lite/messages/kl-7f3a91c2/a.jsonl as its channel to the controller",
+      "For the child's own wake-up, its instructions say `none; continue on the controller's check-in`, and name no scheduling tool",
+      "Its instructions never tell the child to ask the user, or anyone, to invoke `kraft-lite:next` or any other skill",
+      "Tells the user plainly that nothing will wake the controller, and to invoke `kraft-lite:run-slices` (not `kraft-lite:next`) to continue the run"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "The slicing is approved. Set the run up and start it.",
+    "setup": "A local Amp CLI controller session (Amp, the coding agent) in repo acme/ledger, checked out at /home/dev/ledger (base branch main), for Kraft Lite chain kl-7f3a91c2 'Ledger export', sliced in feature mode: feature branch feat/ledger-export, pushed to origin at 4c2d9e1; the state branch feat/ledger-export-state is in its own worktree, and the user approved pushing both. `kl.py slices` lists a 'Row model' (task 1), b 'Writers' (tasks 2-4, after a) and c 'Importer' (task 5); ready [a, c], early []. The working setup line `uv sync` and the scoped test command `uv run pytest <paths>` have been run once here. Default rights. The user has said 'go'. The skill's references folder holds claude-code.md, codex.md and cursor.md, and nothing for Amp. This session has a shell, file tools and a subagent tool; the `amp` CLI is on PATH and `amp --help` lists a `threads` command.",
+    "expected_behavior": [
+      "Does not refuse or pause the run for want of a harness reference, and does not ask the user to supply one",
+      "Treats starting, messaging, archiving and checking in on sessions as unconfirmed for Amp, and invents no `amp` command or flag to start or message a child session",
+      "Applies the fallbacks: walks the slices in this session one after another in `ready` order, starting with a, with the same review, merge and state steps (`kl.py slice-set` for each slice it starts, then export state)",
+      "Says that nothing will wake this session for a check-in, so the user invokes `kraft-lite:run-slices` to continue the run"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices",
+      "kraft-lite:gate"
+    ],
+    "query": "Carry on.",
+    "setup": "The cloud controller session session_01Ctrl00 for chain kl-7f3a91c2 'Ledger export' in repo acme/ledger (base branch main), on its own branch claude/ledger-export-x1, which is the run's state branch and its checkout. `$CLAUDE_PLUGIN_ROOT` is set and the kraft-lite skills are installed; the claude-code-remote tools are loaded. The chain was started from the repo's own template 'quick' (`.kraft-lite/chains/kl-7f3a91c2.json`), which has no mr_checks and no post_merge_watch node; its chain_review node is gated chain_finalized. The plan has a `## Slices` section with three slices. You wrote `.kraft-lite/proposals/kl-7f3a91c2.json`, ran `gate --name chain_finalized`, and presented the proposal; the user approved it. You then ran `python3 \"$CLAUDE_PLUGIN_ROOT/kl.py\" approve --slices .kraft-lite/proposals/kl-7f3a91c2.json --chain-id kl-7f3a91c2`, which exited 1 printing `kraft-lite: slicing needs the default chain's nodes; this run's chain 'quick' has no mr_checks, post_merge_watch`. `state` still prints node chain_review, status blocked, gate chain_finalized, sliced null.",
+    "expected_behavior": [
+      "Tells the user the chain cannot be sliced, naming what the refusal names: the template 'quick' lacks mr_checks and post_merge_watch",
+      "Does not edit the frozen chain, the template or kl.py, writes no slice or run record by hand, and does not run `approve --slices` again",
+      "Walks the chain unsliced: a plain `approve --chain-id kl-7f3a91c2` at chain_finalized, recorded only once the user agrees to go on unsliced (asking them is fine)",
+      "Starts no child session"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "[Message from session_01Aaa] status | a | Fixed both findings from your review. New head 9c1e7f0 on ledger/a-rows; scoped tests pass. Ready for review again.",
+    "setup": "The cloud controller session session_01Ctrl00 for chain kl-7f3a91c2 'Ledger export' in repo acme/ledger (base branch main), on its own branch claude/ledger-export-x1, which is the run's state branch and its checkout. `$CLAUDE_PLUGIN_ROOT` is set and the kraft-lite skills are installed; the claude-code-remote tools are loaded. Sliced in feature mode, feature branch feat/ledger-export. Slices: a 'Row model' (task 1; your review of its PR #51 at head 5aa01c2 found two must-fix findings, so you sent them to its child session_01Aaa and ran `slice-set --slice a --status running`); b 'Writers' (tasks 2-3, after a; running as session_01Bbb on ledger/b-writers, started early from a's branch before that review: the decisions log has 'Start b from a's branch?' -> 'Forked from ledger/a-rows at 5aa01c2', and its starting instructions carry `Cut from: a at 5aa01c2`); c 'Importer' (task 4, after b; waiting). `kl.py slices` prints ready [], early [], base_moved [\"b\"], and b's entry has cut_from \"a\". Default rights.",
+    "expected_behavior": [
+      "Records a back in review with `kl.py slice-set --slice a --status in_review` and reviews PR #51 again at head 9c1e7f0",
+      "Tells b's child (session_01Bbb) to rebase onto a's new tip, origin/ledger/a-rows at 9c1e7f0, now or once a is back in review: not onto the feature branch, because a is not merged",
+      "Says it records the fork b reports after that rebase with `kl.py slice-set --slice b --fork <sha>`",
+      "Does not merge a or record it merged, and does not start c",
+      "Exports state after its writes"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices"
+    ],
+    "query": "The plan is approved and it's big. Split it across sessions and run it.",
+    "setup": "The cloud controller session session_01Ctrl00 for chain kl-7f3a91c2 'Ledger export' in repo acme/ledger (base branch main), on its own branch claude/ledger-export-x1. `$CLAUDE_PLUGIN_ROOT` is set and the kraft-lite skills are installed; the claude-code-remote tools are loaded. The chain was started with `--chain .kraft-lite/quick.json`, the repo's own template 'quick', frozen at `.kraft-lite/chains/kl-7f3a91c2.json`: its nodes are spec, plan, chain_review (gated chain_finalized), implementation, verify, open_mr, human_review and merge - no mr_checks and no post_merge_watch. `state --chain-id kl-7f3a91c2` prints node chain_review, status open, sliced null, and its bound on.chain.review_ready hook has just run. The plan has twelve tasks and a `## Slices` section with four slices. No proposal file exists.",
+    "expected_behavior": [
+      "Tells the user this chain cannot be sliced: slicing needs the default chain's nodes and its chain_finalized gate, and 'quick' has no mr_checks or post_merge_watch",
+      "Does not write a slicing proposal or try `approve --slices` expecting it to work, and starts no child session",
+      "Does not edit the frozen chain or the template to add the missing nodes",
+      "Walks it unsliced: `gate --name chain_finalized` and kraft-lite:gate for a plain approval, or asks the user to choose between that and starting a new chain on the default template"
+    ]
+  },
+  {
+    "skills": [
+      "kraft-lite:run-slices",
+      "kraft-lite:status"
+    ],
+    "query": "kraft-lite:run-slices check-in, chain kl-7f3a91c2: read state first.",
+    "setup": "The cloud controller session session_01Ctrl00 for chain kl-7f3a91c2 'Ledger export' in repo acme/ledger (base branch main), on its own branch claude/ledger-export-x1, which is the run's state branch and its checkout. `$CLAUDE_PLUGIN_ROOT` is set and the kraft-lite skills are installed; the claude-code-remote tools are loaded. The context was compacted since the last turn. Sliced in feature mode, feature branch feat/ledger-export; `kl.py state` shows node implementation, sliced action run_slices. `kl.py slices` prints: a 'Row model' (task 1) in_review, branch ledger/a-rows, session session_01Aaa, cut_from null; b 'Writers' (tasks 2-3, after a) running, branch ledger/b-writers, session session_01Bbb, fork 5aa01c2, cut_from \"a\"; c 'Importer' (task 4, after b) waiting; ready [], early [], base_moved [\"b\"]. The decisions log has 'Start b from a's branch?' -> 'Forked from ledger/a-rows at 5aa01c2', nothing unreported and nothing held. No new session messages and no files under .kraft-lite/messages/kl-7f3a91c2/. a's status summary: idle, its last message 'Fixed both findings; new head 9c1e7f0'; your second review of a's PR #51 at 9c1e7f0 is not started. b's status summary: working on task 3; `git log origin/ledger/b-writers` shows three commits on top of 5aa01c2. Default rights.",
+    "expected_behavior": [
+      "Reads `kl.py state` and `kl.py slices` first, and acts on `base_moved` listing b: tells b's child (session_01Bbb) to rebase onto a's new tip, origin/ledger/a-rows at 9c1e7f0, using `cut_from` \"a\" to know which; not onto feat/ledger-export, because a is not merged",
+      "Says it records the fork b reports after that rebase with `kl.py slice-set --slice b --fork <sha>`, and exports state",
+      "Does not merge a or record it merged before its review at 9c1e7f0 finds it clean on green CI, and does not start c",
+      "Its report, in kraft-lite:status's shape, carries a line saying b's rebase onto a is pending (e.g. `Rebase pending: b onto a`)",
+      "Re-arms the check-in"
+    ]
+  }
+]

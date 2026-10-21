@@ -19,13 +19,57 @@ Every command in this skill takes `--chain-id`. Omit it only when you know this
 directory holds one chain. If a verb exits saying there is more than one
 unfinished chain, show the human the list it printed and ask which - do not pick.
 
-You get `node`, `hooks`, `gate`, `attempt`, `cap`, `status` and `note`.
+You get `node`, `hooks`, `gate`, `attempt`, `cap`, `status`, `note` and `sliced`.
 
 - `status: unstarted` - there is no chain here. Invoke `kraft-lite:start`, or say
   so if you were not asked to start one. Do not report this as finished.
 - `status: done` - the chain is finished. Report the summary (below) and stop.
 - `status: blocked` - a gate is waiting. Invoke `kraft-lite:gate`. Do not proceed.
 - `note` non-empty - the node was rejected. That note leads this attempt.
+- `sliced` not null, `status` neither `done` nor `blocked` - `sliced.action` says
+  what this node is:
+  - `run_slices` - invoke `kraft-lite:run-slices`, which closes this node when every
+    slice is done. Stop.
+  - `scoped_verify` - a quick check of the seams between slices before the
+    feature PR. In the feature worktree (below), run the node's setup hook,
+    `on.env.prepare`, then its test hook, `on.test.run`, on the files
+    `git diff --name-only <base branch>...<feature branch>` lists, not the whole
+    suite. A fresh worktree has nothing installed, so setup comes first. Run none
+    of the node's other hooks: every slice was reviewed, and the feature PR's
+    review covers how they fit. Then step 3.
+  - `skip` - `python3 "$CLAUDE_PLUGIN_ROOT/kl.py" close --chain-id <id>` with no hooks
+    run, then this skill again.
+  - `await_user_merges` - check the PR of each slice that `slices` does not show as
+    `merged`. For each the user merged:
+    `python3 "$CLAUDE_PLUGIN_ROOT/kl.py" slice-set --slice <key> --status merged --chain-id <id>`,
+    tell each slice cut from its branch or from the target to rebase onto the
+    target, and archive its child, as `kraft-lite:run-slices` says after a merge,
+    then export state, as `kraft-lite:run-slices` describes under State branch.
+    Record a slice merged only once every slice it comes after is: `slice-set`
+    refuses it before. Name the slices still waiting and stop. Once all are
+    merged, `close`, then this skill again. Never open this node's gate: the
+    user's merges are the answer.
+  - `hooks` - step 2.
+
+In a sliced `feature` run, every hook from `verify` on runs in a worktree of the
+feature branch, never in the state branch's checkout: `on.mr.rebase` rebases, and
+`on.mr.open` opens the PR from, the branch it runs in. In that worktree the
+feature PR's `on.review.mr.run` reviews the seams - shared helpers, contracts
+between slices, the decisions log - on the strongest tier, not each slice again.
+Make the worktree once, from origin's feature branch, where the slice PRs merged:
+
+    git fetch origin
+    git worktree add -B <feature branch> <path> origin/<feature branch>
+
+The local feature branch is as old as the run's start: a worktree of it tests
+none of the slices, and a push from it drops them. If `git worktree list` shows
+the feature branch checked out already, use that checkout instead, after
+`git -C <it> merge --ff-only origin/<feature branch>`.
+
+Only the hooks run in the worktree. Every `kl.py` command (`state`, `close`,
+`attempt`, the export) runs from the controller's checkout, the one whose
+`.kraft-lite/` holds the chain: run from the worktree, it finds that worktree's
+own, empty `.kraft-lite/`.
 
 ## 2. Run the node's hooks, in order
 
@@ -51,9 +95,13 @@ stop and ask, not to run it twice.
 All hooks succeeded:
 
 - `gate` is set - `python3 "$CLAUDE_PLUGIN_ROOT/kl.py" gate --name <gate> --chain-id <id>`, then
-  invoke `kraft-lite:gate`. Stop.
+  invoke `kraft-lite:gate`. Stop. At `chain_review`, invoke `kraft-lite:run-slices`
+  instead: it decides whether to slice, and opens the gate itself.
 - `gate` is null - `python3 "$CLAUDE_PLUGIN_ROOT/kl.py" close --chain-id <id>`, then run this
   skill again for the next node.
+
+In a sliced run (`sliced` not null), export state after every `close`, as
+`kraft-lite:run-slices` describes under State branch.
 
 A hook failed and `cap` is set:
 
@@ -115,9 +163,12 @@ background and wake you when the wait finishes, use it: start the poll in the
 background, say you have done so, and report once when the pipeline settles. That
 costs the human nothing.
 
-If your harness has no background primitive, run the check once, report, and tell
-the human to invoke this skill again when it finishes. Making them re-invoke by
-hand is the fallback, not the design.
+If your starting instructions name a controller, wait for CI as
+`kraft-lite:build-slice` says.
+
+With no controller and no background primitive, run the check once, report, and
+tell the human to invoke this skill again when it finishes. Making them re-invoke
+by hand is the fallback, not the design.
 
 `$CLAUDE_PLUGIN_ROOT` is set when this loads as a plugin. If it is unset, `kl.py`
 is two directories above this file - use that path instead of an empty one.

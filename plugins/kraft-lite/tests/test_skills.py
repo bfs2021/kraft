@@ -17,10 +17,16 @@ sys.path.insert(0, str(PLUGIN))
 
 import kl  # noqa: E402
 
-SKILLS = ["init", "start", "next", "gate", "status"]
+SKILLS = ["init", "start", "next", "gate", "status", "run-slices", "build-slice"]
 CHAIN = json.loads((PLUGIN / "chains" / "default.json").read_text())
-HOOKS = {hook for node in CHAIN["nodes"] for hook in node["tasks"]}
-GATES = {node["gate_after"] for node in CHAIN["nodes"]} - {None}
+SLICE_CHAIN = json.loads((PLUGIN / "chains" / "slice.json").read_text())
+# A skill may cite what either shipped chain has: the controller walks the
+# feature chain, and a child walks the slice chain.
+NODES = [node for chain in (CHAIN, SLICE_CHAIN) for node in chain["nodes"]]
+HOOKS = {hook for node in NODES for hook in node["tasks"]}
+GATES = {node["gate_after"] for node in NODES} - {None}
+EVERY_SKILL = sorted(path.parent.name for path in (PLUGIN / "skills").glob("*/SKILL.md"))
+HARNESS_REFERENCES = ["claude-code", "codex", "cursor"]
 
 
 @pytest.fixture(scope="module")
@@ -158,6 +164,8 @@ def test_the_next_skill_uses_a_background_wait_when_the_harness_has_one(texts):
     assert "background" in body
     assert "wake" in body or "notif" in body
     assert "Do not idle" in body, "blocking synchronously is still banned"
+    flat = " ".join(body.split())
+    assert "If your starting instructions name a controller, wait for CI as" in flat
 
 
 def test_the_next_skill_handles_a_hook_with_no_registry_entry(texts):
@@ -211,3 +219,510 @@ def test_kl_parses_on_the_oldest_supported_python():
     parse."""
     source = (PLUGIN / "kl.py").read_text()
     ast.parse(source, feature_version=(3, 10))
+
+
+@pytest.mark.parametrize("name", EVERY_SKILL)
+def test_core_skills_name_no_harness_tool(name):
+    """Skills name abilities; a harness's tool names live only in the
+    run-slices references, so a skill written against one harness's tools does
+    not strand a controller running on another."""
+    text = (PLUGIN / "skills" / name / "SKILL.md").read_text()
+    found = re.findall(
+        r"create_session|send_message|archive_session|unarchive_session|SendMessage"
+        r"|send_later|ScheduleWakeup|list_events|get_session|CronCreate|ListAgents"
+        r"|list_sessions|ToolSearch",
+        text,
+    )
+    assert not found, f"{name} names harness tools: {sorted(set(found))}"
+
+
+@pytest.mark.parametrize("name", ["run-slices", "build-slice"])
+def test_the_slice_skills_name_no_repo_rule_and_no_superpowers_skill(texts, name):
+    """The slice skills ship into any repo. A repo's rules come from its own
+    CLAUDE.md and CONTRIBUTING.md, and installed skills through the registry."""
+    for banned in ("superpowers:", "kraft/", "screenshot", "just test", "just lint"):
+        assert banned not in texts[name], f"{name} says {banned!r}"
+
+
+def test_the_build_slice_skill_asks_the_controller_not_the_human(texts):
+    """A child has no human of its own: wherever the walk would stop for one it asks
+    the controller, which keeps the decisions log. A skill that tells it to ask the
+    user lets answers bypass the log."""
+    body = texts["build-slice"]
+    for needle in ("controller", "slice.json", "rebase --onto"):
+        assert needle in body, needle
+    for banned in ("ask the human", "ask the user"):
+        assert banned not in body.lower(), banned
+
+
+@pytest.mark.parametrize(
+    "needle",
+    [
+        ".kraft-lite/messages/<chain-id>/",
+        "<chain-id> <key>: <slice title>",
+        "part i of n",
+        "You may push to <branch>.",
+        "For the user: configuration",
+        "Cut from: target at <sha>",
+        "Cut from: <slice key> at <sha>",
+        "--path-format=absolute --git-common-dir)/kraft-lite/<chain-id>",
+        "new tip",
+    ],
+    ids=[
+        "message-path",
+        "session-title",
+        "part-marker",
+        "push-words",
+        "config",
+        "cut-from-target",
+        "cut-from-slice",
+        "child-folder",
+        "new-tip",
+    ],
+)
+def test_the_child_and_controller_skills_name_the_same_thing(texts, needle):
+    """What one skill sends the other must be spelled the same in both, or a child
+    writes where the controller does not read."""
+    for name in ("run-slices", "build-slice"):
+        assert needle in texts[name], f"{name} lacks {needle!r}"
+
+
+def test_the_child_rebase_reads_the_commit_recorded_at_setup(texts):
+    """The fork commit is where the branch was cut: recorded before the first
+    commit and read back at the rebase. A merge-base against another slice's branch
+    breaks once that branch is squash-merged, force-pushed or deleted."""
+    body = texts["build-slice"]
+    assert "<slice key>/fork" in body.split("## 5.")[1].split("## 6.")[0]
+    assert "<slice key>/fork" in body.split("## 1.")[1].split("## 2.")[0]
+    guard = "[ -f <run>/<slice key>/fork ] ||"
+    assert guard in body, "a resumed child must not overwrite its fork commit"
+    assert "<common>" not in body, "the shared common dir would collide between worktree slices"
+    assert "merge-base" not in body.replace("merge-base --is-ancestor", ""), "only as a check"
+    assert "--path-format=absolute" in body
+    assert body.count("git-common-dir") == body.count("--path-format=absolute --git-common-dir")
+
+
+def test_the_run_slices_skill_cites_every_verb_it_needs(texts):
+    """Every state write is an exact command; a verb the skill only describes
+    is one the controller improvises."""
+    for verb in (
+        "approve --slices",
+        "slice-set",
+        "--status running --session",
+        "--status in_review",
+        "decide --",
+        "--held",
+        "--unreported",
+        "export --to",
+        "import --from",
+    ):
+        assert verb in texts["run-slices"], verb
+
+
+@pytest.mark.parametrize("harness", HARNESS_REFERENCES)
+def test_every_harness_reference_covers_the_four_abilities(harness):
+    """The skill says which ability it needs; the reference is where each
+    harness says how, or says it cannot and names the fallback."""
+    path = PLUGIN / "skills" / "run-slices" / "references" / f"{harness}.md"
+    headings = set(re.findall(r"^#+\s+(.+?)\s*$", path.read_text(), re.M))
+    for ability in (
+        "Start a child",
+        "Message a child",
+        "Be messaged",
+        "Archive a child",
+        "Check in later",
+    ):
+        assert ability in headings, f"{harness}.md has no {ability!r} heading"
+
+
+def test_the_run_slices_skill_spells_the_helper_in_copyable_blocks(texts):
+    """A fenced block is what gets pasted. Shorthand in one runs nothing, so
+    every command there names the helper the way it is invoked."""
+    blocks = re.findall(r"```\n(.*?)```", texts["run-slices"], re.S)
+    lines = [line for block in blocks for line in block.splitlines()]
+    assert any('"$CLAUDE_PLUGIN_ROOT/kl.py"' in line for line in lines)
+    assert not [line for line in lines if re.match(r"\s*KL\b", line)]
+
+
+SLICED_ACTION_NAMES = sorted({a for modes in kl.SLICED_ACTIONS.values() for a in modes.values()})
+
+
+@pytest.mark.parametrize("action", SLICED_ACTION_NAMES)
+def test_the_next_skill_acts_on_every_sliced_action(texts, action):
+    """`state.sliced.action` says what a node means in a sliced run. An action the
+    skill does not name is one it dispatches as plain hooks: an implementation node
+    run inline instead of by the slices, a main-mode node opening a gate the user's
+    merges already answered."""
+    assert f"- `{action}` -" in texts["next"], f"next does not act on sliced.action {action!r}"
+
+
+def test_the_next_skill_hands_each_sliced_action_to_its_owner(texts):
+    body = texts["next"]
+    assert "kraft-lite:run-slices" in body
+    assert "slice-set" in body and "--status merged" in body
+    assert "git diff --name-only" in body, "the scoped verify has to name what it scopes to"
+    assert "Never open" in body, "await_user_merges must forbid opening the gate"
+    flat = " ".join(body.split())
+    assert "`sliced` not null, `status` neither `done` nor `blocked`" in flat
+    assert "then export state, as `kraft-lite:run-slices` describes under State branch" in flat
+    assert "`sliced`." in flat.split("You get")[1].split("- `status: unstarted`")[0]
+    assert "a quick check of the seams between slices before the feature PR" in flat
+    # a done sliced chain reports action `hooks`: status is read before the action
+    assert body.index("`status: done`") < body.index("`sliced.action`")
+
+
+def test_the_status_skill_reports_slices_and_held_questions(texts):
+    body = texts["status"]
+    for verb in ('kl.py" slices', "decisions --held", "decisions --unreported --mark"):
+        assert verb in body, verb
+    assert "`ready`" in body
+    # held questions lead the report, and `--mark` is refused together with `--held`
+    assert body.index("held questions first") < body.index("`ready`") < body.index("last report")
+    assert "`after` slices not yet merged" in " ".join(body.split())
+    assert "--held --unreported" not in body and "--unreported --held" not in body
+    assert "two commands" in body or "separate" in body
+    for part in (
+        "Held for you",
+        "Slices:",
+        "Next:",
+        "Decided since the last report:",
+        "Needs from you:",
+    ):
+        assert part in body, f"the sliced report template lacks {part!r}"
+
+
+def test_the_gate_skill_records_slices_at_chain_finalized(texts):
+    body = texts["gate"]
+    assert "approve --slices .kraft-lite/proposals/<chain-id>.json" in body
+    assert "chain_finalized" in body
+    assert "`sliced`" in body, "a sliced run's rewind decides the slices' fate"
+    flat = " ".join(body.split())
+    assert "rm .kraft-lite/proposals/<chain-id>.json" in flat, "a rejected proposal is deleted"
+    assert (
+        "`sliced` null and `.kraft-lite/proposals/<chain-id>.json` exists: the proposal "
+        "is this gate's artefact" in flat
+    )
+    assert "leftover" not in flat, "after a /clear nothing says what was presented"
+    assert "cannot be sliced again" not in flat, "a rewind to chain_review retires the slices"
+
+
+def test_init_binds_both_slice_hooks_and_the_ignores(texts):
+    body = texts["init"]
+    for needle in (
+        "chains/slice.json",
+        "on.slice.implementation.start",
+        ".kraft-lite/decisions/",
+        ".kraft-lite/messages/",
+        ".kraft-lite/proposals/",
+    ):
+        assert needle in body, needle
+    # the slice test hook is never the whole-suite subprocess
+    assert re.search(r"on\.slice\.test\.run:\n\s+kind: prompt", body)
+
+
+def _section(body: str, number: int) -> str:
+    """One numbered `## N.` section of a skill, whitespace flattened."""
+    return " ".join(body.split(f"## {number}.")[1].split("\n## ")[0].split())
+
+
+def test_the_child_rebases_by_what_its_branch_was_cut_from(texts):
+    """A slice cut from another slice's branch carries that slice's commits until
+    it merges. Rebasing it onto the target before then drops them, so its
+    `on.mr.rebase` does nothing, and a successful rebase makes it target-cut."""
+    rebase = _section(texts["build-slice"], 5)
+    for needle in (
+        "`<run>/<slice key>/base` says when you rebase",
+        "| a slice key | the controller says that slice merged | `origin/<target branch>` | "
+        "nothing to do",
+        "echo target > <run>/<slice key>/base",
+        "Cut from: target at <the new fork>",
+    ):
+        assert needle in rebase, needle
+    # the fork is checked before it is used
+    assert rebase.index("merge-base --is-ancestor") < rebase.index("git rebase --onto")
+    assert "The fork is not `HEAD` itself while your branch has commits of your own" in rebase
+
+
+@pytest.mark.parametrize(
+    "name, section, needle",
+    [
+        ("build-slice", 1, "never `HEAD`: ask the controller for the line"),
+        ("build-slice", 1, "### A fresh container"),
+        ("build-slice", 1, "never from `HEAD`"),
+        ("build-slice", 1, "Never redo, reset or force-push away pushed work"),
+        ("build-slice", 1, "lives in `<run>/<slice key>/chain`, never in the `chains` list"),
+        ("build-slice", 1, "named in the **Slice** item of your starting instructions"),
+        ("build-slice", 6, "no final whole-branch review and no finishing, merge or PR step"),
+        ("run-slices", 3, "--status starting --branch <slice-branch> --fork <sha>"),
+        ("run-slices", 3, "the feature chain's id, then key"),
+        ("run-slices", 3, "locally its name too"),
+        ("run-slices", 3, "### In `main` mode"),
+        ("run-slices", 3, "Implementation stops after the last task's reviews"),
+        ("run-slices", 4, "and every `waiting` one in `ready` or `early`, find its session"),
+        ("run-slices", 5, "A check-in is armed while any slice is not merged"),
+        ("run-slices", 5, "`kraft-lite:run-slices check-in, chain <id>: read state first.`"),
+        ("run-slices", 5, "`KL slice-set --slice <key> --fork <sha>`"),
+        ("run-slices", 6, "Never one cut from another slice that is still unmerged"),
+        ("run-slices", 6, "--status running`, and review again"),
+        ("run-slices", 6, "through `kraft-lite:next`, which says where its hooks run"),
+        ("run-slices", 2, "A missing ability is never a block"),
+        ("run-slices", 1, "delete any `.kraft-lite/proposals/<chain-id>.json`"),
+        (
+            "run-slices",
+            3,
+            "A slice that comes after two or more slices starts only from `ready`, once all "
+            "of them are merged",
+        ),
+        (
+            "run-slices",
+            3,
+            "`early`: it comes after exactly one slice, and that slice is in review or ready "
+            "to merge. It is cut from that slice's branch",
+        ),
+        (
+            "run-slices",
+            3,
+            "Start it now when your review of that slice has no findings or only small ones; "
+            "otherwise it waits for `ready`.",
+        ),
+        ("run-slices", 3, "where `target` is the word itself, never a branch name"),
+        ("build-slice", 1, "where `target` is the word itself, never a branch name"),
+        ("build-slice", 1, "`base` holds the word `target` or a slice key, never a branch name"),
+        ("build-slice", 1, 'echo <the word after "Cut from:", as given> > <run>/<slice key>/base'),
+        (
+            "build-slice",
+            5,
+            "| `target` | `on.mr.rebase` runs, or the controller says to | "
+            "`origin/<target branch>` |",
+        ),
+        ("run-slices", 6, "Starting a review: `KL slice-set --slice <key> --status in_review`."),
+        (
+            "run-slices",
+            6,
+            "finding. Once your review has no findings or only small ones, start what "
+            "`KL slices` lists, as section 3 says.",
+        ),
+        (
+            "run-slices",
+            0,
+            "A harness with no reference here runs on every ability's fallback, whatever its "
+            "own help shows: walk the slices here (section 10), and tell the user nothing wakes "
+            "this session, so they invoke `kraft-lite:run-slices` to continue it.",
+        ),
+        ("status", 0, "one in `early` may start now from the branch of the one slice it comes"),
+        ("status", 0, "| can start early from <key> |"),
+        ("status", 0, "not even a slice in `ready` or `early`"),
+        ("run-slices", 3, "write `none; continue on the controller's check-in` in its place"),
+        ("run-slices", 5, "- [ ] Report (section 8). - [ ] Re-arm the check-in"),
+        ("run-slices", 4, "then run one check-in (section 5): it reports and re-arms"),
+        ("run-slices", 1, "invoke `kraft-lite:gate`, which records it"),
+        ("run-slices", 6, "run no tests or checks yourself"),
+        ("build-slice", 4, "the scheduling tool your **Controller** item names"),
+        ("build-slice", 1, "Pass your slice chain's `--chain-id <id>` to every verb but `start`"),
+        (
+            "build-slice",
+            2,
+            "for a push you asked the controller about, that is the permission: push, "
+            "then send the controller a `status`",
+        ),
+        ("run-slices", 3, 'copied from your reference\'s "Be messaged" and "Check in later"'),
+        ("run-slices", 8, "Report by invoking `kraft-lite:status`"),
+        ("run-slices", 1, "few enough tasks for one session's context"),
+        ("build-slice", 4, "Ask no one to run a skill or a command for you, the user included"),
+        ("build-slice", 1, "git checkout -B <your slice branch> origin/<your slice branch>"),
+        ("next", 1, "setup hook, `on.env.prepare`, then its test hook, `on.test.run`"),
+        ("next", 1, "git worktree add -B <feature branch> <path> origin/<feature branch>"),
+        ("next", 1, "runs from the controller's checkout"),
+        ("next", 1, "never in the state branch's checkout"),
+        (
+            "next",
+            1,
+            "tell each slice cut from its branch or from the target to rebase onto the "
+            "target, and archive its child",
+        ),
+        ("next", 3, "At `chain_review`, invoke `kraft-lite:run-slices` instead"),
+        ("next", 3, "export state after every `close`"),
+        ("next", 1, "Record a slice merged only once every slice it comes after is"),
+        ("run-slices", 6, "and only once every slice it comes after is merged"),
+        ("run-slices", 6, "naming any slice it comes after that the user must merge first"),
+        ("run-slices", 6, "It is refused while a slice it comes after is unmerged"),
+        (
+            "run-slices",
+            6,
+            "When `KL slices` shows `done: true` on every slice (merged; in `main` mode, "
+            "ready to merge or merged):",
+        ),
+        (
+            "run-slices",
+            7,
+            "git -C <state-checkout> diff --cached --quiet || "
+            'git -C <state-checkout> commit -m "kraft-lite state"',
+        ),
+        (
+            "run-slices",
+            10,
+            "No reference, or no session tools With no reference for this harness (above), "
+            "or with the abilities really missing after searching deferred tools: say which, "
+            "and walk the slices here",
+        ),
+        (
+            "run-slices",
+            1,
+            "On a chain without them, `approve --slices` refuses and names what is missing: "
+            "draw no proposal; say so, and approve the gate `state.gate` names, unsliced.",
+        ),
+        ("run-slices", 1, "A rewind to `chain_review` or earlier retires the slices"),
+        (
+            "run-slices",
+            6,
+            "`KL slices` then lists in `base_moved` each slice cut early from it, and each cut "
+            "early from those: once it is back in review, tell each to rebase onto the new tip "
+            "of the slice its `cut_from` names, naming that slice's branch, one after another "
+            "down the line",
+        ),
+        ("run-slices", 6, "A recorded fork flags the slices cut from that one."),
+        ("run-slices", 5, "A non-empty `base_moved`: the rebase in section 6."),
+        (
+            "run-slices",
+            6,
+            "`cut_from` in `KL slices` says which: the parent's key, or null for the target.",
+        ),
+        ("run-slices", 3, "from the slice its `cut_from` names, or `target` when that is null"),
+        ("status", 0, "- rebase pending: <key> onto <its cut_from> (each key in `base_moved`)"),
+        (
+            "build-slice",
+            5,
+            "| a slice key | the controller says to rebase onto that slice's new tip | "
+            "`origin/<that slice's branch>` |",
+        ),
+        ("build-slice", 5, "with `<onto>` a remote branch, never a sha from a message"),
+        ("build-slice", 5, "Onto a slice's new tip, `base` keeps that slice's key."),
+        ("build-slice", 5, "onto a slice's new tip `Cut from: <slice key> at <the new fork>`"),
+        (
+            "gate",
+            2,
+            "If it refuses, naming nodes or a gate the chain lacks, tell the human and ask "
+            "whether to approve unsliced.",
+        ),
+        (
+            "gate",
+            2,
+            "`chain_review` or earlier: the plan or its slicing is redone, so the rewind "
+            "retires every slice. Archive their children.",
+        ),
+        ("gate", 2, "`implementation`, to redo some slices: reopen each slice to redo first,"),
+    ],
+    ids=[
+        "child-fork-never-head",
+        "child-fresh-container",
+        "child-fresh-container-fork",
+        "child-keeps-pushed-work",
+        "child-chain-file",
+        "child-chain-id-from-instructions",
+        "child-no-second-whole-branch-review",
+        "controller-records-fork-at-start",
+        "controller-names-the-chain-id",
+        "controller-local-name",
+        "controller-main-mode",
+        "controller-method-stops-implementation",
+        "controller-resume-matches-ready",
+        "controller-check-in-while-unmerged",
+        "controller-check-in-message",
+        "controller-records-rebased-fork",
+        "controller-rebase-only-cut-from-merged",
+        "controller-failed-review",
+        "controller-feature-worktree",
+        "controller-missing-ability",
+        "controller-deletes-unused-proposal",
+        "controller-two-afters-wait-for-all-merges",
+        "controller-early-start",
+        "controller-early-start-after-a-clean-review",
+        "controller-target-is-a-word",
+        "child-target-is-a-word",
+        "child-base-is-a-word",
+        "child-base-as-given",
+        "child-rebase-onto-target-branch",
+        "controller-review-starts-a-review",
+        "controller-review-then-starts-what-slices-lists",
+        "controller-no-reference-takes-the-fallbacks",
+        "status-early",
+        "status-early-template",
+        "status-starts-nothing",
+        "controller-child-wake-up-unconfirmed",
+        "controller-check-in-reports",
+        "controller-resume-runs-a-check-in",
+        "controller-gate-records-the-answer",
+        "controller-review-runs-nothing",
+        "child-wake-up-from-the-controller-item",
+        "child-chain-id-to-every-verb-but-start",
+        "child-pushes-on-the-users-words",
+        "controller-gives-the-child-its-tools",
+        "controller-status-report-owned-by-status",
+        "controller-small-plan-heuristic",
+        "child-asks-no-one-to-continue-it",
+        "child-fresh-container-takes-the-remote-head",
+        "next-scoped-verify-setup-then-test",
+        "next-feature-worktree-from-origin",
+        "next-kl-from-the-controller-checkout",
+        "next-feature-worktree",
+        "next-archives-merged-child",
+        "next-chain-review-to-run-slices",
+        "next-exports-after-close",
+        "next-records-merges-after-what-they-come-after",
+        "controller-merges-after-what-it-comes-after",
+        "controller-main-mode-names-the-merge-order",
+        "controller-merge-refused-out-of-order",
+        "controller-done-is-what-slices-says",
+        "controller-state-commit-skips-a-no-op",
+        "controller-no-reference-walks-here",
+        "controller-unsliceable-chain-walks-unsliced",
+        "controller-rewind-retires-the-slices",
+        "controller-base-moved-rebases-onto-the-new-tip",
+        "controller-recorded-fork-flags-its-cuts",
+        "controller-check-in-acts-on-base-moved",
+        "controller-cut-from-says-which",
+        "controller-replacement-reads-cut-from",
+        "status-rebase-pending",
+        "child-rebase-onto-a-slices-new-tip",
+        "child-rebase-onto-a-remote-branch",
+        "child-new-tip-keeps-base",
+        "child-new-tip-cut-from-line",
+        "gate-unsliceable-chain-asks",
+        "gate-rewind-before-implementation-retires",
+        "gate-rewind-to-implementation-reopens-first",
+    ],
+)
+def test_a_skill_carries_the_final_review_fixes(texts, name, section, needle):
+    """Section 0 is the whole skill."""
+    text = _section(texts[name], section) if section else " ".join(texts[name].split())
+    assert needle in text, f"{name} section {section} lacks {needle!r}"
+
+
+@pytest.mark.parametrize("harness", ["codex", "cursor"])
+def test_a_reference_with_no_check_in_sends_the_user_to_run_slices(harness):
+    """The controller's fallback continues the run, which is run-slices' to do;
+    the child's own wake-up is a separate line, so its instructions carry no
+    request that anyone invoke a skill."""
+    path = PLUGIN / "skills" / "run-slices" / "references" / f"{harness}.md"
+    check_in = " ".join(path.read_text().split("## Check in later")[1].split())
+    assert "tell the user to invoke `kraft-lite:run-slices`" in check_in
+    assert "kraft-lite:next" not in check_in
+    assert "Child: scheduling its own wake-up is unconfirmed too" in check_in
+    assert "`none; continue on the controller's check-in`" in check_in
+
+
+def test_the_claude_code_reference_starts_a_child_from_its_fork():
+    body = " ".join((PLUGIN / "skills/run-slices/references/claude-code.md").read_text().split())
+    assert "`source_revision`: the commit `--fork` records" in body
+    assert "a checkout on the branch or commit the slice is cut from" in body
+    assert "Child: the same tool schedules its own wake-up" in body
+
+
+def test_the_status_skill_hands_back_to_run_slices(texts):
+    flat = " ".join(texts["status"].split())
+    assert "When `kraft-lite:run-slices` invoked you, return to it after the report." in flat
+
+
+def test_the_run_slices_skill_names_every_verb_without_a_chain_id(texts):
+    flat = " ".join(texts["run-slices"].split())
+    assert "except `settings`, `import`, `chains`, `detect` and `start`" in flat
