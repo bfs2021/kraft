@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from support.api import (
+    _approve_review,
     _await_gate,
     _held_at,
     _poll_node_started,
@@ -262,9 +263,7 @@ def test_approve_is_refused_while_a_must_fix_is_open_even_a_draft(client, gated)
     assert client.post(f"/api/work-items/{gated}/gates/chain_review/approve").status_code == 409
     client.post(f"/api/work-items/{gated}/gates/chain_review/review", json={"outcome": "comment"})
     client.post(f"/api/threads/{tid}/resolve")
-    r = client.post(
-        f"/api/work-items/{gated}/gates/chain_review/review", json={"outcome": "approve"}
-    )
+    r = _approve_review(client, gated)
     assert r.status_code == 200, r.text
 
 
@@ -279,9 +278,7 @@ def test_approve_that_the_gate_refuses_writes_no_review(client, gated):
     brief = run_dir / "items" / gated / "docs" / "review_brief.md"
     brief.unlink()
 
-    r = client.post(
-        f"/api/work-items/{gated}/gates/chain_review/review", json={"outcome": "approve"}
-    )
+    r = _approve_review(client, gated)
     assert r.status_code == 422, r.text
     body = client.get(f"/api/work-items/{gated}").json()
     assert body["pending_gate"] == "chain_review"
