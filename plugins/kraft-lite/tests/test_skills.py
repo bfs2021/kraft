@@ -31,7 +31,7 @@ V1_GATES = {
 #: The chain the README counts nodes and gates of: the bundled library's `default`.
 CHAIN = kl_chains.resolve_bundled("default")
 EVERY_SKILL = sorted(path.parent.name for path in (PLUGIN / "skills").glob("*/SKILL.md"))
-HARNESS_REFERENCES = ["claude-code", "codex", "cursor"]
+HARNESS_REFERENCES = ["claude-code", "codex", "cursor", "gemini", "antigravity", "amp", "opencode"]
 
 
 @pytest.mark.parametrize("name", SKILLS)
@@ -465,9 +465,8 @@ def test_the_child_rebases_by_what_its_branch_was_cut_from(texts):
         (
             "run-slices",
             0,
-            "A harness with no reference here runs on every ability's fallback, whatever its "
-            "own help shows: walk the slices here (section 10), and tell the user nothing wakes "
-            "this session, so they invoke `kraft-lite:run-slices` to continue it.",
+            "With no guide for this harness, or an ability its guide marks unconfirmed, follow "
+            "[discover.md](references/discover.md) before any fallback.",
         ),
         ("status", 0, "once the controller's review of that slice found nothing or only small"),
         ("status", 0, "| can start early from <key> |"),
@@ -490,7 +489,7 @@ def test_the_child_rebases_by_what_its_branch_was_cut_from(texts):
             "for a push you asked the controller about, that is the permission: push, "
             "then send the controller a `status`",
         ),
-        ("run-slices", 3, 'copied from your reference\'s "Be messaged" and "Check in later"'),
+        ("run-slices", 3, 'copied from your guide\'s "Be messaged" and "Check in later"'),
         ("run-slices", 8, "Report by invoking `kraft-lite:status`"),
         ("run-slices", 1, "few enough tasks for one session's context"),
         ("build-slice", 4, "Ask no one to run a skill or a command for you, the user included"),
@@ -532,9 +531,9 @@ def test_the_child_rebases_by_what_its_branch_was_cut_from(texts):
         (
             "run-slices",
             10,
-            "No reference, or no session tools With no reference for this harness (above), "
-            "or with the abilities really missing after searching deferred tools: say which, "
-            "and walk the slices here",
+            "No guide, or no session tools With no guide for this harness, or an ability its "
+            "guide marks unconfirmed, follow [discover.md](references/discover.md) first. With "
+            "no way to start a child even then: say so, and walk the slices here",
         ),
         (
             "run-slices",
@@ -766,19 +765,6 @@ def test_a_skill_carries_the_final_review_fixes(texts, name, section, needle):
     """Section 0 is the whole skill."""
     text = _section(texts[name], section) if section else " ".join(texts[name].split())
     assert needle in text, f"{name} section {section} lacks {needle!r}"
-
-
-@pytest.mark.parametrize("harness", ["codex", "cursor"])
-def test_a_reference_with_no_check_in_sends_the_user_to_run_slices(harness):
-    """The controller's fallback continues the run, which is run-slices' to do;
-    the child's own wake-up is a separate line, so its instructions carry no
-    request that anyone invoke a skill."""
-    path = PLUGIN / "skills" / "run-slices" / "references" / f"{harness}.md"
-    check_in = " ".join(path.read_text().split("## Check in later")[1].split())
-    assert "tell the user to invoke `kraft-lite:run-slices`" in check_in
-    assert "kraft-lite:next" not in check_in
-    assert "Child: scheduling its own wake-up is unconfirmed too" in check_in
-    assert "`none; continue on the controller's check-in`" in check_in
 
 
 def test_the_claude_code_reference_starts_a_child_from_its_fork():
