@@ -12,6 +12,23 @@ const cut = (t: string, n = 70) => (t.length > n ? `${t.slice(0, n - 1)}…` : t
 /** Bookkeeping that would drown the run's story in the chain pane's Recent. */
 const QUIET = new Set<EventType>(["worker_session_created", "worker_session_exited", "chain_loaded", "plan_progress", "worktree_prepared", "steer_context_set", "permission_decision", "external_wait_observed", "findings_measured", "run_forked", "cap_counters_reset", "session_reattached"]);
 
+/** What reopened an approved gate (`gate_reopened`'s `reason`), as the console says it. */
+const REOPENED_WHY: Readonly<Record<string, string>> = {
+  retry: " by the retry",
+  conflict_resolved: " after a conflict was resolved",
+  base_changed: " after a base change",
+  merge_rejected: " after the merge train or queue rejected it",
+  escalation_committed: " after an escalation committed a change",
+  read_only_violated: " after a read-only step changed files",
+  unreviewed_change: " because the code changed after it was approved",
+};
+
+/** How Kraft itself moved the approved head (`reviewed_head_repinned`'s `cause`), as the console says it. */
+const REPINNED_HOW: Readonly<Record<string, string>> = {
+  rebase: " with Kraft's own rebase",
+  pointer_bump: " with Kraft's own pointer bump",
+};
+
 /** A cancel's own status write: `store.end_work_item` follows `work_item_cancelled` with `work_item_abandoned`.
  *  The cancel tells it; "abandoned" alone is the other door, the abandon that deletes the worktree and branch. */
 export const cancelsOwn = (e: KraftEvent, before?: KraftEvent) => e.type === "work_item_abandoned" && before?.type === "work_item_cancelled";
@@ -45,8 +62,8 @@ export function eventLine(e: KraftEvent, nodes?: Nodes, before?: KraftEvent): st
     case "gate_requested": return `${gate} is waiting for you`;
     case "gate_approved": return `${gate} · ${p.by === "agent" || p.by === "kraft" ? "passed on its own" : "approved by you"}`;
     case "gate_rejected": return `${gate} · rejected${p.note ? `: ${cut(s(p.note), 50)}` : ""}`;
-    // An approved gate a retry, or a base-change restart after a resolved conflict, opened again: the rerun asks it anew.
-    case "gate_reopened": return `${gate} · reopened${p.reason === "retry" ? " by the retry" : p.reason === "conflict_resolved" ? " after a conflict was resolved" : ""}`;
+    // An approved gate a retry, a base-change restart, or a merge node sending the item back opened again: the rerun asks it anew.
+    case "gate_reopened": return `${gate} · reopened${typeof p.reason === "string" && Object.hasOwn(REOPENED_WHY, p.reason) ? REOPENED_WHY[p.reason] : ""}`;
     case "fix_cycle_started": return `${at} · fix loop round ${Number(p.cycle ?? 0) + 1}`;
     // What the round did, said once it ended; recent() folds it into the round's start line. null: git could not say.
     case "fix_cycle_finished": return `${at} · fix loop round ${Number(p.cycle ?? 0) + 1}${p.committed === true ? " · the fix committed a change" : p.committed === false ? " · the fix changed nothing" : ""}`;
@@ -73,6 +90,8 @@ export function eventLine(e: KraftEvent, nodes?: Nodes, before?: KraftEvent): st
     case "mr_opened": return `MR !${s(p.number)} opened`;
     case "mr_closed": return `MR !${s(p.ref)} closed${p.by && p.by !== "cancel" ? ` by ${s(p.by)}` : ""}`;
     case "mr_reopened": return `MR !${s(p.ref)} reopened`;
+    case "merge_refused_unreviewed": return `${at} · not merged: the code is not what the final review approved`;
+    case "reviewed_head_repinned": return `reviewed head moved${typeof p.cause === "string" && Object.hasOwn(REPINNED_HOW, p.cause) ? REPINNED_HOW[p.cause] : ""}`;
     case "budget_raised": case "budget_changed": return `budget set to $${s(p.budget_usd)}`;
     // Nothing was merged behind the item, so its beads stay open for the operator to close by hand.
     case "beads_left_open": return `left ${Array.isArray(p.beads) ? p.beads.join(", ") : "its beads"} open: ${cut(s(p.reason), 240)}`;

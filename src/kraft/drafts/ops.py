@@ -35,13 +35,19 @@ from kraft.templates.models import (
     PATH_SEPARATOR,
     RESERVED_SEGMENTS,
     TaskKind,
+    merge_rejection_limit,
 )
 
 _IDENTIFIER = TypeAdapter(Identifier)
 #: A named slot's task id, by slot (the prototype's `addTask`).
 _SLOT_IDS = {JUDGE_SEGMENT: "judge", "escalation": "escalate", AUTO_REVIEW_SEGMENT: "reviewer"}
 #: What `add_handler` and `remove_handler` take, as the key it sets.
-_HANDLERS = ("on_failure", "fix_loop", "on_conflict")
+_HANDLERS = ("on_failure", "fix_loop", "on_conflict", "on_merge_rejected")
+#: A node policy's handler, by the kind `add_handler` names: the policy key, then the handler's.
+_POLICY_HANDLERS = {
+    "on_conflict": ("on_base_changed", "on_conflict"),
+    "on_merge_rejected": ("on_merge_rejected", "repair"),
+}
 #: What `remove` drops as a key of its container rather than a list entry.
 _SLOTS = ("fix_loop", JUDGE_SEGMENT, "escalation", AUTO_REVIEW_SEGMENT)
 #: The node policies' restart pointers: clearing one drops its whole policy.
@@ -663,15 +669,86 @@ def add_task(
 def _handler_at(path: str, kind: str) -> tuple[str, str]:
     if kind not in _HANDLERS:
         raise OpError(f"a handler is one of {', '.join(_HANDLERS)}, not {kind!r}")
-    return (
-        (_join(path, "on_base_changed"), "on_conflict") if kind == "on_conflict" else (path, kind)
+    if kind in _POLICY_HANDLERS:
+        policy, key = _POLICY_HANDLERS[kind]
+        return _join(path, policy), key
+    return path, kind
+
+
+def _merges(node: Mapping) -> bool:
+    """`ExecNode.merges` over an expanded node: an `mr.merge` among its own
+    tasks, never a handler's."""
+    if node.get("kind") != "exec":
+        return False
+    tasks = [
+        *_dicts(node.get("tasks")),
+        *(t for s in _dicts(node.get("steps")) for t in _dicts(s.get("tasks"))),
+    ]
+    return any(t.get("kind") == "forge" and t.get("target") == "mr.merge" for t in tasks)
+
+
+def _beside_merge_rejection(d: Draft, path: str) -> bool:
+    """Whether `path` is in a node that has, or inherits, `on_merge_rejected`:
+    where an `on_failure` must be read_only (`Chain`'s rule)."""
+    head, _, rest = path.partition(PATH_SEPARATOR)
+    node = (
+        f"{head}{PATH_SEPARATOR}{rest.partition(PATH_SEPARATOR)[0]}"
+        if d.file == authored.LIBRARY
+        else head
     )
+    found = d.inherited(node)
+    return isinstance(found, Mapping) and isinstance(found.get("on_merge_rejected"), Mapping)
+
+
+def _merge_restart(d: Draft, id: str) -> str:
+    """Where a new `on_merge_rejected` on node `id` restarts: the one it
+    inherits, else the last execution node it may name (`Chain`'s rule, by
+    `merge_rejection_limit`)."""
+    if d.file == authored.LIBRARY:
+        raise OpError(
+            f"{id} has no chain order to restart in; add on_merge_rejected to a chain's node"
+        )
+    nodes = _dicts(d.expanded().get("nodes"))
+    position = next((i for i, n in enumerate(nodes) if n.get("id") == id), None)
+    if position is None:
+        raise OpError(f"on_merge_rejected is a node's, and there is no node {id!r}")
+    node = nodes[position]
+    if not _merges(node):
+        # A gate, or a node with no `mr.merge` of its own: nothing it does is a
+        # merge a train could reject (`ExecNode.merges`).
+        raise OpError(f"{id} does not merge: on_merge_rejected needs an mr.merge task in it")
+    declared = node.get("on_merge_rejected")
+    if isinstance(declared, Mapping) and declared.get("repair") is not None:
+        # Put back whole, its repair -- the shipped one a task of its own --
+        # would be an empty step.
+        raise OpError(f"{id} already has an on_merge_rejected; edit its repair")
+    if isinstance(restart := _restart_from(node, "on_merge_rejected"), str):
+        return restart
+    final = next(
+        (i for i, n in enumerate(nodes) if n.get("kind") == "gate" and n.get("chain_finalized")),
+        None,
+    )
+    earlier = [
+        n.get("id")
+        for n in nodes[: merge_rejection_limit(position, final)]
+        if n.get("kind") != "gate"
+    ]
+    if not earlier:
+        where = "before its final gate" if final is not None and final < position else "before it"
+        raise OpError(f"{id} has no execution node {where} to restart from after a rejected merge")
+    return earlier[-1]
 
 
 def add_handler(d: Draft, path: str, kind: str) -> dict:
     where, key = _handler_at(path, kind)
-    shape = {"steps": [{"id": MAIN_STEP, "tasks": []}]}
-    if kind == "on_conflict":
+    shape: dict = {"steps": [{"id": MAIN_STEP, "tasks": []}]}
+    if kind == "on_failure" and _beside_merge_rejection(d, path):
+        # Its handler re-runs the merge in place, so it may not commit.
+        shape["read_only"] = True
+    if kind == "on_merge_rejected":
+        # The repair is required, so the policy arrives whole, restart and all.
+        d.put(path, "on_merge_rejected", {"restart_from": _merge_restart(d, path), key: shape})
+    elif kind == "on_conflict":
         # `on_base_changed` is not addressable on its own; `on_conflict` is
         # last in its canonical order, so `put`'s placement is the end.
         if not isinstance(d.own(path, "on_base_changed"), dict):
@@ -684,6 +761,10 @@ def add_handler(d: Draft, path: str, kind: str) -> dict:
 
 def remove_handler(d: Draft, path: str, kind: str) -> None:
     where, key = _handler_at(path, kind)
+    if kind == "on_merge_rejected":
+        # Its repair is required: without one, the policy is no file's.
+        d.drop(path, "on_merge_rejected")
+        return
     if kind != "on_conflict":
         d.drop(where, key)
         return

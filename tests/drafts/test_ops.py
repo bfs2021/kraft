@@ -113,6 +113,115 @@ async def test_remove_handler_writes_null_over_one_the_base_supplies(st):
     assert r.problems == []
 
 
+#: Taking the shipped `merge` node's merge-rejection policy away.
+UNREJECTED = ("remove_handler", {"path": "merge", "kind": "on_merge_rejected"})
+#: A restart with no repair yet, as the Config row's restart field writes it.
+RESTARTS = (
+    "set_field",
+    {"path": "merge", "field": "on_merge_rejected.restart_from", "value": "implementation"},
+)
+
+#: Two merging nodes with no `on_merge_rejected`: `land` first, `merge` after
+#: an execution node and a gate.
+UNPOLICED = """id: unpoliced
+nodes:
+  - {id: land, kind: exec, tasks: [{id: merge, extends: merge_mr}]}
+  - {id: build, kind: exec, tasks: [{id: t, kind: subprocess, command: "true"}]}
+  - {id: review, kind: gate}
+  - {id: merge, kind: exec, tasks: [{id: merge, extends: merge_mr}]}
+"""
+
+
+def _chain(st, key: str) -> str:
+    (st.templates_dir / "chains" / "unpoliced.yaml").write_text(UNPOLICED)
+    return key
+
+
+@pytest.mark.parametrize(
+    ("key", "batch", "restart"),
+    [
+        ("default", [UNREJECTED, RESTARTS], "implementation"),
+        ("default", [UNREJECTED], "work_item_summary"),
+        ("unpoliced", [], "build"),
+    ],
+    ids=["keeps-the-restart-it-has", "the-last-exec-before-the-final-gate", "the-nearest-exec"],
+)
+async def test_add_handler_gives_a_merge_rejection_an_empty_repair_and_a_restart(
+    st, key, batch, restart
+):
+    """The repair is required, so the policy arrives whole: `restart_from`
+    the one the node sets, else the last node `Chain` lets it name. The empty
+    repair is the only thing left to fill."""
+    add = ("add_handler", {"path": "merge", "kind": "on_merge_rejected"})
+    r = apply(st, *batch, add, key=_chain(st, key))
+    assert r.answers[-1] == {"path": "merge.on_merge_rejected.repair"}
+    assert r.nodes["merge"]["on_merge_rejected"] == {
+        "restart_from": restart,
+        "repair": {"steps": [{"id": "main", "tasks": []}]},
+    }
+    assert [(p, f) for p, f, _ in r.problems] == [("merge", "on_merge_rejected.repair")]
+
+
+_NO_MERGE = "does not merge: on_merge_rejected needs an mr.merge task in it"
+
+
+@pytest.mark.parametrize(
+    ("key", "path", "why"),
+    [
+        ("unpoliced", "land", "land has no execution node before it to restart from"),
+        ("default", "nope", "on_merge_rejected is a node's, and there is no node 'nope'"),
+        ("default", "merge", "merge already has an on_merge_rejected; edit its repair"),
+        ("default", "final_review", f"final_review {_NO_MERGE}"),
+        ("default", "implementation", f"implementation {_NO_MERGE}"),
+    ],
+    ids=["nothing-earlier", "no-such-node", "already-has-one", "a-gate", "no-merge-in-it"],
+)
+async def test_add_handler_refuses_a_merge_rejection_where_it_cannot_go(st, key, path, why):
+    """Nowhere to restart, no node, one already there -- whose repair, the
+    shipped one a task of its own, would become an empty step -- or nothing
+    in the node a train could reject."""
+    add = ("add_handler", {"path": path, "kind": "on_merge_rejected"})
+    assert why in refused(st, add, key=_chain(st, key))
+
+
+@pytest.mark.parametrize(
+    ("path", "at"),
+    [("merge", ("on_failure",)), ("merge.main.merge", ("tasks", 0, "on_failure"))],
+    ids=["the-node-s", "its-merge-task-s"],
+)
+async def test_add_handler_starts_an_on_failure_beside_a_merge_rejection_read_only(st, path, at):
+    """A handler on a node with `on_merge_rejected` re-runs the merge in place,
+    so `Chain` takes only one that cannot commit: the plan arrives read_only,
+    written on the plan since its `tasks` shorthand has no step of its own.
+    Its Config row says so; the repair, which writes by design, has none."""
+    fill = {"container": f"{path}.on_failure", "step": "main", "extends": "await_mr_ci"}
+    r = apply(st, ("add_handler", {"path": path, "kind": "on_failure"}), ("add_task", fill))
+    assert r.problems == []
+    handler = next(n for n in authored.parse(r.text)["nodes"] if n["id"] == "merge")
+    for key in at:
+        handler = handler[key]
+    assert handler == {
+        "tasks": [{"id": "await_mr_ci", "extends": "await_mr_ci"}],
+        "read_only": True,
+    }
+    sources = r.result["sources"]
+    assert sources[f"{path}.on_failure"]["read_only"] == {"value": True, "source": "chain"}
+    assert "read_only" not in sources.get("merge.on_merge_rejected.repair", {})
+
+
+async def test_remove_handler_drops_a_merge_rejection_whole_and_only_a_merge_keeps_its_row(st):
+    """Its repair is required, so removing it takes the restart too; the
+    node still merges, so its Config row stays, unset; a node that does not
+    merge has none."""
+    r = apply(st, UNREJECTED)
+    assert "on_merge_rejected" not in r.nodes["merge"]
+    assert r.problems == []
+    sources = r.result["sources"]
+    assert sources["merge"]["on_merge_rejected"] == {"value": None, "source": "default"}
+    assert "on_merge_rejected" not in sources["verification"]
+    assert "on_base_changed" in sources["verification"]
+
+
 async def test_move_reorders_a_node_a_step_and_a_task_across_steps(st):
     r = apply(
         st,

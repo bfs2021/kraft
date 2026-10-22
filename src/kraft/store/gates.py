@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 from kraft import events
 from kraft.store import _now as _now  # test seam for wall-clock checks
@@ -22,8 +22,14 @@ def request_gate(conn: sqlite3.Connection, work_item_id, node_id, gate) -> None:
     events.append(conn, work_item_id, GateEvent.REQUESTED, {"gate": gate, "node_id": node_id})
 
 
-def approve_gate(conn: sqlite3.Connection, work_item_id, gate, *, by: str = "human") -> bool | str:
+def approve_gate(
+    conn: sqlite3.Connection, work_item_id, gate, *, by: str = "human", tips: dict | None = None
+) -> bool | str:
     """Clear the gate and set the item running again. True when it is running.
+
+    `tips` is the head the chain's final gate approves (`reviewed_head.pin_for`),
+    read before this write: recorded on `gate_approved`, it is what the merge
+    may push. None for any other gate.
 
     While another in-place item works in this item's checkout
     (`checkout_holder`), the approval is still recorded, the item is paused
@@ -53,7 +59,8 @@ def approve_gate(conn: sqlite3.Connection, work_item_id, gate, *, by: str = "hum
         (_now(), work_item_id),
     ):
         return False
-    events.append(conn, work_item_id, GateEvent.APPROVED, {"gate": gate, "by": by}, node_id=gate)
+    payload = {"gate": gate, "by": by, **({"tips": tips} if tips is not None else {})}
+    events.append(conn, work_item_id, GateEvent.APPROVED, payload, node_id=gate)
     chain.complete_node(conn, work_item_id, gate)
     if holder is None:
         return True
@@ -107,6 +114,59 @@ def pass_unchanged_revision(conn: sqlite3.Connection, work_item_id, gate, ration
         node_id=gate,
     )
     approve_gate(conn, work_item_id, gate, by="kraft")
+
+
+#: The events that open or close a gate: the newest one naming a gate is its
+#: standing word.
+_GATE_WORD = (GateEvent.REQUESTED, GateEvent.APPROVED, GateEvent.REJECTED, GateEvent.REOPENED)
+
+
+def approval_stands(
+    conn: sqlite3.Connection, work_item_id, gate: str, upstream: Collection[str]
+) -> bool:
+    """Whether `gate`'s approval still stands, so a walk passes over it.
+
+    Per gate: the newest of `gate_requested`, `gate_approved`, `gate_rejected`
+    and `gate_reopened` that names `gate` must be its approval -- another
+    gate's approval since says nothing about this one. And nothing since may
+    have sent the chain back to a node in `upstream`, the ids of the chain's
+    nodes up to and including `gate`: that re-run walks back through `gate`
+    with new work, so it is asked again. Two motions do that without a
+    `gate_reopened` for the gates they span, so their own events are the word:
+    a rejection of any gate, re-entering at its `node` (one with none re-entered
+    at its own gate), and a person's gateless `request_changes`, rewinding to its
+    `target` unless it was cancelled (`review.request_rewind`).
+    """
+    row = conn.execute(
+        "SELECT seq, type FROM events WHERE work_item_id = ? "
+        f"AND type IN ({', '.join('?' * len(_GATE_WORD))}) "
+        "AND json_extract(payload, '$.gate') = ? ORDER BY seq DESC LIMIT 1",
+        (work_item_id, *_GATE_WORD, gate),
+    ).fetchone()
+    if row is None or row["type"] != GateEvent.APPROVED:
+        return False
+    later = conn.execute(
+        "SELECT type, json_extract(payload, '$.review_id') AS rid, "
+        "COALESCE(json_extract(payload, '$.node'), json_extract(payload, '$.gate'), "
+        "json_extract(payload, '$.target')) AS entered FROM events "
+        "WHERE work_item_id = ? AND type IN (?, ?, ?) AND seq > ? ORDER BY seq DESC",
+        (
+            work_item_id,
+            GateEvent.REJECTED,
+            GateEvent.REWIND_REQUESTED,
+            GateEvent.REWIND_CANCELLED,
+            row["seq"],
+        ),
+    ).fetchall()
+    cancelled = set()
+    for e in later:
+        if e["type"] == GateEvent.REWIND_CANCELLED:
+            cancelled.add(e["rid"])
+        elif e["entered"] in upstream and not (
+            e["type"] == GateEvent.REWIND_REQUESTED and e["rid"] in cancelled
+        ):
+            return False
+    return True
 
 
 def _since_requested(conn: sqlite3.Connection, work_item_id, gate, type: str) -> list[dict]:

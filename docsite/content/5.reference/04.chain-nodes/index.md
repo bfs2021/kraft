@@ -89,9 +89,9 @@ An exec node declares `tasks` or `steps`, never both.
 |---|---|---|---|
 | `tasks` | list | one of `tasks` and `steps` is required, unless `extends` supplies it | Shorthand for one step named `main`. Its tasks are dispatched together, and the node is measured once all have settled. |
 | `steps` | list | see `tasks` | Steps that run in order. A later step is not dispatched if an earlier one fails, and it sees what the earlier one left behind. |
-| `on_failure` | mapping | none | A recovery pass: tasks or steps that run once after the node failed, before it is measured again. A task or step may carry its own `on_failure`; the nearest one to the failure wins. |
+| `on_failure` | mapping | none | A recovery pass: tasks or steps that run once after the node failed, before it is measured again. A task or step may carry its own `on_failure`; the nearest one to the failure wins. It may be [read_only](#read_only). |
 | `fix_loop` | mapping | none | Repair tasks or steps, an optional `judge` task, and an optional `max_attempts`. It re-runs until the node passes. See [Fix loop and judge](/reference/chain-nodes/fix-loop). |
-| `escalation` | mapping | none | An agent task dispatched when the node is [stuck](/concepts/vocabulary#stuck) after recovery and the fix loop, before you are asked. |
+| `escalation` | mapping | none | An agent task dispatched when the node is [stuck](/concepts/vocabulary#stuck) after recovery and the fix loop, before you are asked. On a node with `on_merge_rejected`, see [on_merge_rejected](#on_merge_rejected). |
 | `on_base_changed` | mapping | none | What to re-run when a rebase moves the base. See [on_base_changed](#on_base_changed). |
 | `on_merge_rejected` | mapping | none | What to repair and re-run when a merge train or merge queue drops the merge request. Only on a node with an `mr.merge` task. See [on_merge_rejected](#on_merge_rejected). _Added in next_ |
 | `read_only` | boolean | `false` | `true` makes Kraft verify that the node's steps leave the [worktree](/concepts/vocabulary#worktree) as they found it. Refused on a node with a `fix_loop`. See [read_only](#read_only). |
@@ -110,9 +110,44 @@ A recovery that concludes no repair can help reports `failed` with a
 | `reject_to` | string | see Meaning | The exec node a rejection re-enters, with the reviewer's note. It must be before the gate. Without it, a rejection re-enters the nearest exec node before the gate, or re-opens the gate when there is none. |
 | `timeout` | duration | none | How long the gate waits for a decision, such as `90m`. It may not exceed the `total_time_cap_minutes` around it. |
 | `auto_review` | mapping | none | An agent task that may report a verdict first. It takes no `fallback`, and may `extends` a library task. See [Add a security review or a gate reviewer](/guides/customize/add-review-agents). |
-| `chain_finalized` | boolean | `false` | `true` marks the final review. A `chain_finalized` gate always requires its document, whether or not it sets `artifact_required`. |
+| `chain_finalized` | boolean | `false` | `true` marks the final review. A `chain_finalized` gate always requires its document, whether or not it sets `artifact_required`. Its approval decides what a later `mr.merge` may merge: see [What the final review approves](#what-the-final-review-approves). |
 
 A gate takes no `icon`.
+
+### What the final review approves
+
+_Added in next_
+
+Approving the chain's first `chain_finalized` gate records the branch tip it
+approves, in every checkout a merge could push: the item's own, and each
+workspace member not merged yet. Skipping that gate records the tips it passes
+the same way. They are on the `gate_approved` (or `node_skipped`) event, as
+`tips`.
+
+Right before an `mr.merge` task asks the forge to merge, or to queue the merge
+request again after a merge train's own runners failed, it reads the tip it
+would push. When that is not the approved one, it merges nothing and pushes
+nothing, records `merge_refused_unreviewed`, and the item stops for you:
+
+- On a node with [on_merge_rejected](#on_merge_rejected), Kraft holds the item
+  at `restart_from`, with the gates from there to the merge reopened.
+- On any other node, it holds the item at the `chain_finalized` gate,
+  reopened.
+
+A retry from there walks back through the final review, which sees the new
+code. This holds whatever changed the branch: an agent, an escalation, a
+commit of yours, or anything else.
+
+Kraft's own changes to the approved head carry the approval over, recorded as
+`reviewed_head_repinned`: a rebase onto the base branch that needs no conflict
+resolved, with no agent involved (the merge's own forced rebase, an
+`mr_rebase` task, the rebase on approval, resume or retry), and a workspace
+root's commit that points it at its merged members. A rebase that needed a
+conflict resolved, or that rebased a head nobody approved, carries nothing
+over.
+
+An item whose final gate was approved before this check existed, or whose
+chain has no `chain_finalized` gate, merges without it.
 
 ## on_base_changed
 
@@ -129,11 +164,13 @@ branch. The shipped `default` chain sets it on `merge_request_feedback`:
 When a rebase moves the base, Kraft re-runs the exec nodes from `restart_from`
 through this node: the [span](/concepts/vocabulary#span). A gate in that range
 keeps its approval after a clean rebase. It reopens, and needs approving again,
-after a rebase that needed a conflict resolved.
+after a rebase that needed a conflict resolved. A `chain_finalized` gate in the
+range reopens after a clean rebase too, since a fix loop in the span can commit
+before the walk passes it again.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `restart_from` | string | required | Names this node or an earlier exec node, never a gate. |
+| `restart_from` | string | required | Names this node or an earlier exec node, never a gate. On a node with an `mr.merge` task after a `chain_finalized` gate, it must name a node before that gate. |
 | `on_conflict` | mapping | none | Names the task or steps that resolve a conflicting rebase. |
 
 If a retry or resume starts at a node that has its own `mr_rebase` task and an
@@ -174,9 +211,59 @@ onto the train.
 | `restart_from` | string | required | Names an exec node strictly before this one, never a gate or this node itself. When a `chain_finalized` gate comes before this node, it must name a node before that gate, so every rewind passes it. |
 | `repair` | mapping | required | The tasks or steps that fix the branch, written like an `on_failure` plan. The shipped `repair_merge_queue_failure` runs the `kraft:merge-queue-repair` skill on the `strong` [agent profile](/reference/harnesses/agent-profiles). |
 
-A node with `on_merge_rejected` cannot also declare a `fix_loop` or a
-node-level `on_failure`: only the repair answers a drop. A task's own
-`on_failure` is allowed.
+A node with `on_merge_rejected` cannot also declare a `fix_loop`: only the
+repair answers a drop, because a fix cycle's commit would be merged by the next
+measure unseen.
+
+It may declare an `on_failure`, on the node or on one of its own steps or
+tasks, for a merge that fails for another reason than a drop, but only a
+[read_only](#read_only) one. Such a handler can wait, retry, comment or ask for
+approval again. Kraft then asks the forge to merge again in place, the head
+`final_review` approved.
+
+A handler that may commit is refused at load, including one a library
+component brings in. Mark the plan itself for a `tasks` plan; a `steps` plan
+marks the plan or every step:
+
+```yaml
+- id: merge
+  kind: exec
+  tasks:
+    - id: merge
+      extends: merge_mr
+  on_failure:
+    read_only: true
+    tasks:
+      - id: wait
+        extends: await_external_approval
+  on_merge_rejected:
+    restart_from: merge_request_feedback
+    repair:
+      tasks:
+        - id: repair
+          extends: repair_merge_queue_failure
+```
+
+If a read_only handler changes the worktree all the same, the item stops with
+`read_only_violated`, held at `restart_from` with the span's gates reopened, so
+no retry merges the change unseen.
+
+**Escalation.** A commit made while the item is stopped on this node is never
+merged in place, whether its `escalation` task made it or an escalation agent
+did, Kraft's automatic one or one you sent. Kraft holds the item at
+`restart_from` with the span's gates reopened, the way it does after a
+repair's commit.
+
+A successful `escalation` task that committed rewinds the chain there, under
+the same cap, instead of re-running the node; one that changed nothing re-runs
+it. A tip Kraft cannot read, before the escalation or after it, counts as a
+change. An escalation agent's own `kraft item retry` of this node, or of any
+node after `restart_from`, restarts at `restart_from`; one it names at or
+before `restart_from` already passes the gates again, and runs as named.
+
+An `on_base_changed` on this node, or on any node with an `mr.merge` task after
+the `chain_finalized` gate, must restart before that gate: a conflict
+resolution would otherwise be merged unseen.
 
 Without `on_merge_rejected`, a drop stops the item at once, with the forge's
 reason in the stop, even when the drop comes on the re-measure after the
@@ -254,9 +341,12 @@ not only in the one whose merge request was dropped.
 A repair that stopped before committing leaves the item on the merge node.
 Whatever brings it back there, a resume, the rate-limit retry or your
 `kraft item retry`, runs the repair again, with your steer, and never queues
-the head the train rejected. Only a retry from the last gate before the merge
-node, or from a node before it, goes through that gate and then queues the
-head again.
+the head the train rejected.
+
+Only a retry from the chain's `chain_finalized` gate (or, with none, the last
+gate before the merge node), or from a node before it, goes through that gate
+and then queues the head again. A retry from a node after it, a later gate
+included, repairs again.
 
 The same goes for a Kraft restart while the repair works or the restart is
 under way: if a repair had started or the branch moved, the resume holds the
@@ -359,8 +449,9 @@ policy: {total_time_cap_minutes: 90}
 
 ## read_only
 
-`read_only` goes on a step or an exec node, never on a task. A task that sets it
-is refused at load.
+`read_only` goes on a step, an exec node or an `on_failure` plan, never on a
+task. A task that sets it is refused at load. On a plan, it makes every step of
+the plan read_only, the one a `tasks` plan becomes included.
 
 - **What is checked.** Before a read_only step's first task launches, Kraft
   records each repository of the checkout (the root and every workspace member):
@@ -372,9 +463,11 @@ is refused at load.
 - **What happens.** The item stops and waits for you, with a `read_only_violated`
   event and a stop reason naming the changed files. It is not a task failure, so
   no recovery, fix loop, or attempt is spent on it.
-- **Exclusions.** The check does not run during a recovery or a fix loop. It runs
-  again when a recovery retries the step's tasks. A step inside an `on_failure` or
-  a `fix_loop` refuses `read_only`.
+- **Exclusions.** A read_only step's check does not cover a recovery or a fix
+  loop. It runs again when a recovery retries the step's tasks. An `on_failure`
+  plan, or a step in it, may be read_only, and is then checked around its own
+  tasks. A `fix_loop`, an `on_conflict` and an `on_merge_rejected` repair write
+  by design, and refuse `read_only`.
 - **Sandboxed items.** In a [sandboxed](/concepts/vocabulary#sandbox) item, if the worktree gains a repository
   Kraft did not create, Kraft runs no host git there and reports that repository
   as the change.

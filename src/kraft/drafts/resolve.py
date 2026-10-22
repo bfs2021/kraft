@@ -40,6 +40,7 @@ from kraft.templates.models import (
     PATH_SEPARATOR,
     ExecNode,
     GateNode,
+    RecoveryPlan,
     ResolvedChain,
     TaskBase,
     _scoped,
@@ -576,13 +577,19 @@ def _sources(
         unread = model.unread() if isinstance(model, TaskBase) else frozenset()
         recovery = model.for_recovery() if isinstance(model, TaskBase) else frozenset()
         own = model.policy if "policy" in type(model).model_fields else None
+        # Only an `on_failure` plan may be read_only: a conflict handler and a
+        # merge-rejection repair write by design, so they get no such row.
+        writes = isinstance(model, RecoveryPlan) and path.rpartition(PATH_SEPARATOR)[2] in _WRITING
         fields = {}
         for name in type(model).model_fields:
-            if name in _NESTED or name == "policy":
+            if name in _NESTED or name == "policy" or (name == "read_only" and writes):
                 continue
             if name in unread and name not in model.model_fields_set:
                 continue
             value = dumped[name]
+            # Only a node that merges can have a merge rejected: elsewhere, unset, no row.
+            if name == "on_merge_rejected" and value is None and not model.merges():
+                continue
             if name in _HANDLER_OF and isinstance(value, dict):
                 value = {k: v for k, v in value.items() if k != _HANDLER_OF[name]}
             source = _setter(layers, name) if name in model.model_fields_set else "default"
@@ -652,6 +659,8 @@ def _sources(
 #: A node policy's own fields, each without the handler it holds, which is
 #: flattened under its own path: the policy key to that handler's key.
 _HANDLER_OF = {"on_base_changed": "on_conflict", "on_merge_rejected": "repair"}
+#: The handlers those policies hold, which write by design (`models._refuse_read_only`).
+_WRITING = frozenset(_HANDLER_OF.values())
 
 
 #: Keys that hold nested components, each flattened under its own path.

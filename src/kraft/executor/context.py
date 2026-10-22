@@ -86,6 +86,12 @@ MERGE_REWIND = "merge_rewind"
 #: span. Like `CONFLICT_RESOLVED`, handled by the walk itself.
 MERGE_REPAIRED = "merge_repaired"
 
+#: A merge node's stuck escalation finished having committed: never rerun in
+#: place, which would merge its change unseen. The chain rewinds to
+#: `on_merge_rejected.restart_from` as after `MERGE_REPAIRED`, handled by the
+#: walk itself.
+ESCALATION_COMMITTED = "escalation_committed"
+
 #: A recovery handler finished `done_with_concerns` (Kraft-s7c04.56). For an
 #: ordinary task doubts are information for the next gate (`_ADVANCING`); for
 #: a repair they are a verdict on whether repair was possible at all, so the
@@ -103,6 +109,13 @@ READ_ONLY_VIOLATED = "read_only_violated"
 #: checkout is theirs to sort out. Its session is the `config_error` row whose
 #: log is the reason.
 CHECKOUT_REFUSED = "checkout_refused"
+
+#: The merge handler did not merge: the head it would push is not the one the
+#: final review approved (`kraft.reviewed_head`). A stop, not a failure:
+#: nothing a fix loop or a recovery could write makes the head a reviewed one,
+#: and a commit from either would only be more code nobody saw. The walk holds
+#: the item before the final review again (`walk._stop_unreviewed`).
+UNREVIEWED_HEAD = "unreviewed_head"
 
 
 #: The tier that handles each status, in one place so a new status cannot be
@@ -132,11 +145,13 @@ SCOPE: dict[str, str] = {
     REPAIR_DOUBTED: "stop",  # a repair doubts itself; a person decides
     READ_ONLY_VIOLATED: "stop",  # a read_only scope wrote; a person looks
     CHECKOUT_REFUSED: "stop",  # the person's checkout; never forced, never retried
+    UNREVIEWED_HEAD: "stop",  # the merge would push code no final review saw
     TIME_CAPPED: "stop",  # a scope's time ran out; a person decides (Ruling 194)
     BASE_MOVED: "chain",  # the bounce, taken by run_once
     CONFLICT_RESOLVED: "chain",  # the same restart, reopening the span's gates
     MERGE_REWIND: "chain",  # the walk rewinds to re-run the rejected span
     MERGE_REPAIRED: "chain",  # a repaired rejection restarts the span
+    ESCALATION_COMMITTED: "chain",  # a merge node's escalation committed: the same rewind
 }
 
 

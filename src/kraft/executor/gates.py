@@ -6,7 +6,16 @@ from datetime import datetime
 from pathlib import Path
 
 from kraft import builtins as _builtins
-from kraft import escalate, events, gate_review, inplace, item_paths, node_runs, store
+from kraft import (
+    escalate,
+    events,
+    gate_review,
+    inplace,
+    item_paths,
+    node_runs,
+    reviewed_head,
+    store,
+)
 from kraft import policy as _policy
 from kraft.executor import stops
 from kraft.executor.context import LaunchContext, OnApprove
@@ -232,7 +241,7 @@ async def bounce_on_feedback(
     rest of this module takes when policy failed to load.
     """
     node = nodes[index]
-    if not isinstance(node.node, GateNode) or gate_cleared(db, work_item_id, node.id):
+    if not isinstance(node.node, GateNode) or gate_cleared(db, work_item_id, nodes, index):
         return None
     threads = db.read(lambda c: store.unanswered(c, work_item_id))
     if not any(t["label"] == ThreadLabel.MUST_FIX for t in threads):
@@ -283,26 +292,24 @@ async def bounce_on_feedback(
     return None if target is None else (target, note)
 
 
-def gate_cleared(db, work_item_id: str, gate: str) -> bool:
-    """True iff the most recent gate_* event for the item is gate_approved <gate>.
+def gate_cleared(db, work_item_id: str, nodes: Sequence[ResolvedNode], index: int) -> bool:
+    """Whether the gate at `nodes[index]` is already cleared, so a walk passes
+    over it: its approval stands (`store.approval_stands`), read for that gate
+    alone and against the chain's order up to it.
 
     `gate_reopened` (a retry's fork, or a base-change restart after a resolved
     conflict) is the newest word on a gate it names, so the rerun requests it
-    again."""
-    evts = db.read(lambda c: events.read_after(c, 0, work_item_id))
-    for e in reversed(evts):
-        if e["type"] in (
-            GateEvent.REQUESTED,
-            GateEvent.APPROVED,
-            GateEvent.REJECTED,
-            GateEvent.REOPENED,
-        ):
-            return e["type"] == GateEvent.APPROVED and e["payload"].get("gate") == gate
-    return False
+    again; so is a later rejection or rewind that sent the chain back at or
+    before it."""
+    gate = nodes[index].id
+    upstream = {n.id for n in nodes[: index + 1]}
+    return db.read(lambda c: store.approval_stands(c, work_item_id, gate, upstream))
 
 
-async def maybe_gate(db, work_item_id: str, node: ResolvedNode, run_dirs=None) -> bool:
-    """Whether the walk stops here because `node` is an unanswered gate
+async def maybe_gate(
+    db, work_item_id: str, nodes: Sequence[ResolvedNode], index: int, run_dirs=None
+) -> bool:
+    """Whether the walk stops here because `nodes[index]` is an unanswered gate
     (`gate-node-opens-and-halts-execution`).
 
     True opens the gate and stops the caller. False means walk on, which covers
@@ -318,9 +325,10 @@ async def maybe_gate(db, work_item_id: str, node: ResolvedNode, run_dirs=None) -
     asking anyone (Kraft-oydes): Kraft approves it, with the proposal's
     rationale on a `chain_revision_unchanged` event.
     """
+    node = nodes[index]
     if not isinstance(node.node, GateNode):
         return False
-    if gate_cleared(db, work_item_id, node.id):
+    if gate_cleared(db, work_item_id, nodes, index):
         return False
     await db.write(lambda c: store.enter_node(c, work_item_id, node.id))
     if node.node.artifact == revision.CHAIN_REVISION and run_dirs is not None:
@@ -454,6 +462,13 @@ async def review_gates(
         # artifact edited, or shown to a person, between this line and the
         # approval below is exactly the race `seen` exists to catch.
         seen = _chain_revision_seen(run_dirs, row, gate, node, launch)
+        # The head the reviewer reads, for the final gate (`kraft.reviewed_head`):
+        # what its approval pins, never a head that moved while it worked. It
+        # may commit, so a tip read after its verdict could be its own work.
+        # Recorded on its session too: a person's approval that stops it
+        # checks it moved nothing (`reviewed_head.moved_under`).
+        folder = inplace.item_folder(run_dirs, row)
+        read_tips = reviewed_head.pin_for(db, row, gate, folder)
         try:
             verdict, note = await gate_review.review(
                 db,
@@ -462,6 +477,7 @@ async def review_gates(
                 gate=gate,
                 node=node,
                 launch=launch,
+                tips=read_tips,
             )
         except store.CheckoutBusy as exc:
             # Started nothing, so no attempt: it waits for the checkout.
@@ -504,6 +520,15 @@ async def review_gates(
         if verdict == "approve" and db.read(lambda c: store.open_must_fix(c, work_item_id)):
             # A person's must-fix outranks an agent's approval (review flow §3).
             verdict = "undecided"
+        if (
+            verdict == "approve"
+            and read_tips is not None
+            and not reviewed_head.unchanged(read_tips, reviewed_head.pin_for(db, row, gate, folder))
+        ):
+            # Its own commit, or anyone's: an approval must not pin code the
+            # review did not read, and no agent approves its own edit.
+            verdict = "undecided"
+            why = "the branch moved while the agent reviewed the final gate: a person looks again"
 
         if verdict == "undecided":
             # Marks this `gate_requested` as reviewed so `_gate_already_reviewed`
@@ -562,8 +587,12 @@ async def review_gates(
                         )
                     )
                     return "needs_human"
+                # What a final gate's approval lets merge (`kraft.reviewed_head`).
+                # The tips it read, unmoved since (above).
                 approval = await db.write(
-                    lambda c, gate=gate: store.approve_gate(c, work_item_id, gate, by="agent")
+                    lambda c, gate=gate, tips=read_tips: store.approve_gate(
+                        c, work_item_id, gate, by="agent", tips=tips
+                    )
                 )
                 if isinstance(approval, str):
                     return status_of(db, work_item_id)  # approved, queued for the checkout
@@ -1212,6 +1241,9 @@ async def resume_after_escalation(
     from kraft.templates.forks import ChainPath, PathError, override_from_record
 
     new_evts = db.read(lambda c: events.read_after(c, cursor, work_item_id))
+    # A turn on a merge node that committed is never merged in place: the
+    # item is held at the node's `restart_from`, before anything else here.
+    held_at = await walk.hold_after_escalation(db, run_dirs, work_item_id, new_evts)
     request_evt = next(
         (e for e in new_evts if e["type"] == EscalationEvent.WORK_ITEM_SELF_RETRY_REQUESTED), None
     )
@@ -1219,6 +1251,25 @@ async def resume_after_escalation(
         return status_of(db, work_item_id)
     payload = request_evt["payload"]
     node_id, steer = payload["node_id"], payload["steer"]
+    path, carried = payload.get("path"), payload.get("override")
+    if (
+        held_at is not None
+        and not payload.get("restart")
+        and walk.retries_past(
+            db.read(
+                lambda c: c.execute(
+                    "SELECT * FROM work_items WHERE id = ?", (work_item_id,)
+                ).fetchone()
+            ),
+            path or node_id,
+            held_at,
+        )
+    ):
+        # Named past it -- the merge node, most likely -- the agent's own
+        # retry starts where its commit goes back through the final review,
+        # with no override meant for another path. A target at or before it
+        # already passes that review, and keeps its override.
+        node_id, path, carried = held_at, None, None
     # Absent on an event written before this field existed, or on a
     # hand-built test payload -- default False rather than KeyError either way.
     seeded = payload.get("seeded", False)
@@ -1315,6 +1366,8 @@ async def resume_after_escalation(
             )
             return status
         worktree = inplace.item_folder(run_dirs, row)
+        # After the turn, before Kraft's own rebase: only that rebase repins.
+        before = reviewed_head.tips(db, work_item_id, row, worktree)
         try:
             # The refresh runs host git in the worktree and its members (Kraft-ju36l).
             stops.refuse_planted_repos(row, launch, worktree)
@@ -1342,6 +1395,13 @@ async def resume_after_escalation(
                 )
             )
             return status_of(db, work_item_id)
+        await reviewed_head.repin(
+            db,
+            work_item_id,
+            before,
+            reviewed_head.tips(db, work_item_id, row, worktree),
+            cause="rebase",
+        )
         # `refresh_worktree_base` reports the upstream head even when the
         # branch already contained it (Kraft-jypzx); skip the write when it
         # matches what's already recorded, the ordinary case on a self-retry.
@@ -1352,7 +1412,7 @@ async def resume_after_escalation(
         target = None
         if not payload.get("restart"):
             try:
-                target = ChainPath.parse(walk.chain_of(row), payload.get("path") or node_id)
+                target = ChainPath.parse(walk.chain_of(row), path or node_id)
             except PathError:
                 target = None
                 logger.warning(
@@ -1361,7 +1421,6 @@ async def resume_after_escalation(
                     node_id,
                 )
         if target is not None or payload.get("restart"):
-            carried = payload.get("override")
             return await retry(
                 db,
                 run_dirs,

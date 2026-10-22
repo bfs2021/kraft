@@ -3,10 +3,11 @@ from __future__ import annotations
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from kraft import events, executor, inplace, store
+from kraft import events, executor, inplace, reviewed_head, store
 from kraft.api import api_router, deps
 from kraft.api.routes import artifacts, board
 from kraft.api.routes.lifecycle import (
+    _moved_under_refusal,
     _stop_live_sessions,
     chain_or_409,
     held_refusal,
@@ -308,9 +309,16 @@ async def approve_gate(wid: str, gate: str, request: Request, body: GateApprove 
     # restart leaves the row, not the task), and that agent is still writing
     # in the worktree the approved walk is about to launch into. A no-op
     # returning [] when nothing is running, which is most of the time.
-    await _stop_live_sessions(st, wid)
+    stopped = await _stop_live_sessions(st, wid)
     if deps.task_is_live(request.app, wid):
         await deps.cancel(request.app, wid, timeout=deps.CANCEL_TIMEOUT)
+    # The head this approval lets merge (`kraft.reviewed_head`), None unless
+    # `gate` is the final one: read after the stop and pinned as read, so a
+    # commit a dying agent lands later is not in the pin and the merge refuses
+    # it. An agent stopped here may have committed after the person last
+    # looked: one that moved the branch since it started refuses the approval.
+    tips = reviewed_head.pin_for(st.db, row, gate, inplace.item_folder(st.run_dirs, row))
+    _moved_under_refusal(st, wid, gate, stopped, tips)
 
     try:
         nodes, reason = await apply_approval(
@@ -353,7 +361,7 @@ async def approve_gate(wid: str, gate: str, request: Request, body: GateApprove 
         handed_off=lambda: deps.task_is_live(request.app, wid),
     ):
         approval = await st.db.write(
-            lambda c: store.approve_gate(c, wid, gate, by=_decided_by(request))
+            lambda c: store.approve_gate(c, wid, gate, by=_decided_by(request), tips=tips)
         )
         if isinstance(approval, str):
             # Approved, and queued to go on once the checkout frees.

@@ -22,6 +22,7 @@ from kraft import (
     inplace,
     item_paths,
     node_runs,
+    reviewed_head,
     start_queue,
     storage,
     store,
@@ -244,6 +245,26 @@ async def _stop_live_sessions(st, wid: str, *, pause_item: bool = True) -> list[
         for s in sessions:
             _terminate(s["pid"], started=s["pid_start_time"])
     return ids
+
+
+def _moved_under_refusal(
+    st, wid: str, gate: str, stopped: list[str], tips, *, verb: str = "approve"
+) -> None:
+    """Refuse a person's approval or skip of the final gate (`tips` not None:
+    what it would pin, `kraft.reviewed_head`) when an agent it just stopped
+    (`stopped`: a reviewer, a reply, an escalation turn) may have moved the
+    branch since it started: its start tips are not these, or it recorded
+    none. The agent is stopped and the item paused, so a second look's
+    decision pins what the person saw. An agent that moved nothing costs no
+    second look."""
+    if not stopped or tips is None or not reviewed_head.moved_under(st.db, wid, stopped, tips):
+        return
+    raise HTTPException(
+        409,
+        f"an agent was still at work on this item at gate {gate!r}, and the branch may have "
+        f"changed since it started; it is stopped and the item paused: look at it again, "
+        f"then {verb}",
+    )
 
 
 def _forget_sandbox(run_dirs, worktree: Path, wid: str) -> None:
@@ -1486,6 +1507,10 @@ async def refresh_base(
         if status == WorkItemStatus.PAUSED or status in ENDED:
             raise HTTPException(409, stopped)
 
+    # Read before the rebase: Kraft's own, clean, so a head the final review
+    # approved stays the approved one, rebased (`reviewed_head.repin`).
+    folder = inplace.item_folder(st.run_dirs, row)
+    before = reviewed_head.tips(st.db, wid, row, folder)
     # No await between this read and the spawn: a stop from here on finds the task.
     active()
     rebasing = (
@@ -1505,6 +1530,9 @@ async def refresh_base(
         # walk's to be handed.
         active()
         raise
+    await reviewed_head.repin(
+        st.db, wid, before, reviewed_head.tips(st.db, wid, row, folder), cause="rebase"
+    )
     # A stop that came after the rebase ended found no task to cancel.
     active()
     return moved
@@ -2178,6 +2206,16 @@ async def skip_work_item(wid: str, body: Skip, request: Request):
             raise HTTPException(409, f"path: {node_id!r} does not allow skipping")
 
         sessions = st.db.read(lambda c: store.running_sessions_for_node(c, wid))
+        # A person passing the final gate passes the head as it stands
+        # (`kraft.reviewed_head`; None for any other node). An agent still at
+        # work there (a reviewer, a reply) may be moving it: stopped before
+        # the head is read, as `approve_gate` does, and one that moved the
+        # branch since it started refuses the skip, leaving the item paused.
+        stopped: list[str] = []
+        if sessions and node_id == reviewed_head.final_gate(row):
+            stopped, sessions = await _stop_live_sessions(st, wid), []
+        tips = reviewed_head.pin_for(st.db, row, node_id, inplace.item_folder(st.run_dirs, row))
+        _moved_under_refusal(st, wid, node_id, stopped, tips, verb="skip")
 
         # Bracketed from *before* the claim to the hand-off (the claim-then-return
         # class). A claim makes this item read `active`, which means "a walk is
@@ -2213,7 +2251,9 @@ async def skip_work_item(wid: str, body: Skip, request: Request):
             # mark first, then signal: same race pause_work_item guards against —
             # a SIGTERM landing before the row says 'paused' resolves as 'failed'.
             await st.db.write(
-                lambda c: store.skip_node(c, wid, node_id, gate, note, session_ids=session_ids)
+                lambda c: store.skip_node(
+                    c, wid, node_id, gate, note, session_ids=session_ids, tips=tips
+                )
             )
             for s in sessions:
                 _terminate(s["pid"], started=s["pid_start_time"])

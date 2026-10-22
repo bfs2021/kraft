@@ -556,7 +556,15 @@ def event_line(
             return f"{gate} · rejected{note}"
         case "gate_reopened":
             reason = p.get("reason")
-            why = {"retry": " by the retry", "conflict_resolved": " after a conflict was resolved"}
+            why = {
+                "retry": " by the retry",
+                "conflict_resolved": " after a conflict was resolved",
+                "base_changed": " after a base change",
+                "merge_rejected": " after the merge train or queue rejected it",
+                "escalation_committed": " after an escalation committed a change",
+                "read_only_violated": " after a read-only step changed files",
+                "unreviewed_change": " because the code changed after it was approved",
+            }
             return f"{gate} · reopened{why.get(reason, '') if isinstance(reason, str) else ''}"
         case "fix_cycle_started":
             return f"{node} · fix loop round {_round(p.get('cycle'))}"
@@ -618,6 +626,16 @@ def event_line(
             return f"MR !{_s(p.get('ref'))} closed{closer}"
         case "mr_reopened":
             return f"MR !{_s(p.get('ref'))} reopened"
+        case "merge_refused_unreviewed":
+            return f"{node} · not merged: the code is not what the final review approved"
+        case "reviewed_head_repinned":
+            # Kraft's own rewrite of the approved head (`kraft.reviewed_head.repin`).
+            how = {
+                "rebase": " with Kraft's own rebase",
+                "pointer_bump": " with Kraft's own pointer bump",
+            }
+            cause = p.get("cause")
+            return f"reviewed head moved{how.get(cause, '') if isinstance(cause, str) else ''}"
         case "budget_raised" | "budget_changed":
             return f"budget set to ${_s(p.get('budget_usd'))}"
         case "work_item_title_edited":

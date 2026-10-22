@@ -823,10 +823,20 @@ enforced-by: tests/executor/test_read_only.py::test_a_task_level_read_only_is_re
 
 ## REQ read-only-is-refused-with-a-fix-loop
 
-An execution node that declares a `fix_loop` SHALL NOT be `read_only`, and no
-step inside a recovery plan or a fix loop MAY be `read_only`: both write by
-design.
-enforced-by: tests/executor/test_read_only.py::test_a_node_with_a_fix_loop_cannot_be_read_only, tests/executor/test_read_only.py::test_a_recovery_or_fix_loop_step_cannot_be_read_only[on_failure], tests/executor/test_read_only.py::test_a_recovery_or_fix_loop_step_cannot_be_read_only[fix_loop]
+An execution node that declares a `fix_loop` SHALL NOT be `read_only`, and
+neither a fix loop, an `on_conflict` handler nor an `on_merge_rejected` repair,
+nor any step of one, SHALL be `read_only`: they write by design.
+enforced-by: tests/executor/test_read_only.py::test_a_node_with_a_fix_loop_cannot_be_read_only, tests/executor/test_read_only.py::test_a_recovery_or_fix_loop_step_cannot_be_read_only[fix_loop], tests/executor/test_read_only.py::test_a_recovery_or_fix_loop_step_cannot_be_read_only[on-conflict], tests/executor/test_read_only.py::test_a_recovery_or_fix_loop_step_cannot_be_read_only[merge-rejection-repair], tests/executor/test_read_only.py::test_a_recovery_or_fix_loop_step_cannot_be_read_only[a-read-only-repair-plan]
+
+## REQ a-read-only-on-failure-plan-is-checked-step-by-step
+
+WHERE an `on_failure` plan declares `read_only`, or every one of its steps
+does, the system SHALL verify each of the plan's steps -- the `main` step a
+`tasks` plan becomes included -- as a `read_only` step, and SHALL stop the
+work item for a human, naming the step and the changed files, when one
+changes the worktree.
+enforced-by: tests/executor/test_read_only.py::test_a_read_only_recovery_is_checked_like_any_read_only_step[the-plan-says-so], tests/executor/test_read_only.py::test_a_read_only_recovery_is_checked_like_any_read_only_step[its-step-says-so], tests/templates/test_failure_controls.py::test_a_read_only_on_failure_may_share_a_node_with_on_merge_rejected[node], tests/templates/test_failure_controls.py::test_a_read_only_on_failure_may_share_a_node_with_on_merge_rejected[every-step]
+origin: src/kraft/templates/models.py §RecoveryPlan -- the owner's ruling: a merge node may carry an `on_failure` only when it cannot commit, so the read_only check is what the merge node's safety rests on.
 
 ## REQ on-failure-runs-outside-the-read-only-check
 
@@ -884,6 +894,15 @@ When a gate is rejected, the executor SHALL apply that gate node's own
 `reject_to` behaviour.
 enforced-by: tests/executor/test_gates.py::test_gate_rejection_follows_its_own_reject_to, tests/executor/test_gates.py::test_a_rejection_with_no_reject_to_re_enters_the_execution_node_before_the_gate, tests/executor/test_gates.py::test_a_rejection_cannot_be_aimed_forward_past_the_gate, tests/executor/test_gates.py::test_a_fixed_verdict_re_enters_the_execution_node_before_the_gate, tests/api/test_gates.py::test_rejecting_the_final_gate_re_enters_at_implementation, tests/skills/test_gate_review.py::test_verdict_reenters_the_walk_at_the_right_node[reject-0], tests/test_planning_chain.py::test_spec_gate_offers_the_document_then_reject_and_approve
 origin: src/kraft/executor/gates.py §reject_target -- a gate with no `reject_to` re-enters at the nearest preceding *execution* node, not at the gate itself. A V1 gate has no execution shape, so the old fallback dispatched nothing and re-requested the same gate, a ping-pong bounded only by the reject loop's cap; re-running the node that produced what the gate is about is what makes the Kraft-rv6i "measure the repair rather than trust it" rule hold at a gate. A gate with nothing before it falls back to itself, which is the one case where there is no work to re-measure.
+
+## REQ a-rerun-back-before-an-approved-gate-asks-it-again
+
+WHEN a gate's rejection, or a person's request for changes with no gate
+pending, sends the chain back to a node at or before an already approved gate,
+the system SHALL ask that gate again when the re-run reaches it, and SHALL pass
+over it once it is approved again.
+enforced-by: tests/executor/test_default_chain.py::test_a_final_review_rejection_asks_the_approved_local_review_again, tests/executor/test_walk_rewind.py::test_a_rewind_back_past_approved_gates_asks_each_again[one-gate], tests/executor/test_walk_rewind.py::test_a_rewind_back_past_approved_gates_asks_each_again[two-gates]
+origin: src/kraft/store/gates.py §approval_stands -- the re-run is new work under the gate, and neither motion writes a `gate_reopened` for the gates it spans. The walk used to read only the newest gate event of any gate, which re-asked these by accident (a rewind past one approved gate, the newest, passed over it) and re-asked an older approved gate a clean restart should pass. A gate's approval is now read for that gate alone, and these two motions are read from their own events.
 
 ## REQ gate-decision-is-recorded-with-its-note
 
@@ -1208,6 +1227,16 @@ enforced-by: tests/executor/test_base_change.py::test_a_moved_base_restarts_the_
 The system SHALL reject an `on_base_changed.restart_from` target that is
 missing, is not an execution node, or is later than the declaring node.
 enforced-by: tests/templates/test_failure_controls.py::test_a_restart_target_must_be_this_or_an_earlier_execution_node[missing], tests/templates/test_failure_controls.py::test_a_restart_target_must_be_this_or_an_earlier_execution_node[gate], tests/templates/test_failure_controls.py::test_a_restart_target_must_be_this_or_an_earlier_execution_node[later], tests/templates/test_failure_controls.py::test_a_backward_restart_target_is_accepted[earlier], tests/templates/test_failure_controls.py::test_a_backward_restart_target_is_accepted[itself]
+
+## REQ a-merging-node-restarts-a-base-change-before-the-final-gate
+
+IF a node with an `mr.merge` task comes after the chain's first
+`chain_finalized` gate and its `on_base_changed.restart_from` names a node
+after that gate -- itself included -- THEN the system SHALL refuse the chain
+as authored and a chain revision that adds such a node, and SHALL still load a
+work item's chain stored before the rule.
+enforced-by: tests/templates/test_revision.py::test_a_change_set_that_would_not_validate_is_refused[add-a-merge-whose-base-change-restarts-past-the-final-gate], tests/templates/test_failure_controls.py::test_a_merging_node_past_the_final_gate_restarts_a_base_change_before_it[merging-restarts-itself], tests/templates/test_failure_controls.py::test_a_merging_node_past_the_final_gate_restarts_a_base_change_before_it[merging-restarts-past-the-gate], tests/templates/test_failure_controls.py::test_a_merging_node_past_the_final_gate_restarts_a_base_change_before_it[before-the-gate], tests/templates/test_failure_controls.py::test_a_merging_node_past_the_final_gate_restarts_a_base_change_before_it[no-merge], tests/templates/test_failure_controls.py::test_a_merging_node_past_the_final_gate_restarts_a_base_change_before_it[a-snapshot-stored-before-the-rule]
+origin: src/kraft/templates/models.py §Chain -- `mr.merge` answers `conflict` when its forced rebase cannot clear one; the conflict handler's resolution, restarted in place, would merge with no person seeing it.
 
 ## REQ rebase-conflict-requires-explicit-handler
 
@@ -1726,12 +1755,13 @@ origin: src/kraft/adapters/forge/run.py §_run_one -- Kraft-tx0dz. A member's re
 
 ## REQ base-change-restart-passes-an-approved-gate
 
-A base-change restart after a clean rebase SHALL NOT reopen a gate in its span
-that was already approved; the restarted walk SHALL pass over it. A restart
+A base-change restart after a clean rebase SHALL NOT reopen any gate in its
+span that was already approved but a `chain_finalized` one, which SHALL reopen
+with the reason `base_changed`; the restarted walk SHALL pass over each other one. A restart
 after an explicit conflict handler resolved a rebase conflict SHALL reopen every
 approved gate in its span, whether the conflict arose inside the walk or when
 `/retry` or `/resume` refreshed the worktree.
-enforced-by: tests/executor/test_default_chain.py::test_a_rebase_in_post_draft_feedback_retests_and_rereviews_the_rebased_head, tests/executor/test_base_change.py::test_a_resolved_conflict_reopens_the_approved_gates_in_its_span, tests/executor/test_base_change.py::test_a_conflict_at_the_door_goes_to_the_nodes_handler[retry], tests/executor/test_base_change.py::test_a_conflict_at_the_door_goes_to_the_nodes_handler[resume]
+enforced-by: tests/executor/test_default_chain.py::test_a_rebase_in_post_draft_feedback_retests_and_rereviews_the_rebased_head, tests/executor/test_base_change.py::test_a_clean_restart_passes_every_approved_gate_in_its_span[approved], tests/executor/test_base_change.py::test_a_clean_restart_passes_every_approved_gate_in_its_span[a-refused-rewind], tests/executor/test_base_change.py::test_a_clean_restart_passes_every_approved_gate_in_its_span[but-the-final-gate], tests/executor/test_base_change.py::test_a_resolved_conflict_reopens_the_approved_gates_in_its_span, tests/executor/test_base_change.py::test_a_conflict_at_the_door_goes_to_the_nodes_handler[retry], tests/executor/test_base_change.py::test_a_conflict_at_the_door_goes_to_the_nodes_handler[resume]
 origin: src/kraft/executor/walk.py §_restart_for_base_change -- Omid's decision: a clean rebase, the forge's forced rebase included, changes nothing a gate saw; a resolved conflict changed code no gate saw, so a human approves again. Distinct from `retry-reopens-invalidated-gates`: a restart is the walk's answer to a moved base, not an operator's retry.
 
 ## REQ optional-pre-draft-gate-keeps-work-local
@@ -1898,7 +1928,7 @@ enforced-by: tests/adapters/forge/test_waits.py::test_missing_external_approval_
 
 The system SHALL wait for a changed child repository to merge before updating
 a workspace root pointer to that child's revision.
-enforced-by: tests/templates/test_workspace_publication.py::test_child_merge_precedes_workspace_pointer_update[workspace], tests/templates/test_workspace_publication.py::test_child_merge_precedes_workspace_pointer_update[filed-before-workspaces], tests/templates/test_workspace_publication.py::test_root_mr_not_ready_until_child_mrs_have_merged, tests/templates/test_workspace_publication.py::test_the_pointer_bump_moves_only_merged_members_and_to_what_merged
+enforced-by: tests/templates/test_workspace_publication.py::test_child_merge_precedes_workspace_pointer_update[workspace], tests/templates/test_workspace_publication.py::test_child_merge_precedes_workspace_pointer_update[filed-before-workspaces], tests/templates/test_workspace_publication.py::test_root_mr_not_ready_until_child_mrs_have_merged, tests/templates/test_workspace_publication.py::test_the_pointer_bump_moves_only_merged_members_and_to_what_merged[clean-index], tests/templates/test_workspace_publication.py::test_the_pointer_bump_moves_only_merged_members_and_to_what_merged[an-unrelated-file-staged]
 
 ## REQ root-source-draft-merge-request-may-run-early
 
@@ -2123,12 +2153,13 @@ node declares `on_merge_rejected`, the system SHALL run the node's repair where
 the code needs one, then restart the chain at the declared `restart_from`,
 which SHALL name an earlier execution node, and one before the chain's first
 `chain_finalized` gate when that gate comes before the merge node. A node that
-declares `on_merge_rejected` SHALL NOT also declare a `fix_loop` or a
-node-level `on_failure`. The repair's commit SHALL be read on the item's
-branch, which the merge pushes, not at `HEAD`. The default chain SHALL declare
-`merge_request_feedback`.
-enforced-by: tests/executor/test_merge_rejection.py::test_a_code_drop_runs_the_repair_and_rewinds_with_gates_reopened[commits], tests/executor/test_merge_rejection.py::test_a_code_drop_runs_the_repair_and_rewinds_with_gates_reopened[leaves-head-behind], tests/executor/test_merge_rejection.py::test_a_clean_conflict_rebase_rewinds_without_an_agent_and_reopens_gates[plain], tests/executor/test_default_chain.py::test_default_chain_rewinds_a_train_drop_through_final_review, tests/templates/test_failure_controls.py::test_a_restart_target_must_be_this_or_an_earlier_execution_node[merge-rejected-missing], tests/templates/test_failure_controls.py::test_a_restart_target_must_be_this_or_an_earlier_execution_node[merge-rejected-gate], tests/templates/test_failure_controls.py::test_a_restart_target_must_be_this_or_an_earlier_execution_node[merge-rejected-later], tests/templates/test_failure_controls.py::test_a_restart_target_must_be_this_or_an_earlier_execution_node[merge-rejected-itself], tests/templates/test_failure_controls.py::test_a_backward_restart_target_is_accepted[merge-rejected-earlier], tests/templates/test_failure_controls.py::test_a_merge_rejection_policy_needs_a_merge_in_its_own_node[no-forge-task], tests/templates/test_failure_controls.py::test_a_merge_rejection_policy_needs_a_merge_in_its_own_node[another-forge-target], tests/templates/test_failure_controls.py::test_a_merge_rejection_policy_needs_a_merge_in_its_own_node[only-in-a-recovery-plan], tests/templates/test_materialization.py::test_a_skip_that_orphans_a_restart_target_repoints_or_clears_it[merge-rejection-restart], tests/templates/test_failure_controls.py::test_a_merge_rejection_rewind_must_pass_the_final_gate_and_only_the_repair_answers[restart-after-the-final-gate], tests/templates/test_failure_controls.py::test_a_merge_rejection_rewind_must_pass_the_final_gate_and_only_the_repair_answers[with-a-fix-loop], tests/templates/test_failure_controls.py::test_a_merge_rejection_rewind_must_pass_the_final_gate_and_only_the_repair_answers[with-node-on-failure], tests/templates/test_failure_controls.py::test_a_merge_rejection_rewind_from_before_the_final_gate_is_accepted
-origin: src/kraft/executor/walk.py §_repair_merge_rejection -- a rewind that starts past the final gate, or a fix cycle on the merge node, would merge an agent's commit no person saw. Skipping the named node at intake repoints `restart_from` to the nearest earlier kept execution node, or drops the policy when none is left.
+declares `on_merge_rejected` SHALL NOT also declare a `fix_loop`, nor an
+`on_failure` -- on the node, on one of its steps or on one of its tasks -- that
+is not `read_only` throughout. The
+repair's commit SHALL be read on the item's branch, which the merge pushes, not
+at `HEAD`. The default chain SHALL declare `merge_request_feedback`.
+enforced-by: tests/executor/test_merge_rejection.py::test_a_code_drop_runs_the_repair_and_rewinds_with_gates_reopened[commits], tests/executor/test_merge_rejection.py::test_a_code_drop_runs_the_repair_and_rewinds_with_gates_reopened[leaves-head-behind], tests/executor/test_merge_rejection.py::test_a_clean_conflict_rebase_rewinds_without_an_agent_and_reopens_gates[plain], tests/executor/test_default_chain.py::test_default_chain_rewinds_a_train_drop_through_final_review, tests/templates/test_failure_controls.py::test_a_restart_target_must_be_this_or_an_earlier_execution_node[merge-rejected-missing], tests/templates/test_failure_controls.py::test_a_restart_target_must_be_this_or_an_earlier_execution_node[merge-rejected-gate], tests/templates/test_failure_controls.py::test_a_restart_target_must_be_this_or_an_earlier_execution_node[merge-rejected-later], tests/templates/test_failure_controls.py::test_a_restart_target_must_be_this_or_an_earlier_execution_node[merge-rejected-itself], tests/templates/test_failure_controls.py::test_a_backward_restart_target_is_accepted[merge-rejected-earlier], tests/templates/test_failure_controls.py::test_a_merge_rejection_policy_needs_a_merge_in_its_own_node[no-forge-task], tests/templates/test_failure_controls.py::test_a_merge_rejection_policy_needs_a_merge_in_its_own_node[another-forge-target], tests/templates/test_failure_controls.py::test_a_merge_rejection_policy_needs_a_merge_in_its_own_node[only-in-a-recovery-plan], tests/templates/test_materialization.py::test_a_skip_that_orphans_a_restart_target_repoints_or_clears_it[merge-rejection-restart], tests/templates/test_failure_controls.py::test_a_merge_rejection_rewind_must_pass_the_final_gate_and_only_the_repair_answers[restart-after-the-final-gate], tests/templates/test_failure_controls.py::test_a_merge_rejection_rewind_must_pass_the_final_gate_and_only_the_repair_answers[with-a-fix-loop], tests/templates/test_failure_controls.py::test_a_merge_rejection_rewind_must_pass_the_final_gate_and_only_the_repair_answers[with-node-on-failure], tests/templates/test_failure_controls.py::test_a_merge_rejection_rewind_must_pass_the_final_gate_and_only_the_repair_answers[with-step-on-failure], tests/templates/test_failure_controls.py::test_a_merge_rejection_rewind_must_pass_the_final_gate_and_only_the_repair_answers[with-task-on-failure], tests/templates/test_failure_controls.py::test_a_merge_rejection_rewind_must_pass_the_final_gate_and_only_the_repair_answers[with-one-step-of-on-failure-writing], tests/templates/test_failure_controls.py::test_a_merge_rejection_rewind_from_before_the_final_gate_is_accepted, tests/templates/test_failure_controls.py::test_a_read_only_on_failure_may_share_a_node_with_on_merge_rejected[node], tests/templates/test_failure_controls.py::test_a_read_only_on_failure_may_share_a_node_with_on_merge_rejected[every-step], tests/templates/test_failure_controls.py::test_a_read_only_on_failure_may_share_a_node_with_on_merge_rejected[step], tests/templates/test_failure_controls.py::test_a_read_only_on_failure_may_share_a_node_with_on_merge_rejected[task]
+origin: src/kraft/executor/walk.py §_repair_merge_rejection -- a rewind that starts past the final gate, or a fix cycle or a handler that can commit on the merge node, would merge an agent's commit no person saw. Skipping the named node at intake repoints `restart_from` to the nearest earlier kept execution node, or drops the policy when none is left.
 
 ## REQ merge-rejection-reopens-approved-gates
 
@@ -2137,7 +2168,7 @@ approved gate between `restart_from` and the merge node, with the reason
 `merge_rejected`, after a repair's commit and after a conflict that Kraft's
 own rebase cleared alike, so the repaired head is approved again before it is
 queued. A gate before `restart_from` SHALL keep its approval.
-enforced-by: tests/executor/test_merge_rejection.py::test_a_code_drop_runs_the_repair_and_rewinds_with_gates_reopened[commits], tests/executor/test_merge_rejection.py::test_a_clean_conflict_rebase_rewinds_without_an_agent_and_reopens_gates[plain], tests/executor/test_merge_rejection.py::test_a_clean_conflict_rebase_rewinds_without_an_agent_and_reopens_gates[the-node-declares-on-base-changed], tests/executor/test_default_chain.py::test_default_chain_rewinds_a_train_drop_through_final_review
+enforced-by: tests/executor/test_merge_rejection.py::test_a_code_drop_runs_the_repair_and_rewinds_with_gates_reopened[commits], tests/executor/test_merge_rejection.py::test_a_clean_conflict_rebase_rewinds_without_an_agent_and_reopens_gates[plain], tests/executor/test_merge_rejection.py::test_a_clean_conflict_rebase_rewinds_without_an_agent_and_reopens_gates[the-node-declares-on-base-changed], tests/executor/test_merge_rejection.py::test_a_clean_conflict_rebase_rewinds_without_an_agent_and_reopens_gates[two-gates], tests/executor/test_default_chain.py::test_default_chain_rewinds_a_train_drop_through_final_review
 origin: src/kraft/executor/walk.py §run_once -- the owner's anti-goal: code an agent wrote must not reach the target branch without being seen at `final_review`. A clean rebase reopens too, since the rewound span's own fix loops can commit before any gate sees the head again.
 
 ## REQ a-repair-that-stops-after-committing-holds-the-item-at-restart-from
@@ -2150,6 +2181,54 @@ so that whatever resumes it walks back through them and never merges the
 repair's commit unseen.
 enforced-by: tests/executor/test_merge_rejection.py::test_a_stop_after_the_repair_committed_holds_the_item_at_restart_from[question-after-commit], tests/executor/test_merge_rejection.py::test_a_stop_after_the_repair_committed_holds_the_item_at_restart_from[failed-after-commit], tests/executor/test_merge_rejection.py::test_a_stop_after_the_repair_committed_holds_the_item_at_restart_from[paused-after-commit], tests/executor/test_merge_rejection.py::test_a_stop_after_the_repair_committed_holds_the_item_at_restart_from[budget], tests/executor/test_merge_rejection.py::test_a_rewind_whose_clock_ran_out_during_the_repair_holds_the_item
 origin: src/kraft/executor/walk.py §_hold_at_restart
+
+## REQ an-escalation-on-a-merge-node-never-merges-its-commit-in-place
+
+IF an escalation that ran while the item stood on a node declaring
+`on_merge_rejected` -- the node's own `escalation` task, or an escalation turn,
+Kraft's automatic one or a person's -- moved the item's branch, THEN the system
+SHALL NOT run that node again in place: it SHALL rewind to `restart_from` under
+the node's merge-rejection cap after a successful `escalation` task, SHALL
+otherwise hold the item at `restart_from` with the span's approved gates
+reopened, and SHALL start the turn's own self-retry at `restart_from` when it
+named a node after it. A branch tip that cannot be read SHALL count as moved,
+and an item that ended while the turn ran SHALL be left as it ended.
+enforced-by: tests/executor/test_merge_rejection.py::test_a_merge_node_s_escalation_never_merges_its_commit_in_place[commits-and-rewinds], tests/executor/test_merge_rejection.py::test_a_merge_node_s_escalation_never_merges_its_commit_in_place[commits-and-fails], tests/executor/test_merge_rejection.py::test_a_merge_node_s_escalation_never_merges_its_commit_in_place[changes-nothing], tests/executor/test_merge_rejection.py::test_a_merge_node_s_escalation_never_merges_its_commit_in_place[tips-unreadable], tests/executor/test_escalation.py::test_an_escalation_that_commits_on_a_merge_node_sends_it_back_through_review[commits-and-retries], tests/executor/test_escalation.py::test_an_escalation_that_commits_on_a_merge_node_sends_it_back_through_review[commits-and-retries-before-the-hold], tests/executor/test_escalation.py::test_an_escalation_that_commits_on_a_merge_node_sends_it_back_through_review[commits-and-stops], tests/executor/test_escalation.py::test_an_escalation_that_commits_on_a_merge_node_sends_it_back_through_review[changes-nothing], tests/executor/test_escalation.py::test_an_escalation_that_commits_on_a_merge_node_sends_it_back_through_review[tips-unreadable], tests/executor/test_escalation.py::test_an_escalation_that_commits_on_a_merge_node_sends_it_back_through_review[ended-meanwhile], tests/worker/test_reattach_escalation.py::test_a_reattached_turn_on_a_merge_node_is_held_when_it_committed[committed], tests/worker/test_reattach_escalation.py::test_a_reattached_turn_on_a_merge_node_is_held_when_it_committed[changed-nothing], tests/test_escalate.py::test_a_turn_on_a_merge_node_records_its_tips_and_is_told_a_commit_goes_back[a-merge-node], tests/test_escalate.py::test_a_turn_on_a_merge_node_records_its_tips_and_is_told_a_commit_goes_back[a-merge-node-whose-agent-commits], tests/test_escalate.py::test_a_turn_on_a_merge_node_records_its_tips_and_is_told_a_commit_goes_back[any-other-node], tests/store/test_passes.py::test_an_items_span_restart_starts_a_pass_from_its_event_log[a-merge-node-s-escalation-that-committed]
+origin: src/kraft/executor/walk.py §hold_after_escalation -- the default chain's `merge` auto-escalates at once on a merge that fails for another reason than a drop, and the turn's commit, retried in place, was pushed and merged with no person seeing it.
+
+## REQ merge-refuses-a-head-final-review-did-not-see
+
+WHEN the chain's first `chain_finalized` gate is approved -- by a person or its
+reviewer -- or skipped, the system SHALL record the branch tip in every
+checkout a merge could push. IF a tip moved while the gate's reviewer worked,
+THEN its approval SHALL leave the gate to a person instead. An agent started
+while the gate is pending -- its reviewer, a reply agent, an escalation turn --
+SHALL have the tips it starts over recorded. IF a person approves or skips the
+gate while such an agent is still at work on it, THEN the system SHALL stop
+that agent first, and IF a tip moved since it started, or it recorded none,
+SHALL refuse the decision and leave the item paused, so that it records no tip
+an agent may have moved unseen; an agent that moved nothing SHALL NOT stand in
+its way. Right before an `mr.merge` task asks the forge to
+merge, or to queue the merge request again, IF the tip it would push is not the
+recorded one, THEN the system SHALL NOT push or merge it, SHALL hold the item at
+the node's `on_merge_rejected.restart_from`, or else at that gate, with the
+approved gates between reopened, and SHALL stop for a person naming the
+change. Only Kraft's own rewrite of the recorded head with no agent and no
+conflict resolved -- a clean rebase, a workspace root's pointer bump to its
+merged members -- SHALL move the record. An item with no record SHALL merge
+unchecked.
+enforced-by: tests/adapters/forge/test_run_reviewed_head.py::test_the_merge_pushes_only_the_head_the_final_review_approved[the-approved-head-merges], tests/adapters/forge/test_run_reviewed_head.py::test_the_merge_pushes_only_the_head_the_final_review_approved[a-commit-after-the-approval-goes-back-to-the-final-gate], tests/adapters/forge/test_run_reviewed_head.py::test_the_merge_pushes_only_the_head_the_final_review_approved[a-merge-node-holds-it-at-restart-from], tests/adapters/forge/test_run_reviewed_head.py::test_the_merge_pushes_only_the_head_the_final_review_approved[approved-before-the-pin-is-not-checked], tests/adapters/forge/test_run_reviewed_head.py::test_the_merge_pushes_only_the_head_the_final_review_approved[kraft-s-own-clean-rebase-is-repinned-and-merges], tests/adapters/forge/test_run_reviewed_head.py::test_the_merge_pushes_only_the_head_the_final_review_approved[kraft-s-own-rebase-before-the-merge-is-repinned], tests/adapters/forge/test_run_merge_queue.py::test_an_infra_drop_never_queues_a_head_the_final_review_did_not_see_again, tests/templates/test_workspace_publication.py::test_a_workspace_merges_only_what_the_final_review_approved[as-approved], tests/templates/test_workspace_publication.py::test_a_workspace_merges_only_what_the_final_review_approved[a-member-changed-after], tests/templates/test_workspace_publication.py::test_a_workspace_merges_only_what_the_final_review_approved[the-root-changed-after], tests/templates/test_workspace_publication.py::test_a_pointer_only_root_bump_pushes_nothing_the_final_review_did_not_approve, tests/api/test_gates_pin.py::test_passing_the_final_gate_pins_the_head_it_passes[approved-the-final-gate], tests/api/test_gates_pin.py::test_passing_the_final_gate_pins_the_head_it_passes[approved-another-gate], tests/api/test_gates_pin.py::test_passing_the_final_gate_pins_the_head_it_passes[skipped-the-final-gate], tests/api/test_gates_pin.py::test_passing_the_final_gate_pins_the_head_it_passes[skipped-another-gate], tests/api/test_gates_pin.py::test_the_refresh_after_approving_the_final_gate_keeps_the_approved_head, tests/executor/test_gates_autoreview.py::test_an_agents_approval_of_the_final_gate_pins_the_head[unmoved], tests/executor/test_gates_autoreview.py::test_an_agents_approval_of_the_final_gate_pins_the_head[the-reviewer-commits], tests/api/test_gates_pin.py::test_passing_the_final_gate_over_a_live_agent_pins_nothing_it_wrote[approved-over-an-agent-that-committed], tests/api/test_gates_pin.py::test_passing_the_final_gate_over_a_live_agent_pins_nothing_it_wrote[approved-over-an-agent-that-committed-nothing], tests/api/test_gates_pin.py::test_passing_the_final_gate_over_a_live_agent_pins_nothing_it_wrote[approved-over-an-agent-that-recorded-no-head], tests/api/test_gates_pin.py::test_passing_the_final_gate_over_a_live_agent_pins_nothing_it_wrote[approved-another-gate-over-an-agent-that-committed], tests/api/test_gates_pin.py::test_passing_the_final_gate_over_a_live_agent_pins_nothing_it_wrote[skipped-over-an-agent-that-committed], tests/api/test_gates_pin.py::test_passing_the_final_gate_over_a_live_agent_pins_nothing_it_wrote[skipped-over-an-agent-that-committed-nothing], tests/api/test_review.py::test_approve_is_refused_while_a_must_fix_is_open_even_a_draft, tests/skills/test_gate_review.py::test_dispatch_is_a_worker_with_no_resume, tests/test_review_reply.py::test_the_reply_agent_runs_under_the_gate_with_edit_denied[the-final-gate], tests/test_escalate.py::test_a_turn_on_a_merge_node_records_its_tips_and_is_told_a_commit_goes_back[the-final-gate], tests/test_reviewed_head.py::test_only_a_rewrite_of_the_approved_head_moves_the_pin[the-approved-head-rebased], tests/test_reviewed_head.py::test_only_a_rewrite_of_the_approved_head_moves_the_pin[only-the-approved-checkout-moves], tests/test_reviewed_head.py::test_only_a_rewrite_of_the_approved_head_moves_the_pin[a-member-rebased], tests/test_reviewed_head.py::test_only_a_rewrite_of_the_approved_head_moves_the_pin[an-unreviewed-head-rebased], tests/test_reviewed_head.py::test_only_a_rewrite_of_the_approved_head_moves_the_pin[unreadable-after], tests/test_reviewed_head.py::test_only_a_rewrite_of_the_approved_head_moves_the_pin[nothing-pinned]
+origin: src/kraft/reviewed_head.py -- each guard that held a merge node after one route (a repair, an escalation, a read_only handler) left another open; one check at the merge closes every route that moves the branch after the approval. Known gaps, both follow-ups: the pin is taken when the gate is approved, so it is only as good as what that approval saw, and the forge's merge call does not name the head it merges.
+
+## REQ a-merge-nodes-read-only-on-failure-retries-the-merge-in-place
+
+WHEN a merge node's merge fails for another reason than a drop and its
+`read_only` `on_failure` finishes, the system SHALL ask the forge to merge
+again in place; and IF that handler changed the worktree all the same, THEN
+the system SHALL stop the item for a person with the span's approved gates
+reopened and the item held at `restart_from`.
+enforced-by: tests/executor/test_merge_rejection.py::test_a_read_only_on_failure_on_a_merge_node_retries_the_merge_in_place[merges-in-place], tests/executor/test_merge_rejection.py::test_a_read_only_on_failure_on_a_merge_node_retries_the_merge_in_place[a-commit-is-caught-and-held]
+origin: src/kraft/executor/walk.py §_sentinel_stop -- the straggler sweep commits a read_only scope's write onto the branch the merge pushes, so the stop alone would leave it one retry away from the forge.
 
 ## REQ a-restart-mid-rejection-never-merges-the-repair-unseen
 
@@ -2183,11 +2262,12 @@ WHEN the walk comes back to a merge node whose drop nothing has answered since
 node after the repair stopped -- the system SHALL run the node's
 `on_merge_rejected` repair again, with the person's steer, or finish the
 rewind, and SHALL NOT ask the forge to merge the head it rejected. Only
-entering the last gate before the merge node, or a node before that gate, as a
-retry from there does, answers the drop, and the walk then queues the reviewed
-head; entering the merge node itself, or a node between that gate and it,
-SHALL NOT.
-enforced-by: tests/executor/test_merge_rejection_resume.py::test_back_on_merge_after_an_unfinished_repair_the_repair_runs_again[rate-limited], tests/executor/test_merge_rejection_resume.py::test_back_on_merge_after_an_unfinished_repair_the_repair_runs_again[paused], tests/executor/test_merge_rejection_resume.py::test_back_on_merge_after_an_unfinished_repair_the_repair_runs_again[retry-after-nothing-committed], tests/executor/test_merge_rejection_resume.py::test_back_on_merge_after_an_unfinished_repair_the_repair_runs_again[retry-after-a-question], tests/executor/test_merge_rejection_resume.py::test_a_retry_back_through_the_gate_answers_the_drop[from-the-gate], tests/executor/test_merge_rejection_resume.py::test_a_retry_back_through_the_gate_answers_the_drop[from-an-earlier-node], tests/executor/test_merge_rejection_resume.py::test_back_on_merge_after_an_unfinished_repair_the_repair_runs_again[retry-after-a-failed-start], tests/executor/test_merge_rejection_resume.py::test_a_retry_past_the_gate_does_not_answer_the_drop, tests/executor/test_merge_rejection.py::test_a_stop_after_the_repair_committed_holds_the_item_at_restart_from[paused-after-commit]
+entering the chain's first `chain_finalized` gate (the last gate before the
+merge node, when the chain marks none), or a node before that gate, as a retry
+from there does, answers the drop, and the walk then queues the reviewed head;
+entering the merge node itself, or a node between that gate and it -- a later
+gate an agent answers included -- SHALL NOT.
+enforced-by: tests/executor/test_merge_rejection_resume.py::test_back_on_merge_after_an_unfinished_repair_the_repair_runs_again[rate-limited], tests/executor/test_merge_rejection_resume.py::test_back_on_merge_after_an_unfinished_repair_the_repair_runs_again[paused], tests/executor/test_merge_rejection_resume.py::test_back_on_merge_after_an_unfinished_repair_the_repair_runs_again[retry-after-nothing-committed], tests/executor/test_merge_rejection_resume.py::test_back_on_merge_after_an_unfinished_repair_the_repair_runs_again[retry-after-a-question], tests/executor/test_merge_rejection_resume.py::test_a_retry_back_through_the_gate_answers_the_drop[from-the-gate], tests/executor/test_merge_rejection_resume.py::test_a_retry_back_through_the_gate_answers_the_drop[from-an-earlier-node], tests/executor/test_merge_rejection_resume.py::test_a_retry_back_through_the_gate_answers_the_drop[from-the-final-gate], tests/executor/test_merge_rejection_resume.py::test_back_on_merge_after_an_unfinished_repair_the_repair_runs_again[retry-after-a-failed-start], tests/executor/test_merge_rejection_resume.py::test_a_retry_past_the_gate_does_not_answer_the_drop[after-the-last-gate], tests/executor/test_merge_rejection_resume.py::test_a_retry_past_the_gate_does_not_answer_the_drop[behind-a-later-gate], tests/executor/test_merge_rejection.py::test_a_stop_after_the_repair_committed_holds_the_item_at_restart_from[paused-after-commit]
 origin: src/kraft/executor/walk.py §walk_node -- the rate-limit poller and the resume door walk from the cursor without reconciling the node, and a retry's default target is the node the item stands on.
 
 ## REQ merge-rejection-rewinds-are-bounded

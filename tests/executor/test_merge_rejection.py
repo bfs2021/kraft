@@ -26,7 +26,7 @@ def _starts(it):
     return [
         e["payload"]["node_id"]
         for e in it.events("node_started")
-        if e["payload"]["node_id"] != "review"
+        if e["payload"]["node_id"] not in ("review", "signoff")
     ]
 
 
@@ -82,32 +82,36 @@ async def test_a_code_drop_runs_the_repair_and_rewinds_with_gates_reopened(item_
 
 
 @pytest.mark.parametrize(
-    ("merge", "fields"),
+    ("fields", "approved"),
     [
-        (MERGE_TASK, {}),
-        ({**MERGE_TASK, "on_failure": {"tasks": [v1_task("task_repair")]}}, {}),
-        (MERGE_TASK, {"on_base_changed": {"restart_from": "feedback"}}),
+        ({}, ("review",)),
+        ({"on_base_changed": {"restart_from": "feedback"}}, ("review",)),
+        ({}, ("review", "signoff")),
     ],
-    ids=["plain", "the-task-declares-on-failure", "the-node-declares-on-base-changed"],
+    ids=["plain", "the-node-declares-on-base-changed", "two-gates"],
 )
 async def test_a_clean_conflict_rebase_rewinds_without_an_agent_and_reopens_gates(
-    item_on, script, merge, fields
+    item_on, script, fields, approved
 ):
     """Kraft's forced rebase cleared the conflict, so no repair runs; the span's
     approved `review` still reopens, because the rewound span's own fix loops
-    can commit before any gate sees the head again. The drop is
-    `on_merge_rejected`'s alone: no task recovery spends itself on it, and the
-    base that forced rebase moved is not a second, base-change restart."""
-    it = await item_on(merge_chain(merge, on_merge_rejected=MERGE_POLICY, **fields))
-    await approve(it, "review")
+    can commit before any gate sees the head again -- every approved gate in
+    it, `two-gates` the older one too, though the newer approval came after it.
+    The base that forced rebase moved is not a second, base-change restart."""
+    it = await item_on(merge_chain(gates=approved, on_merge_rejected=MERGE_POLICY, **fields))
+    for gate in approved:
+        await approve(it, gate)
     merge_drops(it, script, "conflict", moves_base=True)
 
     assert await walk_once(it) == "awaiting_gate"
     assert [e["payload"] for e in it.events("gate_reopened")] == [
-        {"gate": "review", "reason": "merge_rejected"}
+        {"gate": gate, "reason": "merge_rejected"} for gate in approved
     ]
-    await approve(it, "review")
-    assert await walk_once(it) == "completed"
+    for gate in approved:
+        assert gates.pending_gate(it.database, it.id) == gate
+        await approve(it, gate)
+        status = await walk_once(it)
+    assert status == "completed"
     assert _starts(it) == ["feedback", "merge", "feedback", "merge"]
     assert script.calls == ["ci", "merge", "ci", "merge"]
     assert not it.events("node_recovery_started")
@@ -327,6 +331,100 @@ async def test_a_drop_on_a_re_measure_stops_promptly_for_a_person(item_on, scrip
         f"the node declares no on_merge_rejected{_NEVER}"
     )
     assert not gates.stuck_stop(stops)
+
+
+@pytest.mark.parametrize(
+    ("effect", "status", "calls"),
+    [
+        (None, "completed", ["ci", "merge", "wait", "merge"]),
+        (commits_a_fix, "needs_human", ["ci", "merge", "wait"]),
+    ],
+    ids=["merges-in-place", "a-commit-is-caught-and-held"],
+)
+async def test_a_read_only_on_failure_on_a_merge_node_retries_the_merge_in_place(
+    item_on, script, effect, status, calls
+):
+    """A merge that failed for another reason than a drop goes to the node's
+    read_only `on_failure`, and the merge is asked again in place: the head is
+    the one `review` approved. A handler that commits all the same is stopped
+    by the read_only check, and the item held at `restart_from` with `review`
+    reopened, so no retry merges its commit unseen."""
+    read_only = {"tasks": [v1_task("wait")], "read_only": True}
+    it = await item_on(merge_chain(on_merge_rejected=MERGE_POLICY, on_failure=read_only))
+    await approve(it, "review")
+    script.plan["merge"] = ["failed", "done"]
+    if effect is not None:
+        script.effects["wait"] = effect(it)
+
+    assert await walk_once(it) == status
+    assert script.calls == calls
+    reopened = [e["payload"] for e in it.events("gate_reopened")]
+    if effect is None:
+        assert reopened == []
+        return
+    assert it.events("work_item_needs_human")[-1]["payload"]["reason"] == (
+        "merge.on_failure.main is read_only, but it changed the worktree: fix.txt"
+    )
+    assert reopened == [{"gate": "review", "reason": "read_only_violated"}]
+    assert it.row()["current_node_id"] == "feedback"
+
+
+def _loses_the_branch(it):
+    """The merge's effect: its branch deleted from under the checkout, so no
+    read of its tip, before the escalation or after it, says anything."""
+
+    async def effect(row):
+        if git(it.worktree, "branch", "--list", store.branch_for(row)):
+            git(it.worktree, "checkout", "-q", "--detach", "HEAD")
+            git(it.worktree, "branch", "-q", "-D", store.branch_for(row))
+
+    return effect
+
+
+@pytest.mark.parametrize(
+    ("commits", "ends", "status", "calls"),
+    [
+        (True, "done", "awaiting_gate", ["ci", "merge", "esc", "ci"]),
+        (True, "failed", "needs_human", ["ci", "merge", "esc"]),
+        (False, "done", "completed", ["ci", "merge", "esc", "merge"]),
+        ("unreadable", "done", "awaiting_gate", ["ci", "merge", "esc", "ci"]),
+    ],
+    ids=["commits-and-rewinds", "commits-and-fails", "changes-nothing", "tips-unreadable"],
+)
+async def test_a_merge_node_s_escalation_never_merges_its_commit_in_place(
+    item_on, script, commits, ends, status, calls
+):
+    """The merge failed for another reason than a drop and the node's
+    `escalation` answered it. Rerunning the node would push and merge what it
+    committed with no person seeing it: a clean finish that committed rewinds
+    to `restart_from` instead, under the merge rejection's cap, with `review`
+    reopened; one that committed and then failed is held there. Told so up
+    front, not promised a rerun. With nothing committed the merge reruns; with
+    tips git could not read, before or after, nothing says so, and it rewinds."""
+    escalation = v1_task("esc", kind="subprocess", command="true")
+    it = await item_on(merge_chain(on_merge_rejected=MERGE_POLICY, escalation=escalation))
+    await approve(it, "review")
+    script.plan.update({"merge": ["failed", "done"], "esc": [ends]})
+    if commits == "unreadable":
+        script.effects["merge"] = _loses_the_branch(it)
+    elif commits:
+        script.effects["esc"] = commits_a_fix(it)
+
+    assert await walk_once(it) == status
+    assert script.calls == calls
+    assert "the chain goes back to node feedback" in script.instructions["esc"][0]
+    reopened = [e["payload"] for e in it.events("gate_reopened")]
+    if not commits:
+        assert reopened == []
+        return
+    assert reopened == [{"gate": "review", "reason": "escalation_committed"}]
+    assert it.row()["current_node_id"] == ("review" if ends == "done" else "feedback")
+    if ends == "done":
+        [restart] = it.events("merge_rejection_restart")
+        assert restart["payload"]["cause"] == "escalation"
+        assert it.events("steer_undelivered")[-1]["payload"]["steer"].startswith(
+            "Rewound to feedback because the escalation of node merge"
+        )
 
 
 async def _upstream_moves(it) -> str:

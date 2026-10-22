@@ -4,9 +4,12 @@ handler, and `on_merge_rejected` with its repair. What they *do* is
 `tests/executor/test_recovery.py` and `tests/executor/test_base_change.py`;
 this is their shape and validation."""
 
+import json
+
 import pytest
 import yaml
 from pydantic import ValidationError
+from support.harness import v1_chain
 
 from kraft.templates import models as tm
 from kraft.templates.library import TemplateLibrary
@@ -214,9 +217,10 @@ def test_a_backward_restart_target_is_accepted(policy, target):
     assert getattr(chain.nodes[2], policy).restart_from == target
 
 
-def _finalized(restart_from: str, **merge_fields) -> dict:
+def _finalized(restart_from: str, shape: dict | None = None, **merge_fields) -> dict:
     """early -> final (the final gate) -> ready -> merge, which restarts at
-    `restart_from` and declares `merge_fields` besides."""
+    `restart_from`, runs `shape` (`tasks` or `steps`; just a merge by default)
+    and declares `merge_fields` besides."""
     return {
         "id": "c",
         "nodes": [
@@ -225,12 +229,20 @@ def _finalized(restart_from: str, **merge_fields) -> dict:
             exec_node("ready", tasks=[sub()]),
             exec_node(
                 "merge",
-                tasks=[merge()],
+                **(shape or {"tasks": [merge()]}),
                 on_merge_rejected={"restart_from": restart_from, "repair": plan(sub("repair"))},
                 **merge_fields,
             ),
         ],
     }
+
+
+def _step(id: str, **kw) -> dict:
+    return {"id": id, "tasks": [sub(id)], **kw}
+
+
+def _read_only_step(id: str) -> dict:
+    return _step(id, read_only=True)
 
 
 @pytest.mark.parametrize(
@@ -247,15 +259,42 @@ def _finalized(restart_from: str, **merge_fields) -> dict:
         ),
         (
             _finalized("early", on_failure=plan(sub("fix"))),
-            "node 'merge': on_merge_rejected cannot share a node with on_failure in c",
+            "node 'merge': on_failure must be read_only on a node with on_merge_rejected: a "
+            "commit there would merge without final_review; set read_only: true on that "
+            "on_failure in c",
+        ),
+        (
+            _finalized(
+                "early",
+                {"steps": [{"id": "land", "tasks": [merge()], "on_failure": plan(sub("fix"))}]},
+            ),
+            "node 'merge': on_failure on step 'land' must be read_only on a node with "
+            "on_merge_rejected",
+        ),
+        (
+            _finalized("early", {"tasks": [sub("prep", on_failure=plan(sub("fix"))), merge()]}),
+            "node 'merge': on_failure on task 'prep' must be read_only on a node with "
+            "on_merge_rejected",
+        ),
+        (
+            _finalized("early", on_failure={"steps": [_read_only_step("wait"), _step("fix")]}),
+            "node 'merge': on_failure must be read_only on a node with on_merge_rejected",
         ),
     ],
-    ids=["restart-after-the-final-gate", "with-a-fix-loop", "with-node-on-failure"],
+    ids=[
+        "restart-after-the-final-gate",
+        "with-a-fix-loop",
+        "with-node-on-failure",
+        "with-step-on-failure",
+        "with-task-on-failure",
+        "with-one-step-of-on-failure-writing",
+    ],
 )
 def test_a_merge_rejection_rewind_must_pass_the_final_gate_and_only_the_repair_answers(chain, why):
     """A rewind that starts past the final gate would merge the repair's
-    commit with no person seeing it, and a fix cycle or a node repair on the
-    merge node would commit code its next measure merges unseen."""
+    commit with no person seeing it, and a fix cycle, or a handler on the
+    merge node -- its own, a step's or a task's -- that may write, would
+    commit code its next measure merges unseen."""
     with pytest.raises(ValidationError) as refused:
         tm.Chain.model_validate(chain)
     assert why in str(refused.value)
@@ -264,6 +303,114 @@ def test_a_merge_rejection_rewind_must_pass_the_final_gate_and_only_the_repair_a
 def test_a_merge_rejection_rewind_from_before_the_final_gate_is_accepted():
     chain = tm.Chain.model_validate(_finalized("early"))
     assert chain.nodes[3].on_merge_rejected.restart_from == "early"
+
+
+@pytest.mark.parametrize(
+    ("shape", "fields", "checked"),
+    [
+        ({"tasks": [merge()]}, {"on_failure": {**plan(sub("wait")), "read_only": True}}, "main"),
+        (
+            {"tasks": [merge()]},
+            {"on_failure": {"steps": [_read_only_step("wait"), _read_only_step("ask")]}},
+            "wait",
+        ),
+        (
+            {
+                "steps": [
+                    {
+                        "id": "land",
+                        "tasks": [merge()],
+                        "on_failure": {**plan(sub("wait")), "read_only": True},
+                    }
+                ]
+            },
+            {},
+            "main",
+        ),
+        (
+            {"tasks": [{**merge(), "on_failure": {**plan(sub("wait")), "read_only": True}}]},
+            {},
+            "main",
+        ),
+    ],
+    ids=["node", "every-step", "step", "task"],
+)
+def test_a_read_only_on_failure_may_share_a_node_with_on_merge_rejected(shape, fields, checked):
+    """A handler that cannot commit -- it waits, retries or comments -- may
+    answer a merge that failed for any other reason than a drop: the merge it
+    re-runs in place is of the head a person approved. Its steps resolve
+    read_only, which is what the run checks (`executor.read_only`); a `tasks`
+    plan says so on the plan, since its one step has no entry of its own."""
+    chain = tm.Chain.model_validate(_finalized("early", shape, **fields))
+    [node] = [n for n in tm.ResolvedChain.from_chain(chain).nodes if n.id == "merge"]
+    handlers = [
+        node.on_failure,
+        *(s.on_failure for s in node.steps),
+        *(t.on_failure for t in node.tasks()),
+    ]
+    [plan_steps] = [h for h in handlers if h]
+    assert [s.read_only for s in plan_steps] == [True] * len(plan_steps)
+    assert plan_steps[0].id == checked
+
+
+def _past_the_final_gate(restart_from: str, tasks) -> dict:
+    """early -> final (the final gate) -> ready -> land, which runs `tasks`
+    and restarts a base change at `restart_from`, resolving a conflict."""
+    base_change = {"restart_from": restart_from, "on_conflict": plan(sub("resolve"))}
+    return {
+        "id": "c",
+        "nodes": [
+            exec_node("early", tasks=[sub()]),
+            {"id": "final", "kind": "gate", "chain_finalized": True},
+            exec_node("ready", tasks=[sub()]),
+            exec_node("land", tasks=tasks, on_base_changed=base_change),
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("restart_from", "tasks", "refused"),
+    [
+        ("land", [merge()], True),
+        ("ready", [merge()], True),
+        ("early", [merge()], False),
+        ("land", [sub()], False),
+        ("ready", [merge()], "stored"),
+    ],
+    ids=[
+        "merging-restarts-itself",
+        "merging-restarts-past-the-gate",
+        "before-the-gate",
+        "no-merge",
+        "a-snapshot-stored-before-the-rule",
+    ],
+)
+def test_a_merging_node_past_the_final_gate_restarts_a_base_change_before_it(
+    restart_from, tasks, refused
+):
+    """The conflict handler's resolution, or a fix cycle in the restarted
+    span, would otherwise reach the merge with no person seeing it: `mr.merge`
+    answers `conflict` when its forced rebase cannot clear one. A node that
+    does not merge may still restart itself. A chain an item froze before the
+    rule still loads: refusing it would fail every read of an in-flight item,
+    and its merge refuses a head the final review did not approve anyway."""
+    chain = _past_the_final_gate(restart_from, tasks)
+    if refused == "stored":
+        valid = _past_the_final_gate("early", tasks)
+        stored = json.loads(v1_chain(valid["nodes"], repo="/r").to_json())
+        stored["chain"]["nodes"][3]["on_base_changed"]["restart_from"] = restart_from
+        loaded = tm.MaterializedChain.from_json(json.dumps(stored))
+        assert loaded.chain.nodes[3].node.on_base_changed.restart_from == restart_from
+        return
+    if not refused:
+        assert tm.Chain.model_validate(chain).nodes[3].on_base_changed.restart_from == restart_from
+        return
+    with pytest.raises(ValidationError) as caught:
+        tm.Chain.model_validate(chain)
+    assert (
+        f"node 'land': on_base_changed.restart_from {restart_from!r} must name an execution "
+        "node before the final gate 'final', since 'land' merges, in c"
+    ) in str(caught.value)
 
 
 @pytest.mark.parametrize(
