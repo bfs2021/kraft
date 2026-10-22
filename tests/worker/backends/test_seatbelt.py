@@ -3,6 +3,7 @@ and what it refuses. Text only; the real sandbox-exec is proven by the e2e tier.
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import os
 import pty
@@ -140,8 +141,10 @@ def test_dev_is_read_by_name_never_whole():
         assert f'(allow file-read* (literal "/dev/{name}"))' in text
     # Rendered resolved: a symlink on Linux, the directory itself on a Mac.
     assert f'(allow file-read* (subpath "{os.path.realpath("/dev/fd")}"))' in text
-    # And the one file outside `/dev` the `git` shim through Xcode.app needs.
+    # And what the `git` shim through Xcode.app needs outside `/dev`.
     assert '(allow file-read* (subpath "/Library/Preferences/com.apple.dt.Xcode.plist"))' in text
+    framework = "/Library/Apple/System/Library/PrivateFrameworks/MobileDevice.framework"
+    assert f'(allow file-read* (subpath "{framework}"))' in text
 
 
 @pytest.mark.e2e("sandbox-exec")
@@ -435,7 +438,12 @@ def test_tiocsti_cannot_type_into_a_controlling_terminal(tmp_path, sandboxed):
     )
     try:
         said = proc.stdout.readline()
-        typed = os.read(slave, 1) if select.select([slave], [], [], 1)[0] else b""
+        try:
+            typed = os.read(slave, 1) if select.select([slave], [], [], 1)[0] else b""
+        except OSError as exc:  # EIO: a refused run exited, which hung the terminal up
+            if exc.errno != errno.EIO:
+                raise
+            typed = b""
     finally:
         proc.kill()
         proc.wait()
