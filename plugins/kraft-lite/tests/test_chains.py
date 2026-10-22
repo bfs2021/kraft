@@ -651,6 +651,19 @@ def _rejecting(rejected: str, before: str = "", tasks: str = MERGE_TASK, extra: 
             id="merge_rejected_without_repair",
         ),
         pytest.param(
+            {"c": _rejecting(f"restart_from: a, {REPAIR}, max_attempts: 2")},
+            r"m.on_merge_rejected.max_attempts: unknown key; known: \['restart_from', 'repair'\]",
+            id="merge_rejected_unknown_key",
+        ),
+        pytest.param(
+            {
+                "c": "nodes:\n  - {id: a, kind: exec, tasks: [{id: t, extends: worker}], "
+                "on_base_changed: {restart_form: a}}\n"
+            },
+            r"a.on_base_changed.restart_form: unknown key; known: \[.restart_from.",
+            id="base_changed_unknown_key",
+        ),
+        pytest.param(
             {
                 "r": _rejecting(
                     f"restart_from: b, {REPAIR}",
@@ -704,16 +717,46 @@ def test_repo_library_names_its_own(tmp_path, home, written, components):
         kl_chains.resolve(tmp_path, {}, "repo:bad")
 
 
-def test_resolve_path_argument(tmp_path, home):
-    """A chain file outside any library resolves its `extends` against the
-    instance library, here the bundled one."""
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    file = elsewhere / "mine.yaml"
-    file.write_text("extends: quick-task\nremove: [verify]\n")
+@pytest.mark.parametrize(
+    ("folder", "edit", "nodes", "components", "id_and_source"),
+    [
+        pytest.param(
+            "elsewhere",
+            "remove: [verify]\n",
+            ["implementation"],
+            ["implementer"],
+            ("mine", "{file}"),
+            id="outside",
+        ),
+        # A draft beside the repo library is not one of its chains.
+        pytest.param(
+            ".kraft/drafts",
+            "remove: [verify]\n",
+            ["implementation"],
+            ["implementer"],
+            ("mine", "{file}"),
+            id="beside_the_repo_library",
+        ),
+        # One of the repo library's own chains: that chain, as `repo:mine`.
+        pytest.param(".kraft/chains", "", ["a"], ["own"], ("repo:mine", "repo"), id="repo_chain"),
+    ],
+)
+def test_resolve_path_argument(tmp_path, home, folder, edit, nodes, components, id_and_source):
+    """A chain file in the repo library's `chains/` is that repo chain; any
+    other resolves its `extends` against the instance library, here the
+    bundled one. The repo has a `quick-task` of its own, so the two cannot
+    agree by accident."""
+    repo_lib = "tasks:\n  own: {kind: agent, prompt: Mine.}\n"
+    write_library(
+        tmp_path / ".kraft", repo_lib, {"quick-task": _task_chain("{id: t, extends: own}")}
+    )
+    file = tmp_path / folder / "mine.yaml"
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(f"extends: quick-task\n{edit}")
 
     chain = kl_chains.resolve(tmp_path, {}, path=file)
 
-    assert (chain["id"], chain["source"]) == ("mine", str(file))
-    assert [node["id"] for node in chain["nodes"]] == ["implementation"]
-    assert _first_task(chain)["components"] == ["implementer"]
+    id, source = id_and_source
+    assert (chain["id"], chain["source"]) == (id, source.format(file=file))
+    assert [node["id"] for node in chain["nodes"]] == nodes
+    assert _first_task(chain)["components"] == components
