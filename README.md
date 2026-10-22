@@ -98,7 +98,7 @@
 | src/kraft/console/screens/addons.py          |      236 |        5 |     98% |298-301, 306, 395 |
 | src/kraft/console/screens/board.py           |      392 |        9 |     98% |374, 377, 388, 515, 551-555 |
 | src/kraft/console/screens/item.py            |      481 |       13 |     97% |393, 395-396, 446, 458-459, 482, 531, 621-622, 637, 696-697 |
-| src/kraft/console/screens/item\_chain.py     |      137 |        5 |     96% |66-67, 82, 169, 189 |
+| src/kraft/console/screens/item\_chain.py     |      137 |        4 |     97% |66-67, 169, 189 |
 | src/kraft/console/screens/item\_menu.py      |       96 |        0 |    100% |           |
 | src/kraft/console/screens/new\_item.py       |       74 |        1 |     99% |       141 |
 | src/kraft/console/screens/repos.py           |       84 |        2 |     98% |   105-106 |
@@ -129,7 +129,7 @@
 | src/kraft/events.py                          |       31 |        0 |    100% |           |
 | src/kraft/executor/\_\_init\_\_.py           |       10 |        0 |    100% |           |
 | src/kraft/executor/context.py                |       60 |        2 |     97% |  243, 274 |
-| src/kraft/executor/dispatch.py               |      916 |       23 |     97% |278, 347, 383-384, 515, 666, 669, 992-993, 1158-1159, 1191-1193, 1441-1442, 1455-1456, 1912, 1920, 2656, 3009, 3015 |
+| src/kraft/executor/dispatch.py               |      916 |       24 |     97% |278, 347, 383-384, 515, 666, 669, 992-993, 1158-1159, 1191-1193, 1441-1442, 1454-1456, 1912, 1920, 2656, 3009, 3015 |
 | src/kraft/executor/entry.py                  |      190 |        1 |     99% |       450 |
 | src/kraft/executor/fallback.py               |       83 |        0 |    100% |           |
 | src/kraft/executor/gates.py                  |      388 |       10 |     97% |241, 369, 372, 375, 380, 849, 866, 980-981, 1349 |
