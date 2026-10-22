@@ -9,10 +9,15 @@ Ruling 105 puts the entry's `deny_tools` and `sandbox` in that layer too.
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
+from contextlib import closing
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import yaml
+from support.api import _force_node
 from support.harness import make_repo_with_submodule
 
 from kraft import config
@@ -214,3 +219,149 @@ def test_a_filed_workspace_item_freezes_each_repositorys_policy(client, tmp_path
     assert snapshot["repository_policies"]["a"]["deny_tools"] == ["WebFetch"]
     assert snapshot["repository_policies"]["ws"]["deny_tools"] == []
     assert snapshot["policy"]["deny_tools"] == ["WebFetch"]
+
+
+# ── a person's retry re-reads the sandbox (Kraft-ajzx7) ──
+
+_EDITED = {**_SANDBOX, "image": "kraft/worker:2"}
+
+
+@pytest.fixture
+def no_walk(monkeypatch):
+    """A retry that walks nothing: the walk is not what these tests are about."""
+    from kraft import executor
+
+    async def walk(*_args, **_kwargs):
+        return "completed"
+
+    monkeypatch.setattr(executor, "retry", walk)
+
+
+@pytest.fixture
+def stopped(client, repo, no_walk):
+    """An item filed sandboxed, stopped at `verification`."""
+    _connect(client.app.state.templates_dir, repo, sandbox=_SANDBOX)
+    wid = _file(client, repo, chain_template="default").json()["id"]
+    _force_node(wid, "verification", "needs_human")
+    return wid
+
+
+def _rereads(client, wid) -> list[dict]:
+    events = client.get(f"/api/work-items/{wid}/events").json()
+    return [e["payload"] for e in events if e["type"] == "sandbox_reread"]
+
+
+def _without_sandbox(snapshot: dict) -> dict:
+    return {**snapshot, "policy": {**snapshot["policy"], "sandbox": None}}
+
+
+def _row(wid, run_chain_from_intake=False) -> sqlite3.Row:
+    with closing(sqlite3.connect(Path(os.environ["KRAFT_RUN_DIR"]) / "orchestrator.db")) as c, c:
+        c.row_factory = sqlite3.Row
+        if run_chain_from_intake:  # as an earlier retry's fork leaves it
+            c.execute("UPDATE work_items SET run_chain = materialized_chain WHERE id = ?", (wid,))
+        return c.execute("SELECT * FROM work_items WHERE id = ?", (wid,)).fetchone()
+
+
+_FLAG = {"sandbox_from_config": True}
+
+
+@pytest.mark.parametrize(
+    ("edit", "body", "forked", "runs_in", "recorded"),
+    [
+        (_EDITED, {}, False, _SANDBOX, []),
+        (_EDITED, _FLAG, False, _EDITED, [{"old": _SANDBOX, "new": _EDITED}]),
+        (_EDITED, _FLAG, True, _EDITED, [{"old": _SANDBOX, "new": _EDITED}]),
+        (_SANDBOX, _FLAG, False, _SANDBOX, []),
+    ],
+    ids=[
+        "plain-retry-keeps-the-frozen-one",
+        "flag-takes-the-edit",
+        "flag-rewrites-the-run-fork-too",
+        "flag-with-no-change",
+    ],
+)
+def test_a_persons_retry_can_take_the_sandbox_repos_yaml_sets_now(
+    client, repo, stopped, edit, body, forked, runs_in, recorded
+):
+    """Ruling 105 holds for a plain retry; `sandbox_from_config` replaces
+    only the frozen sandbox, in the intake snapshot and the run fork's
+    chain, records both, and records nothing when the two are the same."""
+    from kraft.executor import dispatch
+
+    _row(stopped, run_chain_from_intake=forked)
+    before = _snapshot(client, stopped)
+    _connect(client.app.state.templates_dir, repo, sandbox=edit)
+    shown = client.get(f"/api/work-items/{stopped}/sandbox-from-config").json()
+    assert (shown["old"], shown["new"]) == (_SANDBOX, edit)
+    assert _snapshot(client, stopped) == before  # the preview `--yes` gates changes nothing
+
+    r = client.post(f"/api/work-items/{stopped}/retry", json=body)
+
+    assert r.status_code == 200, r.text
+    row = _row(stopped)
+    assert (row["run_chain"] is not None) is forked
+    assert dispatch._item_policy(row, None).model_dump() == runs_in
+    assert _without_sandbox(_snapshot(client, stopped)) == _without_sandbox(before)
+    assert _rereads(client, stopped) == recorded
+    if body:
+        assert r.json()["sandbox"]["changed"] is bool(recorded)
+
+
+@pytest.mark.parametrize(
+    ("headers", "instance", "status", "detail"),
+    [
+        ({"X-Kraft-Session-Id": "w-other/abc123"}, None, 403, "not an agent's"),
+        ({"X-Kraft-Client": "mcp"}, None, 403, "not an assistant's"),
+        ({}, {"allowed_tools": ["Read"]}, 422, "allowed_tools"),
+    ],
+    ids=["worker", "assistant", "instance-refuses"],
+)
+def test_a_refused_sandbox_reread_changes_nothing(
+    client, repo, stopped, headers, instance, status, detail
+):
+    before = _snapshot(client, stopped)
+    if instance is not None:
+        client.app.state.instance_policy = _instance(**instance)
+    _connect(
+        client.app.state.templates_dir,
+        repo,
+        sandbox=_EDITED,
+        policy={"allowed_tools": ["Read", "Bash"]},
+    )
+
+    r = client.post(
+        f"/api/work-items/{stopped}/retry", json={"sandbox_from_config": True}, headers=headers
+    )
+
+    assert r.status_code == status, r.text
+    assert detail in r.json()["detail"]
+    assert _snapshot(client, stopped) == before
+    assert _rereads(client, stopped) == []
+    assert client.get(f"/api/work-items/{stopped}").json()["status"] == "needs_human"
+
+
+def test_a_workspace_retry_rereads_each_members_sandbox(client, tmp_path, no_walk):
+    """A workspace item's members are re-read too, each into its own frozen
+    policy, and the assembled checkout's with them."""
+    root, _sub = make_repo_with_submodule(tmp_path, submodule_path="libs/a")
+    client.post("/api/repos", json={"path": str(root), "enabled": False})
+    repos_yaml = client.app.state.templates_dir / "repos.yaml"
+
+    def member_sandbox(sandbox):
+        doc = yaml.safe_load(repos_yaml.read_text())
+        next(e for e in doc["repos"] if e.get("id") == "a")["sandbox"] = sandbox
+        repos_yaml.write_text(yaml.safe_dump(doc))
+
+    member_sandbox(_SANDBOX)
+    wid = _file(client, root, workspace="ws", members=["a"]).json()["id"]
+    _force_node(wid, "verification", "needs_human")
+    member_sandbox(_EDITED)
+
+    r = client.post(f"/api/work-items/{wid}/retry", json=_FLAG)
+
+    assert r.status_code == 200, r.text
+    snapshot = _snapshot(client, wid)
+    assert snapshot["repository_policies"]["a"]["sandbox"] == _EDITED
+    assert snapshot["policy"]["sandbox"] == _EDITED
+    assert _rereads(client, wid) == [{"old": _SANDBOX, "new": _EDITED}]
