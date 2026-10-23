@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">151 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">145<span class="text"> run</span></button>
+            <span class="text">147 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">141<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">6<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_b5a89f03f870f995_read_only_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-23 18:54 +0000
+            created at 2026-10-23 19:30 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -675,40 +675,32 @@
     <p class="run run2"><span class="n"><a id="t593" href="#t593">593</a></span><span class="t">    <span class="op">)</span> <span class="op">+</span> <span class="nam">body</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t594" href="#t594">594</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t595" href="#t595">595</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t596" href="#t596">596</a></span><span class="t"><span class="com">#: What verify will run, shown to the node that can still act on it. 49c0cefd</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t597" href="#t597">597</a></span><span class="t"><span class="com">#: changed 21 frontend files, read the justfile, and never ran `just e2e-ci`</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t598" href="#t598">598</a></span><span class="t"><span class="com">#: (`grep -c e2e-ci` in its implementation log = 0); the flake that reached</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t599" href="#t599">599</a></span><span class="t"><span class="com">#: verify instead cost $17.41 and ~3h there. The agent had the capability and</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t600" href="#t600">600</a></span><span class="t"><span class="com">#: not the mapping (Kraft-s7c04.8).</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t601" href="#t601">601</a></span><span class="t"><span class="com">#:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t602" href="#t602">602</a></span><span class="t"><span class="com">#: The scope TABLE, not a resolved selection: at implementation dispatch the</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t603" href="#t603">603</a></span><span class="t"><span class="com">#: agent has written nothing, so the diff is empty and `_matched_scopes` fails</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t604" href="#t604">604</a></span><span class="t"><span class="com">#: open to every scope. Printing &quot;all of them&quot; would teach it nothing. verify&#x27;s</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t605" href="#t605">605</a></span><span class="t"><span class="com">#: own selection is unchanged -- this hands the agent the same mapping so it</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t606" href="#t606">606</a></span><span class="t"><span class="com">#: applies the same rule to what it actually changed.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t607" href="#t607">607</a></span><span class="t"><span class="nam">_SCOPE_NOTE</span> <span class="op">=</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t608" href="#t608">608</a></span><span class="t">    <span class="str">&quot;\n\nBefore you finish, run the checks that gate the paths you changed. &quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t609" href="#t609">609</a></span><span class="t">    <span class="str">&quot;verify runs exactly these against your diff, and a failure there costs a &quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t610" href="#t610">610</a></span><span class="t">    <span class="str">&quot;full review round:\n{rows}\n&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t611" href="#t611">611</a></span><span class="t">    <span class="str">&quot;A changed path matching no scope runs every scope.&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t612" href="#t612">612</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t613" href="#t613">613</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t614" href="#t614">614</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t615" href="#t615">615</a></span><span class="t"><span class="key">def</span> <span class="nam">scope_note</span><span class="op">(</span><span class="nam">task</span><span class="op">:</span> <span class="nam">AgentTask</span><span class="op">,</span> <span class="nam">repo_entry</span><span class="op">:</span> <span class="nam">RepoEntry</span> <span class="op">|</span> <span class="key">None</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t616" href="#t616">616</a></span><span class="t">    <span class="str">&quot;&quot;&quot;The repo&#x27;s path-&gt;command test mapping, for the task working from the</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t617" href="#t617">617</a></span><span class="t"><span class="str">    brief only -- the same &quot;no skill of its own&quot; rule `progress_note` applies,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t618" href="#t618">618</a></span><span class="t"><span class="str">    and never a node id: a chain whose implementing node is called `build` must</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t619" href="#t619">619</a></span><span class="t"><span class="str">    still get this (Kraft-s7c04.45).</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t620" href="#t620">620</a></span><span class="t"><span class="str">    &quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t621" href="#t621">621</a></span><span class="t">    <span class="key">if</span> <span class="nam">task</span><span class="op">.</span><span class="nam">skill</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">or</span> <span class="nam">repo_entry</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t622" href="#t622">622</a></span><span class="t">        <span class="key">return</span> <span class="str">&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t623" href="#t623">623</a></span><span class="t">    <span class="nam">scopes</span> <span class="op">=</span> <span class="op">[</span><span class="op">(</span><span class="nam">s</span><span class="op">.</span><span class="nam">paths</span><span class="op">,</span> <span class="nam">s</span><span class="op">.</span><span class="nam">command</span><span class="op">)</span> <span class="key">for</span> <span class="nam">s</span> <span class="key">in</span> <span class="nam">repo_entry</span><span class="op">.</span><span class="nam">test_scopes</span> <span class="key">or</span> <span class="op">(</span><span class="op">)</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t624" href="#t624">624</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">scopes</span> <span class="key">and</span> <span class="nam">repo_entry</span><span class="op">.</span><span class="nam">test_command</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t625" href="#t625">625</a></span><span class="t">        <span class="nam">scopes</span> <span class="op">=</span> <span class="op">[</span><span class="op">(</span><span class="op">[</span><span class="str">&quot;**&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">repo_entry</span><span class="op">.</span><span class="nam">test_command</span><span class="op">)</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t626" href="#t626">626</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">scopes</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t627" href="#t627">627</a></span><span class="t">        <span class="key">return</span> <span class="str">&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t628" href="#t628">628</a></span><span class="t">    <span class="nam">rows</span> <span class="op">=</span> <span class="str">&quot;\n&quot;</span><span class="op">.</span><span class="nam">join</span><span class="op">(</span><span class="fst">f&quot;</span><span class="fst">  </span><span class="op">{</span><span class="str">&#x27;, &#x27;</span><span class="op">.</span><span class="nam">join</span><span class="op">(</span><span class="nam">paths</span><span class="op">)</span><span class="op">}</span><span class="fst">\n      </span><span class="op">{</span><span class="nam">command</span><span class="op">}</span><span class="fst">&quot;</span> <span class="key">for</span> <span class="nam">paths</span><span class="op">,</span> <span class="nam">command</span> <span class="key">in</span> <span class="nam">scopes</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t629" href="#t629">629</a></span><span class="t">    <span class="key">return</span> <span class="nam">_SCOPE_NOTE</span><span class="op">.</span><span class="nam">format</span><span class="op">(</span><span class="nam">rows</span><span class="op">=</span><span class="nam">rows</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t596" href="#t596">596</a></span><span class="t"><span class="com">#: Which tests the task working from the brief runs. Its own, picked by path:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t597" href="#t597">597</a></span><span class="t"><span class="com">#: the repo&#x27;s test scopes are the full suite in some repos (`just ci-test`), and</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t598" href="#t598">598</a></span><span class="t"><span class="com">#: an implementer handed that table and told to run &quot;the checks that gate your</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t599" href="#t599">599</a></span><span class="t"><span class="com">#: paths&quot; ran the whole suite twice before verification ran it again</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t600" href="#t600">600</a></span><span class="t"><span class="com">#: (Kraft-jl7un). The e2e clause is why there was a table at all: an</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t601" href="#t601">601</a></span><span class="t"><span class="com">#: implementer once changed 21 frontend files and never ran an e2e spec, and the</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t602" href="#t602">602</a></span><span class="t"><span class="com">#: flake that reached verify cost $17.41 (Kraft-s7c04.8).</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t603" href="#t603">603</a></span><span class="t"><span class="nam">_SCOPE_NOTE</span> <span class="op">=</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t604" href="#t604">604</a></span><span class="t">    <span class="str">&quot;\n\nBefore you finish, run the tests for the files you touched and for the &quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t605" href="#t605">605</a></span><span class="t">    <span class="str">&quot;code related to them, by path, an e2e spec included when it covers a UI file &quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t606" href="#t606">606</a></span><span class="t">    <span class="str">&quot;you changed. Do not run the full test suite or any repo-wide test command: &quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t607" href="#t607">607</a></span><span class="t">    <span class="str">&quot;verification and CI run those against your diff after you finish.&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t608" href="#t608">608</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t609" href="#t609">609</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t610" href="#t610">610</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t611" href="#t611">611</a></span><span class="t"><span class="key">def</span> <span class="nam">scope_note</span><span class="op">(</span><span class="nam">task</span><span class="op">:</span> <span class="nam">AgentTask</span><span class="op">,</span> <span class="nam">repo_entry</span><span class="op">:</span> <span class="nam">RepoEntry</span> <span class="op">|</span> <span class="key">None</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t612" href="#t612">612</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Which tests to run, for the task working from the brief only -- the same</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t613" href="#t613">613</a></span><span class="t"><span class="str">    &quot;no skill of its own&quot; rule `progress_note` applies, and never a node id: a</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t614" href="#t614">614</a></span><span class="t"><span class="str">    chain whose implementing node is called `build` must still get this</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t615" href="#t615">615</a></span><span class="t"><span class="str">    (Kraft-s7c04.45). Nothing for a repo that declares no tests.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t616" href="#t616">616</a></span><span class="t"><span class="str">    &quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t617" href="#t617">617</a></span><span class="t">    <span class="key">if</span> <span class="nam">task</span><span class="op">.</span><span class="nam">skill</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">or</span> <span class="nam">repo_entry</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t618" href="#t618">618</a></span><span class="t">        <span class="key">return</span> <span class="str">&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t619" href="#t619">619</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="op">(</span><span class="nam">repo_entry</span><span class="op">.</span><span class="nam">test_scopes</span> <span class="key">or</span> <span class="nam">repo_entry</span><span class="op">.</span><span class="nam">test_command</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t620" href="#t620">620</a></span><span class="t">        <span class="key">return</span> <span class="str">&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t621" href="#t621">621</a></span><span class="t">    <span class="key">return</span> <span class="nam">_SCOPE_NOTE</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -718,7 +710,7 @@
             <a class="nav" href="z_b5a89f03f870f995_read_only_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-23 18:54 +0000
+            created at 2026-10-23 19:30 +0000
         </p>
     </div>
 </footer>
