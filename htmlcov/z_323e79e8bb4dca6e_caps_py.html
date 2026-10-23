@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">296 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">280<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">16<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">282<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">14<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_21de6873a9ac10e5___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-23 19:30 +0000
+            created at 2026-10-23 21:32 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -490,8 +490,8 @@
     <p class="run"><span class="n"><a id="t408" href="#t408">408</a></span><span class="t">        <span class="key">return</span> <span class="nam">for_turn</span><span class="op">(</span><span class="nam">conn</span><span class="op">,</span> <span class="nam">row</span><span class="op">,</span> <span class="nam">session</span><span class="op">[</span><span class="str">&quot;node_id&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">now</span><span class="op">=</span><span class="nam">now</span><span class="op">)</span> <span class="key">if</span> <span class="nam">auto</span> <span class="key">else</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t409" href="#t409">409</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t410" href="#t410">410</a></span><span class="t">        <span class="nam">snapshot</span><span class="op">.</span><span class="nam">policy_at</span><span class="op">(</span><span class="nam">path</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t411" href="#t411">411</a></span><span class="t">    <span class="key">except</span> <span class="nam">LookupError</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t412" href="#t412">412</a></span><span class="t">        <span class="key">return</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t411" href="#t411">411</a></span><span class="t">    <span class="key">except</span> <span class="nam">LookupError</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t412" href="#t412">412</a></span><span class="t">        <span class="key">return</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t413" href="#t413">413</a></span><span class="t">    <span class="nam">line</span> <span class="op">=</span> <span class="nam">_Timeline</span><span class="op">(</span><span class="nam">conn</span><span class="op">,</span> <span class="nam">row</span><span class="op">[</span><span class="str">&quot;id&quot;</span><span class="op">]</span><span class="op">,</span> <span class="nam">snapshot</span><span class="op">,</span> <span class="nam">at</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t414" href="#t414">414</a></span><span class="t">    <span class="nam">ran</span> <span class="op">=</span> <span class="op">(</span><span class="nam">at</span> <span class="op">-</span> <span class="nam">_dt</span><span class="op">(</span><span class="nam">session</span><span class="op">[</span><span class="str">&quot;started_at&quot;</span><span class="op">]</span> <span class="key">or</span> <span class="nam">session</span><span class="op">[</span><span class="str">&quot;created_at&quot;</span><span class="op">]</span><span class="op">)</span><span class="op">)</span><span class="op">.</span><span class="nam">total_seconds</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t415" href="#t415">415</a></span><span class="t">    <span class="key">return</span> <span class="nam">_with_own_run</span><span class="op">(</span><span class="nam">snapshot</span><span class="op">,</span> <span class="nam">line</span><span class="op">,</span> <span class="nam">path</span><span class="op">,</span> <span class="nam">ran</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -770,7 +770,7 @@
             <a class="nav" href="z_21de6873a9ac10e5___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-23 19:30 +0000
+            created at 2026-10-23 21:32 +0000
         </p>
     </div>
 </footer>
