@@ -27,7 +27,7 @@ from kraft.adapters import agent as _agent
 from kraft.adapters import forge as _forge
 from kraft.adapters import subprocess as _subprocess
 from kraft.addons import load as _addons_load
-from kraft.automated_review import AutomatedReview
+from kraft.automated_review import Reviewers, as_reviewers
 from kraft.config import RepoEntry
 from kraft.executor import entry, prompts, stops
 from kraft.executor import fallback as _fallback
@@ -304,6 +304,26 @@ async def config_error_session(db, run_dirs, common: dict, log: str) -> str:
         work_item_id=common["work_item_id"],
         status=CONFIG_ERROR,
         log=log,
+    )
+
+
+async def skipped_session(db, run_dirs, common: dict, log: str) -> str:
+    """A task with nothing to do, recorded as a session that finished clean with
+    no findings. It carries no head: a session at a head is a review of it
+    (`prompts.last_review_session`), and this one reviewed nothing, so it must
+    not stand in for the previous review of a later round."""
+    _, log_path, result_path = await _builtins.start_session(
+        db, run_dirs, **{**common, "head_sha": None}
+    )
+    return await _builtins.finish_session(
+        db,
+        log_path,
+        result_path,
+        session_id=common["session_id"],
+        work_item_id=common["work_item_id"],
+        status="done",
+        log=log,
+        findings=[],
     )
 
 
@@ -983,9 +1003,16 @@ def _exit_code(row) -> int | None:
     return item_paths.exit_code(raw)
 
 
-def _automated_review(launch: LaunchContext | None) -> AutomatedReview | None:
-    """The repository's named automated reviewer (Ruling 171), if any."""
-    return launch.repo_entry.automated_review if launch and launch.repo_entry else None
+def _reviewers(task: ForgeTask, node_id: str, row, launch: LaunchContext | None) -> Reviewers:
+    """The reviewers an `mr.automated_review` task waits for (Ruling 171): the
+    item's node override, else the repository's `automated_review:`, else the
+    task's own `reviewers` -- the nearest layer that names any, `[]` included."""
+    override = store.node_overrides_of(row).get(node_id, {}).get("reviewers")
+    repo = launch.repo_entry.automated_review if launch and launch.repo_entry else None
+    return next(
+        (as_reviewers(layer) for layer in (override, repo, task.reviewers) if layer is not None),
+        (),
+    )
 
 
 async def dispatch_node(
@@ -1170,6 +1197,17 @@ async def _dispatch_task(
     if hit is not None and hit.remaining_s <= 0:
         return await time_capped_session(db, run_dirs, common, hit)
     time_cap = _caps.Deadline(_caps.monotonic() + hit.remaining_s, hit) if hit else None
+    # Nothing for a task reading what the review bots said means nothing to
+    # spend on: no checkout taken, no sandbox, no session started
+    # (`bot-feedback-is-delivered-to-a-task-that-declares-it`).
+    if (
+        isinstance(t, AgentTask)
+        and AgentInput.BOT_FEEDBACK in t.inputs
+        and prompts.bot_feedback_source(db, run_dirs, work_item_row["id"], node, round) is None
+    ):
+        return await skipped_session(
+            db, run_dirs, common, "no bot feedback collected; no agent started\n"
+        )
     if not isinstance(t, ForgeTask):
         # Resolved here, once, for every launch this task makes (Ruling 189):
         # a sandbox nobody can resolve stops this task for a human, recorded
@@ -1313,7 +1351,7 @@ async def _dispatch_task(
             # repo is on.
             backend="auto",
             repo_forge=launch.repo_entry.forge if launch and launch.repo_entry else None,
-            automated_review=_automated_review(launch),
+            reviewers=_reviewers(t, node.id, work_item_row, launch),
             ci_checks=launch.repo_entry.ci_checks if launch and launch.repo_entry else True,
             # The item's folder: for a worktree item, not the repo, whose
             # checkout is on whatever the human has. Every forge call names
@@ -1334,6 +1372,14 @@ async def _dispatch_task(
             # Resolved through this task's own policy (Kraft-5p69g); already
             # checked against its maximum when the item was filed.
             wait=t.wait_bounds(task_policy) if t.target.waits else None,
+            # A review wait collects and settles only when a task of its node
+            # will read what it collected; otherwise it fails on feedback now
+            # (`automated-review-collects-when-a-later-task-reads-it`).
+            reads_feedback=any(
+                AgentInput.BOT_FEEDBACK in getattr(other.task, "inputs", ())
+                for other in node.tasks()
+            ),
+            grace=t.grace,
             **common,
         )
 
@@ -1425,6 +1471,10 @@ async def _dispatch_task(
             instruction += prompts.previous_review_note(
                 prompts.last_review_session(db, work_item_row["id"], task.path),
                 run_dirs=run_dirs,
+            )
+        if AgentInput.TRIAGE_VERDICT in t.inputs:
+            instruction += prompts.triage_verdict_note(
+                db, work_item_row["id"], work_item_row, run_dirs=run_dirs
             )
     item_override = (
         json.loads(work_item_row["agent_overrides"]) if work_item_row["agent_overrides"] else {}
@@ -1874,6 +1924,13 @@ async def _launch_agent(
         package = prompts.review_package(
             db, run_dirs, work_item_row["id"], worktree, task.path, common["session_id"]
         )
+    # And the review bots' feedback to a task that declares that: copied for this
+    # session, so a fallback launch's own session is handed it too.
+    feedback = None
+    if AgentInput.BOT_FEEDBACK in t.inputs:
+        feedback = prompts.bot_feedback(
+            db, run_dirs, work_item_row["id"], node, common["round"], common["session_id"]
+        )
     try:
         status = await _agent.run_agent_task(
             db,
@@ -1911,6 +1968,7 @@ async def _launch_agent(
             cwd=worktree,
             repo_entry=launch.repo_entry if launch else None,
             review_package=package,
+            bot_feedback=feedback,
             time_cap=time_cap,
             harness_id=harness_id,
             **common,

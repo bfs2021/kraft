@@ -412,6 +412,25 @@ SHALL NOT be.
 enforced-by: tests/executor/test_agent_inputs.py::test_the_review_package_reaches_only_a_task_that_declares_it[declared], tests/executor/test_agent_inputs.py::test_the_review_package_reaches_only_a_task_that_declares_it[undeclared], tests/executor/test_agent_inputs.py::test_the_seeded_code_review_reads_the_review_package_through_its_method, tests/executor/test_seeded_failure_walk.py::test_a_failing_review_walks_verifications_own_fix_loop_never_the_implementer
 origin: src/kraft/templates/models.py §AgentInput -- declared on the task (`inputs: [review_package]`), not keyed on a task's name. Delivered by `executor/dispatch.py` §dispatch_node through `prompts.review_package` and `adapters/agent.py`'s `$KRAFT_REVIEW_PACKAGE`; the seeded fix-loop judge is its first consumer, and the default chain's in-loop code review (`verification.review.code_review`) its second.
 
+## REQ bot-feedback-is-delivered-to-a-task-that-declares-it
+
+An agent task that declares the `bot_feedback` input SHALL be handed what the
+review bots said, as the review wait collected it for this pass of the node,
+and a task that does not declare it SHALL NOT be. WHEN that collection holds no
+summary, no open thread and no failed check, the task SHALL be recorded as done
+with no findings and no agent SHALL be started.
+enforced-by: tests/executor/test_agent_inputs.py::test_bot_feedback_is_delivered_only_when_declared[declared], tests/executor/test_agent_inputs.py::test_bot_feedback_is_delivered_only_when_declared[undeclared], tests/executor/test_agent_inputs.py::test_bot_feedback_is_delivered_only_when_declared[empty-collection-skips], tests/executor/test_agent_inputs.py::test_a_skipped_triage_is_not_the_previous_review_of_the_next_round, tests/executor/test_agent_inputs.py::test_the_collection_read_is_this_nodes_this_rounds_and_this_runs[this-round], tests/executor/test_agent_inputs.py::test_the_collection_read_is_this_nodes_this_rounds_and_this_runs[stale-round-collection-ignored], tests/executor/test_agent_inputs.py::test_the_collection_read_is_this_nodes_this_rounds_and_this_runs[left-before-a-restart]
+origin: src/kraft/templates/models.py §AgentInput -- declared as `inputs: [bot_feedback]` and delivered by `executor/dispatch.py` §dispatch_node through `prompts.bot_feedback` and `adapters/agent.py`'s `$KRAFT_BOT_FEEDBACK`; the collection is written by the node's `mr.automated_review` wait (`adapters/forge/run.py` §_collect_review).
+
+## REQ triage-verdict-is-delivered-to-the-review-brief
+
+An agent task that declares the `triage_verdict` input SHALL be pointed at the
+latest verdict of the chain's review-bot triage, by path, and SHALL NOT be when
+no triage has judged anything: a triage skipped for having nothing to read is no
+verdict.
+enforced-by: tests/executor/test_round_prompts.py::test_the_brief_is_told_where_the_triage_verdict_is[a-triage-ran], tests/executor/test_round_prompts.py::test_the_brief_is_told_where_the_triage_verdict_is[only-a-skip-row], tests/executor/test_round_prompts.py::test_the_brief_is_told_where_the_triage_verdict_is[a-skip-after-a-verdict], tests/executor/test_round_prompts.py::test_the_brief_is_told_where_the_triage_verdict_is[chain-without-triage], tests/executor/test_agent_inputs.py::test_the_triage_verdict_reaches_only_a_task_that_declares_it[declared], tests/executor/test_agent_inputs.py::test_the_triage_verdict_reaches_only_a_task_that_declares_it[undeclared], tests/skills/test_review_feedback.py::test_the_review_brief_is_told_to_report_what_the_triage_declined
+origin: src/kraft/templates/models.py §AgentInput -- declared as `inputs: [triage_verdict]` on the seeded `write_summary` and delivered by `executor/dispatch.py` §dispatch_node through `prompts.triage_verdict_note`, the verdict being the triage session `prompts.last_review_session` returns.
+
 ## REQ carried-findings-are-delivered-to-a-reviewing-task
 
 A reviewing agent task SHALL be shown the findings its previous round
@@ -1802,8 +1821,9 @@ enforced-by: tests/test_waits.py::test_interval_grows_from_initial_to_max_while_
 ## REQ external-wait-timeout-needs-human
 
 When an external-wait task reaches its configured timeout, the system SHALL
-stop for human action and SHALL NOT classify the timeout as a code failure.
-enforced-by: tests/test_waits.py::test_wait_timeout_stops_for_human_and_is_not_a_code_failure, tests/adapters/forge/test_merge_watch.py::test_a_post_merge_pipeline_that_never_settles_times_out_for_a_human, tests/test_waits.py::test_a_wait_timeout_and_a_loop_cap_are_reported_apart, tests/executor/test_stuck_escalation.py::test_a_stop_outside_the_stuck_set_goes_straight_to_a_human[wait timeout-declared], tests/executor/test_stuck_escalation.py::test_a_stop_outside_the_stuck_set_goes_straight_to_a_human[wait timeout-undeclared], tests/templates/test_workspace_publication.py::test_a_root_approval_that_never_comes_times_out_for_a_human
+stop for human action and SHALL NOT classify the timeout as a code failure,
+except an `mr.automated_review` wait on its collect path, which settles.
+enforced-by: tests/adapters/forge/test_run_review.py::test_a_node_nothing_reads_takes_the_direct_path[no-reader-timeout-stops], tests/test_waits.py::test_wait_timeout_stops_for_human_and_is_not_a_code_failure, tests/adapters/forge/test_merge_watch.py::test_a_post_merge_pipeline_that_never_settles_times_out_for_a_human, tests/test_waits.py::test_a_wait_timeout_and_a_loop_cap_are_reported_apart, tests/executor/test_stuck_escalation.py::test_a_stop_outside_the_stuck_set_goes_straight_to_a_human[wait timeout-declared], tests/executor/test_stuck_escalation.py::test_a_stop_outside_the_stuck_set_goes_straight_to_a_human[wait timeout-undeclared], tests/templates/test_workspace_publication.py::test_a_root_approval_that_never_comes_times_out_for_a_human
 
 ## REQ scope-time-caps-bound-their-own-scope
 
@@ -1890,22 +1910,45 @@ enforced-by: tests/test_waits.py::test_a_chain_without_an_automated_review_task_
 
 ## REQ automated-review-task-uses-ordinary-task-results
 
-An automated-review task SHALL report ordinary pending, clean, actionable, or
-error results. Actionable feedback SHALL enter the declaring execution node's
-recovery or fix-loop controls.
-enforced-by: tests/adapters/forge/test_waits.py::test_automated_review_reports_ordinary_task_results[pending], tests/adapters/forge/test_waits.py::test_automated_review_reports_ordinary_task_results[clean], tests/adapters/forge/test_waits.py::test_automated_review_reports_ordinary_task_results[actionable], tests/adapters/forge/test_waits.py::test_automated_review_reports_ordinary_task_results[error], tests/test_waits.py::test_actionable_automated_review_is_repaired_resynced_and_remeasured[on_failure], tests/test_waits.py::test_actionable_automated_review_is_repaired_resynced_and_remeasured[fix_loop], tests/adapters/forge/test_automated_review.py::test_a_bot_s_unresolved_feedback_is_actionable[gh], tests/adapters/forge/test_automated_review.py::test_a_bot_s_unresolved_feedback_is_actionable[glab], tests/adapters/forge/test_automated_review.py::test_a_review_check_still_running_is_pending[gh], tests/adapters/forge/test_automated_review.py::test_a_review_check_still_running_is_pending[glab], tests/test_waits.py::test_a_reviewer_error_stops_for_a_human_and_spends_no_repair, tests/adapters/forge/test_automated_review.py::test_a_withdrawn_bot_review_does_not_count[gh-dismissed-only], tests/adapters/forge/test_automated_review.py::test_a_withdrawn_bot_review_does_not_count[gh-dismissed-over-an-earlier-review], tests/adapters/forge/test_automated_review.py::test_a_withdrawn_bot_review_does_not_count[glab-resolved-only]
+Unless a later task of its node declares the `bot_feedback` input or its item
+has several repositories, an automated-review task SHALL report ordinary
+pending, clean, actionable, or error results. Actionable feedback SHALL enter
+the declaring execution node's recovery or fix-loop controls; on the collect
+path the wait reports pending, settled, or error instead, and actionable
+feedback comes from the reading task.
+enforced-by: tests/adapters/forge/test_run_review.py::test_a_node_nothing_reads_takes_the_direct_path[no-reader-feedback-fails-now], tests/adapters/forge/test_run_review.py::test_a_multi_repo_item_takes_the_direct_path_whatever_its_node_reads, tests/adapters/forge/test_waits.py::test_automated_review_reports_ordinary_task_results[pending], tests/adapters/forge/test_waits.py::test_automated_review_reports_ordinary_task_results[clean], tests/adapters/forge/test_waits.py::test_automated_review_reports_ordinary_task_results[actionable], tests/adapters/forge/test_waits.py::test_automated_review_reports_ordinary_task_results[error], tests/test_waits.py::test_actionable_automated_review_is_repaired_resynced_and_remeasured[on_failure], tests/test_waits.py::test_actionable_automated_review_is_repaired_resynced_and_remeasured[fix_loop], tests/adapters/forge/test_automated_review.py::test_a_bot_s_unresolved_feedback_is_actionable[gh], tests/adapters/forge/test_automated_review.py::test_a_bot_s_unresolved_feedback_is_actionable[glab], tests/adapters/forge/test_automated_review.py::test_a_review_check_still_running_is_pending[gh], tests/adapters/forge/test_automated_review.py::test_a_review_check_still_running_is_pending[glab], tests/test_waits.py::test_a_reviewer_error_stops_for_a_human_and_spends_no_repair, tests/adapters/forge/test_automated_review.py::test_a_withdrawn_bot_review_does_not_count[gh-dismissed-only], tests/adapters/forge/test_automated_review.py::test_a_withdrawn_bot_review_does_not_count[gh-dismissed-over-an-earlier-review], tests/adapters/forge/test_automated_review.py::test_a_withdrawn_bot_review_does_not_count[glab-resolved-only]
 
 ## REQ automated-review-implementation-is-not-template-configuration
 
-Templates SHALL NOT expose transport details such as webhook event names,
-provider check names, comment authors, or API and CLI mechanics for automated
-review. The selected task implementation SHALL own those details.
-enforced-by: tests/test_waits.py::test_a_template_cannot_configure_how_automated_review_is_read[webhook_event], tests/test_waits.py::test_a_template_cannot_configure_how_automated_review_is_read[check_name], tests/test_waits.py::test_a_template_cannot_configure_how_automated_review_is_read[comment_author], tests/test_waits.py::test_a_template_cannot_configure_how_automated_review_is_read[command], tests/test_waits.py::test_the_repository_s_named_reviewer_reaches_the_review_task, tests/adapters/forge/test_automated_review.py::test_a_reviewer_is_named_exactly_one_way_or_refused_at_load[both], tests/adapters/forge/test_automated_review.py::test_a_reviewer_is_named_exactly_one_way_or_refused_at_load[neither], tests/adapters/forge/test_automated_review.py::test_a_bot_review_is_pending_until_the_bot_reviews_the_head_then_clean[gh], tests/adapters/forge/test_automated_review.py::test_a_bot_review_is_pending_until_the_bot_reviews_the_head_then_clean[glab], tests/adapters/forge/test_automated_review.py::test_a_failed_review_check_is_actionable_with_its_output[gh], tests/adapters/forge/test_automated_review.py::test_a_failed_review_check_is_actionable_with_its_output[glab]
+Templates MAY name which reviewers an automated-review task waits for, a bot
+login or a check name in its `reviewers`, and the wait's grace period.
+Templates SHALL NOT expose how a review is read, such as webhook event names,
+commands, comment authors, free check-name keys, or API and CLI mechanics. The
+selected task implementation SHALL own those details.
+enforced-by: tests/test_waits.py::test_a_template_cannot_configure_how_automated_review_is_read[webhook_event], tests/test_waits.py::test_a_template_cannot_configure_how_automated_review_is_read[check_name], tests/test_waits.py::test_a_template_cannot_configure_how_automated_review_is_read[comment_author], tests/test_waits.py::test_a_template_cannot_configure_how_automated_review_is_read[command], tests/adapters/forge/test_run_review.py::test_the_nearest_layer_s_reviewers_reach_the_review_task[repo], tests/adapters/forge/test_run_review.py::test_the_nearest_layer_s_reviewers_reach_the_review_task[repo-list], tests/adapters/forge/test_run_review.py::test_the_nearest_layer_s_reviewers_reach_the_review_task[task], tests/adapters/forge/test_run_review.py::test_the_nearest_layer_s_reviewers_reach_the_review_task[repo-over-task], tests/adapters/forge/test_run_review.py::test_the_nearest_layer_s_reviewers_reach_the_review_task[repo-says-none], tests/adapters/forge/test_run_review.py::test_the_nearest_layer_s_reviewers_reach_the_review_task[item-over-repo-and-task], tests/adapters/forge/test_run_review.py::test_the_nearest_layer_s_reviewers_reach_the_review_task[none-anywhere], tests/adapters/forge/test_run_review.py::test_only_the_review_task_names_reviewers[the-review], tests/adapters/forge/test_run_review.py::test_only_the_review_task_names_reviewers[another-wait], tests/adapters/forge/test_run_review.py::test_only_the_review_task_names_reviewers[malformed-entry], tests/adapters/forge/test_run_review.py::test_only_the_review_task_names_reviewers[grace-period-on-the-review], tests/adapters/forge/test_run_review.py::test_only_the_review_task_names_reviewers[grace-period-on-another-wait], tests/adapters/forge/test_automated_review.py::test_a_reviewer_is_named_exactly_one_way_or_refused_at_load[both], tests/adapters/forge/test_automated_review.py::test_a_reviewer_is_named_exactly_one_way_or_refused_at_load[neither], tests/adapters/forge/test_automated_review.py::test_a_bot_review_is_pending_until_the_bot_reviews_the_head_then_clean[gh], tests/adapters/forge/test_automated_review.py::test_a_bot_review_is_pending_until_the_bot_reviews_the_head_then_clean[glab], tests/adapters/forge/test_automated_review.py::test_a_failed_review_check_is_actionable_with_its_output[gh], tests/adapters/forge/test_automated_review.py::test_a_failed_review_check_is_actionable_with_its_output[glab]
+
+## REQ automated-review-collects-when-a-later-task-reads-it
+
+WHERE a later task of an automated-review task's node declares the
+`bot_feedback` input, the system SHALL hold the wait until every named reviewer
+has finished with the latest pushed head, then write what the reviewers said for
+that task and report the wait settled, whatever they said.
+enforced-by: tests/adapters/forge/test_run_review.py::test_the_collect_path_settles_then_hands_on_the_collection[both-settle], tests/adapters/forge/test_run_review.py::test_the_next_check_comes_when_a_bots_grace_period_ends_not_at_the_backoff, tests/adapters/forge/test_run_review.py::test_no_reviewer_named_settles_with_an_empty_collection
+origin: config/library.yaml §await_automated_review
+
+## REQ automated-review-timeout-settles-the-collect-path
+
+WHEN an automated-review task on its collect path reaches its timeout, the
+system SHALL settle the wait with whatever was collected, record the timeout in
+the wait's events, and SHALL NOT stop the item for human action.
+enforced-by: tests/adapters/forge/test_run_review.py::test_the_collect_path_settles_then_hands_on_the_collection[silent-until-timeout], tests/adapters/forge/test_run_review.py::test_the_collect_path_settles_then_hands_on_the_collection[deadline-crossed-between-reads]
+origin: config/library.yaml §await_automated_review
 
 ## REQ default-post-draft-flow-is-ordered
 
 The default chain SHALL create a draft merge request, await CI, run any
-declared automated-review task, address CI failures and actionable feedback,
+declared automated-review task, decide with a triage step which of the review
+bots' feedback needs a change, address CI failures and the feedback that does,
 produce a work-item summary and review, and then request final-gate approval.
 After approval, it SHALL mark the merge request ready, await external approval,
 and merge.
@@ -1913,11 +1956,12 @@ enforced-by: tests/api/test_default_chain_walk.py::test_approving_every_gate_thr
 
 ## REQ post-draft-feedback-uses-node-recovery-controls
 
-CI failures and actionable automated-review feedback in the post-draft flow
-SHALL enter that execution node's recovery or fix-loop controls. After a
+CI failures in the post-draft flow SHALL enter that execution node's recovery
+or fix-loop controls. Review-bot feedback SHALL enter the fix loop only as the
+findings of the triage step, and not the node's `on_failure`. After a
 successful repair, the system SHALL resynchronize the draft merge request and
 remeasure the node.
-enforced-by: tests/test_waits.py::test_actionable_automated_review_is_repaired_resynced_and_remeasured[on_failure], tests/test_waits.py::test_actionable_automated_review_is_repaired_resynced_and_remeasured[fix_loop]
+enforced-by: tests/adapters/forge/test_run_review.py::test_a_triaged_bot_comment_reaches_the_fix_loop[flagged], tests/adapters/forge/test_run_review.py::test_a_triaged_bot_comment_reaches_the_fix_loop[declined], tests/test_waits.py::test_actionable_automated_review_is_repaired_resynced_and_remeasured[on_failure], tests/test_waits.py::test_actionable_automated_review_is_repaired_resynced_and_remeasured[fix_loop]
 
 ## REQ missing-external-approval-is-normal-pending-state
 

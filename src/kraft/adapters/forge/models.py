@@ -14,8 +14,10 @@ if TYPE_CHECKING:
     # the other way would be circular. `from __future__ import annotations`
     # already makes every annotation below lazy, so this is type-checking
     # only.
+    from datetime import datetime
+
     from kraft.adapters.forge.mr import MRMeta
-    from kraft.automated_review import AutomatedReview
+    from kraft.automated_review import AutomatedReview, Reviewers
 
 CIState = Literal["pending", "success", "failed"]
 
@@ -122,6 +124,29 @@ class ReviewResult:
     #: False when the repository names no reviewer: settled clean because no
     #: review is expected, which is recorded as such rather than as a pass.
     configured: bool = True
+
+
+@dataclass(frozen=True)
+class ReviewerFeedback:
+    """What one reviewer has said on the merge request, as the review wait
+    reads it to decide whether the reviewer has finished with the latest push
+    (`settle.decide`) and to hand on what it said. Nothing here says how the
+    forge was asked."""
+
+    reviewer: AutomatedReview
+    #: The newest comment, review or inline-comment update by this bot, on the
+    #: forge's clock; None when it has done none.
+    last_activity: datetime | None
+    #: The bot's top-level comments and submitted reviews since the push:
+    #: `{"kind": "comment" | "review", "state": str | None, "body": str,
+    #: "updated_at": iso}`.
+    summaries: tuple[dict, ...] = ()
+    #: Its unresolved inline threads, from any push: `{"id": str, "file": str |
+    #: None, "line": int | None, "body": str}`.
+    threads: tuple[dict, ...] = ()
+    #: A `check:` reviewer's check: `{"name", "finished": bool, "conclusion":
+    #: str | None, "output": str}`; None for a bot.
+    check: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -293,8 +318,11 @@ class Forge(Protocol):
 
     async def approval_state(self, *, repo: Path, branch: str) -> ApprovalState: ...
     async def automated_review(
-        self, *, repo: Path, branch: str, reviewer: AutomatedReview | None
+        self, *, repo: Path, branch: str, reviewers: Reviewers
     ) -> ReviewResult: ...
+    async def reviewer_feedback(
+        self, *, repo: Path, branch: str, reviewers: Reviewers, since: datetime
+    ) -> list[ReviewerFeedback]: ...
 
 
 def _head(repo: Path) -> str | None:
@@ -394,6 +422,12 @@ class FakeForge:
     #: `automated_review`'s answers, consumed like `ci_states`. A bare state
     #: string is shorthand for a `ReviewResult` with nothing else to say.
     review_results: list[ReviewResult | str] = field(default_factory=lambda: ["clean"])
+    #: The reviewers each `automated_review` read was asked for, in order.
+    reviewers_asked: list[Reviewers] = field(default_factory=list)
+    #: `reviewer_feedback`'s answers, one list per call, consumed like
+    #: `review_results`. Empty, each reviewer answers with nothing to say: a
+    #: bot with no activity, a check that finished and passed.
+    feedback_script: list[list[ReviewerFeedback]] = field(default_factory=list)
     #: `approval_state`'s answers, consumed like `ci_states`.
     approval_states: list[ApprovalState] = field(default_factory=lambda: ["approved"])
     #: `branch_ci_status`'s own script, for the post-merge pipeline; `None`
@@ -560,12 +594,30 @@ class FakeForge:
         return self._next(self.approval_states)
 
     async def automated_review(
-        self, *, repo: Path, branch: str, reviewer: AutomatedReview | None = None
+        self, *, repo: Path, branch: str, reviewers: Reviewers = ()
     ) -> ReviewResult:
         # The script answers whether or not a reviewer is configured: a dev
         # instance and a test both script the review they want to walk.
+        self.reviewers_asked.append(reviewers)
         result = self._next(self.review_results)
         return ReviewResult(result) if isinstance(result, str) else result
+
+    async def reviewer_feedback(
+        self, *, repo: Path, branch: str, reviewers: Reviewers, since: datetime
+    ) -> list[ReviewerFeedback]:
+        self.reviewers_asked.append(reviewers)
+        if self.feedback_script:
+            return self._next(self.feedback_script)
+        return [
+            ReviewerFeedback(r, None)
+            if r.bot is not None
+            else ReviewerFeedback(
+                r,
+                None,
+                check={"name": r.check, "finished": True, "conclusion": "success", "output": ""},
+            )
+            for r in reviewers
+        ]
 
     async def retry_jobs(self, *, repo: Path, ci: CIStatus) -> None:
         self.retried.append(ci.url)
