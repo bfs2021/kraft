@@ -3,11 +3,12 @@
 import asyncio
 import base64
 import sys
+import time
 
 from kraft.remote.jobs import JobRunner, JobSpec
 
 
-def _spec(argv, *, env=None, setup=None, dirs=()):
+def _spec(argv, *, env=None, setup=None, dirs=(), **extra):
     return JobSpec(
         work_item_id="w1",
         session_id="s1",
@@ -27,6 +28,7 @@ def _spec(argv, *, env=None, setup=None, dirs=()):
         server_worktree="/srv/wt",
         dirs=list(dirs),
         rw=[],
+        **extra,
     )
 
 
@@ -143,3 +145,37 @@ async def test_a_rewind_resends_the_log_from_the_offset_the_server_names(tmp_pat
 
     await runner.replay(emit, 2)
     assert replay[0]["offset"] == 2 and _text(replay) == "c\ndef\n"
+
+
+async def test_the_time_cap_stops_the_command_on_the_machine(tmp_path):
+    cap = {"scope": "n.main.a", "field": "time_cap_minutes", "minutes": 5, "remaining_s": 0.0}
+    spec = _spec(["sh", "-c", "sleep 30"], deadline_s=0.3, cap=cap)
+    out, _ = await asyncio.wait_for(_run(_runner(tmp_path, spec)), 5)
+    assert out.capped == cap and out.code != 0
+
+
+async def test_the_time_cap_counts_from_the_job_arriving_not_from_the_command(tmp_path):
+    marker = tmp_path / "ran"
+    cap = {"scope": "n.main.a", "field": "time_cap_minutes", "minutes": 5, "remaining_s": 0.0}
+    spec = _spec(
+        [sys.executable, "-c", f"open({str(marker)!r}, 'w')"],
+        setup="sleep 0.6",
+        deadline_s=0.3,
+        cap=cap,
+    )
+    runner = _runner(tmp_path, spec, received_at=time.monotonic())
+    out, frames = await asyncio.wait_for(_run(runner), 5)
+    assert out.capped == cap and not marker.exists()
+    assert not [f for f in frames if f["t"] == "started"]
+
+
+async def test_a_command_whose_log_stays_silent_past_idle_s_is_stopped(tmp_path):
+    spec = _spec(["sh", "-c", "echo hi; sleep 30"], idle_s=0.3)
+    out, _ = await asyncio.wait_for(_run(_runner(tmp_path, spec)), 5)
+    assert out.capped["field"] == "idle_minutes" and out.capped["scope"] == "n.main.a"
+
+
+async def test_a_command_inside_its_caps_is_not_marked_capped(tmp_path):
+    spec = _spec(["sh", "-c", "echo hi"], deadline_s=30, cap={"scope": "x"}, idle_s=30)
+    out, _ = await _run(_runner(tmp_path, spec))
+    assert out.capped is None and out.code == 0

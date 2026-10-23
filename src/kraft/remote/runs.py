@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from kraft import events, ids, item_paths
+from kraft import events, ids, item_paths, store
 from kraft.remote import blobs, bundle, files, protocol
 from kraft.remote.hub import Claim
 from kraft.remote.jobs import JobSpec
@@ -22,6 +22,8 @@ from kraft.worker import callback
 
 logger = logging.getLogger(__name__)
 REMOTE_CONFIG_ERROR = 78
+#: The machine was out of reach for `give_up_after`: the step ends as a vanished process does.
+REMOTE_GAVE_UP = 79
 _current: Runs | None = None
 
 
@@ -68,6 +70,8 @@ class Run:
     changed: asyncio.Condition = field(default_factory=asyncio.Condition)
     received: dict[str, Path] = field(default_factory=dict)
     sink: blobs.BlobSink | None = None
+    capped: dict | None = None  # the cap the machine stopped the command at
+    abandoned: bool = False  # given up on: whatever the machine hands in later is thrown away
 
 
 class Runs:
@@ -79,6 +83,10 @@ class Runs:
         self._synced: dict[str, str] = {}
         self._killed: dict[str, set[str]] = {}
         self._tasks: set[asyncio.Task] = set()
+        try:
+            self._loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
 
     def _spawn(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -159,6 +167,12 @@ class Runs:
         run = self._runs.get(frame.get("id"))
         if run is None or run.claim.machine != machine:
             return  # a run this server does not hold on that machine
+        if run.abandoned:
+            if kind in ("finished", "rejected"):  # the machine may drop the job now
+                with contextlib.suppress(protocol.Closed):
+                    await self.hub.transport(machine).send({"t": "delivered", "id": run.spec.key})
+                    self._runs.pop(run.spec.key, None)
+            return
         if kind == "started":
             run.state = "running"
         elif kind == "log":
@@ -201,8 +215,10 @@ class Runs:
             await self.hub.transport(run.claim.machine).send({"t": "delivered", "id": run.spec.key})
         run.delivered.set()
         await self._notify(run)
-        # long enough for the stand-in to read the exit
-        asyncio.get_running_loop().call_later(600, self._runs.pop, run.spec.key, None)
+        if not run.abandoned:
+            # long enough for the stand-in to read the exit; a given-up run stays until the
+            # machine, however late it returns, hands in and is told `delivered`
+            asyncio.get_running_loop().call_later(600, self._runs.pop, run.spec.key, None)
 
     async def _reject(self, run: Run, frame: dict) -> None:
         self._say(run, f"kraft: {frame.get('reason', 'the machine could not start this step')}\n")
@@ -215,6 +231,7 @@ class Runs:
             return
         run.state = "delivering"
         spec, code = run.spec, int(frame.get("code", 1))
+        run.capped = frame.get("capped")
         lock = self._locks.setdefault(spec.work_item_id, asyncio.Lock())
         async with lock:
             try:
@@ -298,8 +315,6 @@ class Runs:
             )
 
     def _thread_owner(self, tid: str):
-        from kraft import store
-
         row = self._db.read(lambda c: store.thread_row(c, tid))
         return row["work_item_id"] if row is not None else None
 
@@ -319,6 +334,44 @@ class Runs:
                 run.exit_code, run.state = 143, "finished"
                 run.delivered.set()
                 await self._notify(run)
+
+    async def watch(self, poll_s: float = 30.0) -> None:
+        """Forever: give up on every run whose machine was out of reach for its `give_up_after`.
+        Only time the server was awake counts (`Hub.offline_for`); `never` is never given up on."""
+        while True:
+            for run in [r for r in self._runs.values() if r.exit_code is None]:
+                worker = self.hub.file.workers.get(run.claim.machine)
+                gone = self.hub.offline_for(run.claim.machine)
+                if worker is None or gone is None or worker.give_up_s is None:
+                    continue
+                if gone >= worker.give_up_s:
+                    await self.give_up(
+                        run,
+                        f"{run.claim.machine} has been unreachable for {worker.give_up_after}",
+                        after=worker.give_up_after,
+                    )
+            await asyncio.sleep(poll_s)
+
+    async def give_up(self, run: Run, why: str, *, after: str = "removed") -> None:
+        """End a run whose machine is not coming back in time: its session becomes `unknown`, the
+        machine is told to stop it when it returns, and what it hands in then is ignored."""
+        if run.exit_code is not None:
+            return
+        machine, spec = run.claim.machine, run.spec
+        self._say(run, f"\nkraft: {why}; this step is given up\n")
+        await self._event(
+            spec,
+            RemoteEvent.STEP_GIVEN_UP,
+            {"session_id": spec.session_id, "machine": machine, "after": after},
+        )
+        self._killed.setdefault(machine, set()).add(spec.key)
+        run.abandoned = True
+        await self._finish(run, REMOTE_GAVE_UP)
+
+    async def machine_removed(self, name: str) -> None:
+        """`name` is no longer in workers.yaml: nothing will come back from it."""
+        for run in [r for r in self._runs.values() if r.claim.machine == name]:
+            await self.give_up(run, f"{name} was removed from workers.yaml")
 
     async def wait_delivered(self, run: Run, timeout: float) -> bool:
         try:
@@ -379,7 +432,32 @@ class Runs:
         await self._sync_one(run)
         return run
 
+    def forget_soon(self, work_item_id: str) -> None:
+        """Tell every connected machine to drop its copy of an archived or abandoned item. Plain,
+        and safe from a worker thread (the archive path runs there); best effort, since a machine
+        that is away is told again with `keep` when it comes back."""
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._spawn, self._forget(work_item_id))
+
+    async def _forget(self, work_item_id: str) -> None:
+        for name in self.hub.online_names():
+            with contextlib.suppress(protocol.Closed):
+                await self.hub.transport(name).send({"t": "forget", "item": work_item_id})
+
+    async def _note_machine(self, machine: str, type_: RemoteEvent) -> None:
+        """`type_` on every item with an unfinished step on `machine`, so the item's history
+        explains a gap."""
+        for run in [r for r in self._runs.values() if r.claim.machine == machine]:
+            if run.exit_code is None:
+                await self._event(
+                    run.spec, type_, {"machine": machine, "session_id": run.spec.session_id}
+                )
+
+    async def on_disconnect(self, machine: str) -> None:
+        await self._note_machine(machine, RemoteEvent.MACHINE_DISCONNECTED)
+
     async def on_connect(self, machine: str) -> None:
+        await self._note_machine(machine, RemoteEvent.MACHINE_RECONNECTED)
         mine = [
             r for r in self._runs.values() if r.claim.machine == machine and r.state != "preparing"
         ]
@@ -390,3 +468,5 @@ class Runs:
             await t.send(
                 {"t": "sync", "jobs": [{"id": r.spec.key, "offset": r.offset} for r in mine]}
             )
+            live = await self._db.write(store.live_item_ids)
+            await t.send({"t": "keep", "items": live})

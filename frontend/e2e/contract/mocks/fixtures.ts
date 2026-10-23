@@ -687,7 +687,7 @@ export function serverKeys(b: ItemBundle): ItemBundle {
   if (it.budget_cap && !("key" in it.budget_cap)) it.budget_cap.key = "budget_usd";
   const run = `/Users/dev/.kraft/run/items/${it.id}/sessions`;
   for (const s of b.sessions) fill(s, {
-    harness: "claude", command: null, cost_estimated: false, egress: null, sandbox: null, repository: null, runner: null, skipped: false, pass: 1, pid: null, pid_start_time: null,
+    harness: "claude", command: null, cost_estimated: false, egress: null, sandbox: null, repository: null, runner: null, runner_unreachable_since: null, skipped: false, pass: 1, pid: null, pid_start_time: null,
     tokens_cache_read: 0, tokens_cache_write: 0, log_path: `${run}/${s.id}/session.log`, result_path: `${run}/${s.id}/out/result.json`,
   });
   return b;
@@ -762,6 +762,12 @@ function settingsFor(variant: Variant, theme: { mode?: string; density?: string;
       invalid_intake: null, intake_off: false, addon_updates: {}, storage: null, reattach_summary: { scanned: 0, adopted: [], resolved_from_file: [], resumed_work_items: [], unknown: [] } },
   };
 }
+
+/** `GET /workers`: two machines, one reachable and one that dropped. */
+export const WORKERS_FIXTURE = [
+  { name: "gpu-box", mode: "ssh", online: true, reason: "", slots_used: 1, capacity: 2, repos: ["kraft"], last_seen: "2026-10-23T09:58:00+00:00", kraft_version: "2.4.0", give_up_after: "2h" },
+  { name: "home-server", mode: "dial-in", online: false, reason: "disconnected: end of stream", slots_used: 0, capacity: 1, repos: null, last_seen: "2026-10-23T08:12:00+00:00", kraft_version: "2.4.0", give_up_after: "never" },
+];
 
 function analyticsFor(variant: Variant) {
   const long = variant === "long"; const empty = variant === "empty";

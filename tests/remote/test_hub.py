@@ -65,6 +65,16 @@ async def test_an_unconnected_machine_lists_offline_and_never_connected():
     }
 
 
+@pytest.mark.parametrize(("setting", "seconds"), [("30m", 1800.0), ("never", None)])
+async def test_the_welcome_tells_a_machine_its_own_give_up_after(setting, seconds):
+    hub = Hub("2.3.0")
+    hub.apply(_file(home2={"token_sha256": registry.hash_token("kwt_b"), "give_up_after": setting}))
+    machine, welcome, accepted = await _dial(hub, "kwt_b")
+    assert welcome["give_up_after_s"] == seconds
+    await machine.close()
+    await accepted
+
+
 async def test_a_dial_in_machine_with_its_token_is_online_with_its_version():
     hub = Hub("2.3.0")
     hub.apply(_file())
@@ -288,3 +298,29 @@ async def test_a_waiting_claim_is_granted_when_a_slot_frees_and_is_cancellable()
     assert _row(hub)["slots_used"] == 2
     await machine.close()
     await accepted
+
+
+async def test_offline_for_counts_from_the_drop_on_the_monotonic_clock():
+    now = [500.0]
+    hub = Hub("2.3.0", mono=lambda: now[0])
+    hub.apply(_file())
+    assert hub.offline_for("home") == 0  # the hub has known it, offline, since now
+    machine, _, accepted = await _dial(hub)
+    now[0] += 1000
+    assert hub.offline_for("home") is None  # online
+    await machine.close()
+    await accepted
+    now[0] += 7
+    assert hub.offline_for("home") == 7
+
+
+async def test_unreachable_since_names_the_moment_the_connection_ended_until_it_is_back():
+    hub = Hub("2.3.0", clock=lambda: 1_700_000_000.0)
+    hub.apply(_file())
+    assert hub.unreachable_since("home") == "2023-11-14T22:13:20+00:00"
+    machine, _, accepted = await _dial(hub)
+    assert hub.unreachable_since("home") is None
+    await machine.close()
+    await accepted
+    assert hub.unreachable_since("home") == "2023-11-14T22:13:20+00:00"
+    assert hub.unreachable_since("nobody") is None

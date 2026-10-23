@@ -6,7 +6,8 @@ a WebSocket (dial-in) or an ssh session's stdio (`kraft.remote.transport`).
 Protocol 2. `id` is the job key `"<work item id>/<session id>"`. Frames:
 
 - `hello`, `welcome`, `refused`: the handshake. `welcome` also names this
-  install as `server` (`run/server.id`).
+  install as `server` (`run/server.id`) and carries `give_up_after_s`: how long
+  the machine keeps a job running without a connection (seconds, `null` for never).
 - `ping`, `pong`: keep-alive.
 - `have`, server to machine: `{rid}`; the machine answers `{rid, item, commits}`,
   up to 500 commits its copy of the item has.
@@ -23,8 +24,12 @@ Protocol 2. `id` is the job key `"<work item id>/<session id>"`. Frames:
 - `sync`, server to machine on every connect: `{jobs: [{id, offset}]}`. The
   machine resends log from each offset, and a finished job's `finished` and blobs.
 - `signal`, server to machine: `{id, sig}`, `INT` or `KILL`.
-- `finished`, machine to server, after its blobs: `{id, code, tip?, pushed?, reason?}`.
+- `finished`, machine to server, after its blobs: `{id, code, tip?, pushed?, capped?}`; `capped` is
+  the `caps.Hit` (a dict) of the time cap or idle limit that stopped the command on the machine.
 - `delivered`, server to machine: `{id}`; the machine may drop the job's state.
+- `forget`, server to machine: `{item}`; the item is archived or abandoned, drop its copy (never a
+  job still running). `keep`, after `sync` on every connect: `{items}`, every item the server
+  still has; the machine drops its copy of any other.
 - `api`, machine to server: `{id, rid, method, path, query, headers, body}`;
   `api_result`, back: `{rid, status, headers, body}`.
 """
@@ -88,9 +93,12 @@ async def server_handshake(
     identify: Callable[[str], str | None],
     expected_name: str | None = None,
     server_id: str = "",
+    give_up_after_s: float | None | Callable[[str], float | None] = None,
     timeout: float = HANDSHAKE_S,
 ) -> Peer:
-    """Read the machine's `hello`, answer `welcome` or `refused`.
+    """Read the machine's `hello`, answer `welcome` or `refused`. `give_up_after_s`
+    goes into the `welcome`: a number of seconds, or a function of the machine's name
+    for a dial-in connection, whose name is only known once its token is.
 
     `expected_name` is an ssh machine (the server chose whom it dialled; no
     token is sent). Otherwise `identify(token)` maps a dial-in token to a
@@ -127,6 +135,9 @@ async def server_handshake(
             "kraft": kraft_version,
             "name": name,
             "server": server_id,
+            "give_up_after_s": give_up_after_s(name)
+            if callable(give_up_after_s)
+            else give_up_after_s,
         }
     )
     return Peer(name, machine_kraft, machine, hello.get("host"))

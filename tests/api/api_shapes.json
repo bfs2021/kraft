@@ -821,6 +821,7 @@
       "result_path": "_",
       "round": "_",
       "runner": "_",
+      "runner_unreachable_since": "_",
       "sandbox": "_",
       "session_summary_ref": "_",
       "skipped": "_",
@@ -1118,6 +1119,25 @@
      "work_item_id": "_"
     }
    ]
+  },
+  "GET /api/workers": {
+   "params": {},
+   "shape": {
+    "workers": [
+     {
+      "capacity": "_",
+      "give_up_after": "_",
+      "kraft_version": "_",
+      "last_seen": "_",
+      "mode": "_",
+      "name": "_",
+      "online": "_",
+      "reason": "_",
+      "repos": "_",
+      "slots_used": "_"
+     }
+    ]
+   }
   }
  }
 }

@@ -15,6 +15,7 @@ from support.api import (
     _paused,
     _poll_events,
     _post_default,
+    _seed_session,
     _set_status,
     _wait_for_status,
 )
@@ -157,27 +158,6 @@ def _seed_repo(client, wid, **kwargs):
         row_id = store.add_repo(conn, work_item_id=wid, **kwargs)
         if mr_ref:
             store.update_repo_state(conn, row_id, merge_state="open", mr_ref=mr_ref)
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _seed_session(client, wid, *, session_id, hook_point, node_id="verify"):
-    """Write a `worker_sessions` row directly — same reasoning as `_seed_repo`:
-    a judge session normally comes from `dispatch.launch_hook`, which a
-    detail-payload test needs no more than it needs `ensure_worktree`."""
-    db_path = Path(os.environ["KRAFT_RUN_DIR"]) / "orchestrator.db"
-    conn = sqlite3.connect(db_path)
-    try:
-        store.create_session(
-            conn,
-            id=session_id,
-            work_item_id=wid,
-            node_id=node_id,
-            hook_point=hook_point,
-            log_path=f"/tmp/{session_id}.log",
-            result_path=f"/tmp/{session_id}.json",
-        )
         conn.commit()
     finally:
         conn.close()
