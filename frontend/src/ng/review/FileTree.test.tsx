@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Compare, CompareFile, ReviewThread } from "../../types";
 import * as http from "../http";
 import { FileTree } from "./FileTree";
+import { inTreeOrder, tree as buildTree } from "./model";
 import { useViewed, type Fetched } from "./useReview";
 
 const file = (path: string, viewed = false): CompareFile => ({ path, insertions: 3, deletions: 1, touched_by: ["implementation"], viewed });
@@ -37,7 +38,7 @@ describe("FileTree", () => {
 
   it("groups by folder, top level last; counts, open threads, viewed, each kind's icon, the cut and untracked files", () => {
     tree();
-    expect(screen.getAllByRole("button", { expanded: true }).map((b) => b.textContent)).toEqual(["▾search/", "▾tests/"]);
+    expect(screen.getAllByRole("button", { expanded: true }).map((b) => b.textContent)).toEqual(["search/", "tests/"]);
     expect([...document.querySelectorAll(".rv-file-name")].map((b) => b.getAttribute("title"))).toEqual(["search/cache.py", "search/embed.py", "tests/test_cache.py", "pyproject.toml"]);
     expect([...document.querySelectorAll(".rv-file-icon")].map((i) => i.getAttribute("data-lang"))).toEqual(["python", "python", "python", "yaml"]);
     expect([...document.querySelectorAll(".rv-file-row.is-viewed")].map((r) => r.textContent)).toEqual(["embed.pyviewed+3−1"]);
@@ -48,6 +49,18 @@ describe("FileTree", () => {
     expect(screen.getByText("1 of 4 viewed")).toBeInTheDocument();
     expect(screen.getByText("3 threads: 1 pending, 1 open, 1 resolved")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "embed.py" })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("nests folders, folders before files; a folder holding only one folder shares its row", () => {
+    const files = [file("src/kraft/review/tree.py"), file("src/kraft/model.py"), file("src/kraft/review/rows.py"), file("README.md")];
+    tree({ files, selected: null, untracked: [], isViewed: () => false });
+    // The order the page opens files in (its first is one-file mode's default) is the rows' order.
+    expect(inTreeOrder(buildTree(files)).map((f) => f.path)).toEqual(["src/kraft/review/rows.py", "src/kraft/review/tree.py", "src/kraft/model.py", "README.md"]);
+    const rows = [...document.querySelectorAll(".rv-folder-row, .rv-file-name")].map((r) => `${(r as HTMLElement).style.getPropertyValue("--depth") || (r.parentElement as HTMLElement).style.getPropertyValue("--depth")} ${r.textContent}`);
+    expect(rows).toEqual(["0 src/kraft/", "1 review/", "2 rows.py", "2 tree.py", "1 model.py", "0 README.md"]);
+    fireEvent.click(screen.getByRole("button", { name: "review/" }));
+    expect(screen.queryByRole("button", { name: "tree.py" })).toBeNull();
+    expect(screen.getByRole("button", { name: "model.py" })).toBeInTheDocument();
   });
 
   it("folds a folder, filters by path and selects", () => {
