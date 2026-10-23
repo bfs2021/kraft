@@ -231,9 +231,9 @@ def _select_scopes(
     construction; C1 was reverted (Kraft-s7c04.8, 2026-09-16) because a gate
     dispatched after the session exits cannot be acted on by it. `verify` is
     this function's only caller now, and the same-selection property C1 was
-    after is instead conveyed to the implementation agent as a prompt note
-    (`prompts.scope_note`) built from the repo's scope table, so it can apply
-    the same rule to its own diff before it finishes.
+    after is no longer conveyed to the implementation agent: its prompt note
+    (`prompts.scope_note`) tells it to run its own tests by path and leave the
+    suite to verify (Kraft-jl7un).
 
     The commands are the repo's, and only the repo's. V1 has no registry to
     fall back to and deliberately no command on the task: the task names an
