@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DiffFile, ItemAction, WorkerSession } from "../../types";
+import { BROKEN_BASE_TEXT } from "./cause";
 import { ComesAfterCard, PausedCard, StateCard, useFolded } from "./StateCard";
 import { acceptWrites, detail, stubFetch, type Call } from "./testkit";
 
@@ -417,6 +418,14 @@ describe("PausedCard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Resume with steer" }));
     await waitFor(() => expect(posts(calls)).toHaveLength(2));
     expect(posts(calls).map((c) => c.body)).toEqual([{ steer: null }, { steer: "look at reindex first" }]);
+  });
+
+  it("says when a broken base paused it, and who broke it", async () => {
+    stubFetch({ "GET /work-items/w1/events": [200, [{ type: "paused_by_broken_base", payload: { broken_by: "w7", follow_up_bead: null }, created_at: "2026-10-23T16:57:04Z", node_id: null }]] });
+    routed(<PausedCard item={detail({ display_status: "paused", worker_sessions: [] })} reload={() => {}} />);
+    expect(await screen.findByText(BROKEN_BASE_TEXT)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "w7" })).toHaveAttribute("href", "/work-items/w7");
+    expect(screen.queryByText("follow-up")).toBeNull();
   });
 
   it("offers no Resume when the server's actions refuse it (F4)", () => {
