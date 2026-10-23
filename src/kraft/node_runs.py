@@ -66,6 +66,57 @@ def _base(c, wid: str, fallback: str) -> str:
     return (row["base_ref"] if row else None) or fallback
 
 
+async def _absorbed_base(db, wid: str, row, wt: Path, tip: str) -> str | None:
+    """The newer fork point when the branch took upstream in itself -- main
+    merged in by an agent or the forge's "update branch", a rebase by hand --
+    so the gate's diff stops showing upstream's commits as the item's. Only
+    moves forward from `base_ref`, and only when the branch moved: the
+    merge-base of the tip and upstream does not change when upstream alone does.
+
+    The local upstream ref first. Only when that finds nothing and the branch
+    holds a merge commit past `base_ref` is upstream fetched (`upstream_head`,
+    bounded): the forge's merge comes home without its main (`bring_home`
+    fetches the item's branch alone), so no ref here may know it yet."""
+    from kraft import builtins  # as inplace.taking does: builtins imports inplace
+
+    base_ref = row["base_ref"] if row is not None else None
+    if not base_ref:
+        return None
+
+    def fork_from(upstream: str | None) -> str | None:
+        fork = upstream and _config.git_read(wt, "merge-base", tip, upstream, expected_failure=True)
+        if not fork or fork in (base_ref, tip):
+            return None
+        ahead = _config.git_read(
+            wt, "merge-base", "--is-ancestor", base_ref, fork, expected_failure=True
+        )
+        return fork if ahead is not None else None
+
+    repo = Path(row["repo"])
+    branch = await builtins.base_branch(db, wid, repo)
+    local = _config.git_read(
+        wt,
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        f"refs/remotes/origin/{branch}",
+        expected_failure=True,
+    ) or _config.git_read(
+        wt, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", expected_failure=True
+    )
+    if (fork := fork_from(local)) is not None:
+        return fork
+    merges = _config.git_read(
+        wt, "rev-list", "--merges", "--max-count=1", f"{base_ref}..{tip}", expected_failure=True
+    )
+    if not merges:
+        return None
+    try:
+        return fork_from(await builtins.upstream_head(repo, branch))
+    except builtins.BaseBranchMissing:
+        return None
+
+
 async def entered(db, worktree, wid: str, node_id: str) -> None:
     wt = _live(worktree)
     sha = _tip(_row(db, wid), wt) if wt else None
@@ -128,12 +179,15 @@ async def gate_requested(db, worktree, wid: str, gate: str, *, run_dirs=None) ->
     # awaited after it keeps the walk's task live past the point a person can
     # already see the gate. The walk is this item's only writer, so the attempt
     # read here is the one `pin_gate` writes.
+    moved = await _absorbed_base(db, wid, row, wt, sha) if sha else None
     attempt = db.read(lambda c: store.next_gate_attempt(c, wid, gate, sha)) if sha else None
     if attempt is not None:
         await asyncio.to_thread(pin_ref, wt, wid, gate, attempt, sha)
 
     def write(c):
         store.request_gate(c, wid, gate, gate)
+        if moved:
+            store.set_base_ref(c, wid, moved)
         if sha:
             store.pin_gate(c, wid, gate, sha=sha, base_sha=_base(c, wid, sha), dirty=dirty)
 
