@@ -16,7 +16,7 @@ import asyncio
 import logging
 
 from kraft import config as config_mod
-from kraft import executor, storage, store
+from kraft import executor, storage, store, when_free
 from kraft import policy as policy_mod
 from kraft.adapters import beads
 from kraft.addons.load import scope_problem
@@ -54,6 +54,8 @@ async def tick(app) -> list[str]:
     records the poll (what was ready, started and passed over, and why) as an
     `intake_checks` row, broadcast live when it is not empty."""
     st = app.state
+    if when_free.claimed():
+        return []  # an update holds the moment: nothing starts until the restart
     if not st.intake.get("enabled"):
         return []
     check = await _poll(app)
@@ -261,7 +263,8 @@ async def restart(app) -> None:
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        if st.intake["enabled"]:
+        # Not on probation after an update: `end_probation` starts it.
+        if st.intake["enabled"] and not getattr(st, "probation", False):
             st.intake_task = asyncio.ensure_future(poller(app))
 
 

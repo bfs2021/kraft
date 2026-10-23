@@ -20,6 +20,7 @@ import traceback
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
+from typing import Literal, NoReturn
 
 import httpx
 import uvicorn
@@ -67,6 +68,9 @@ _INSTANCE_ENV_VARS = (
     "KRAFT_SKILLS_DIR",
     "KRAFT_HOST",
     "KRAFT_PORT",
+    # Stops Kraft checking for a release on its own, and with it auto-update.
+    # A service never saw it before.
+    "KRAFT_NO_UPDATE_CHECK",
 )
 
 
@@ -1369,6 +1373,142 @@ def _service_installed() -> bool:
     return False
 
 
+def _stop_service() -> None:
+    """Stop the service and keep its manager from starting it again."""
+    if sys.platform == "darwin":
+        subprocess.run(["launchctl", "unload", "-w", str(_launchd_plist_path())], check=False)
+    else:
+        subprocess.run(["systemctl", "--user", "stop", _SYSTEMD_UNIT], check=False)
+
+
+def _start_service() -> None:
+    if sys.platform == "darwin":
+        subprocess.run(["launchctl", "load", "-w", str(_launchd_plist_path())], check=True)
+    else:
+        subprocess.run(["systemctl", "--user", "start", _SYSTEMD_UNIT], check=True)
+
+
+def _wait_for_new_server(old_pid: int | None, target: str | None, seconds: float) -> bool:
+    """Whether the server answers `/health` as a new process (a version string
+    alone cannot tell a settings or dev restart, which has the same one before
+    and after) and, for a release, as the version installed."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            health = asyncio.run(client.health())
+        except Exception:  # noqa: BLE001 -- not up yet
+            health = None
+        if (
+            health is not None
+            and health.get("pid") != old_pid
+            and (not target or health.get("version") == target)
+        ):
+            return True
+        time.sleep(1)
+    return False
+
+
+def _restart_by_kind(ns: argparse.Namespace, kind: str) -> None:
+    if kind == "service":
+        _restart_service()
+    else:
+        _cmd_stop(ns, warn=False)
+        _start_detached()
+
+
+def _restart_confirm(ns: argparse.Namespace) -> None:
+    """The helper an update hands the restart to (`when_free`, step 4). It asks
+    nothing: `_cmd_restart` prompts and refuses with no server, and `_restart`
+    decides by whether a unit is installed, where this must restart the server
+    that is running. It reads the rollback record, restarts the server, waits
+    for a new process, and confirms it; or puts back what the update changed.
+    """
+    from types import SimpleNamespace
+
+    from kraft import when_free
+
+    run_dirs = RunDirs(Path(os.environ.get("KRAFT_RUN_DIR") or default_run_dir()))
+    record = when_free.read_rollback(run_dirs)
+    if record is None:
+        print("kraft: no update is waiting to be confirmed", file=sys.stderr)
+        raise SystemExit(1)
+    kind = record.get("restart_kind") or restart_kind(run_dirs.base)
+    state = SimpleNamespace(run_dirs=run_dirs)
+    try:
+        _restart_by_kind(ns, kind)
+        came_up = _wait_for_new_server(
+            record.get("old_pid"), record.get("target"), when_free.CONFIRM_S
+        )
+        why = f"the new server did not answer as a new process within {when_free.CONFIRM_S}s"
+    except (SystemExit, Exception) as exc:  # noqa: BLE001 -- anything here means it is not up
+        came_up, why = False, f"restarting failed: {getattr(exc, 'code', None) or exc}"
+    if came_up:
+        for _ in range(5):
+            try:
+                asyncio.run(client.confirm_update())
+                return
+            except Exception:  # noqa: BLE001
+                time.sleep(1)
+        # The new server ends its own probation after `PROBATION_S`.
+        print("kraft: could not confirm the new server; it will go on by itself", file=sys.stderr)
+        return
+
+    outcome = _roll_back(ns, run_dirs, record, kind)
+    when_free.clear_rollback(run_dirs)
+    when_free.record_outcome(
+        state,
+        status="failed",
+        key=record.get("key"),
+        detail=f"{why}; {outcome}",
+        from_version=record.get("from_version"),
+        to_version=record.get("target"),
+    )
+    print(f"kraft: update failed: {why}; {outcome}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _roll_back(ns: argparse.Namespace, run_dirs: RunDirs, record: dict, kind: str) -> str:
+    """Stop whatever started, put back what the update changed, and start
+    again. Returns what became of it, in a sentence."""
+    from kraft import update, when_free
+
+    try:
+        if kind == "service":
+            _stop_service()
+        else:
+            _cmd_stop(ns, warn=False)
+    except SystemExit:
+        pass
+    what = record.get("kind")
+    requirement = record.get("requirement")
+    if what == "release" and requirement:
+        command = [
+            "uv", "tool", "install", "--force", "--python", update._python(),
+            update.install_argument(requirement),
+        ]  # fmt: skip
+        if subprocess.run(command, check=False).returncode != 0:
+            return "the previous version could not be reinstalled; Kraft is down"
+    # A settings restart changed no database; a release and a dev install may
+    # have had one migrated by the new server.
+    snapshot = dict(record)
+    if what == "settings":
+        snapshot["db_snapshots"] = {}
+    when_free.restore_snapshot(run_dirs, snapshot)
+    try:
+        if kind == "service":
+            _start_service()
+        else:
+            _start_detached()
+    except (SystemExit, Exception) as exc:  # noqa: BLE001
+        reason = getattr(exc, "code", None) or exc
+        if what == "dev":
+            return f"the old server could not start on what is installed ({reason}); Kraft is down"
+        return f"the previous version could not start ({reason}); Kraft is down"
+    if what == "dev":
+        return "configuration and databases put back; the installed build was left as it is"
+    return "the previous version is back"
+
+
 def _restart_service() -> None:
     """Through the service manager, not SIGTERM+start -- a unit's own
     `restart` verb is what keeps it a *managed* restart (systemd resets its
@@ -1394,6 +1534,16 @@ def _cmd_restart(ns: argparse.Namespace) -> None:
     someone's terminal can't be handed back to that terminal from here, so
     this only stops it and says so -- restarting it is that terminal's job.
     """
+    if getattr(ns, "confirm", False):
+        _restart_confirm(ns)
+        return
+    if getattr(ns, "when_free", False):
+        state = _when_free_call(
+            client.restart_when_free, instead="start one with `kraft admin start`"
+        )
+        why = f" (waiting: {state['blocked'][0]})" if state.get("blocked") else ""
+        print(f"kraft: Kraft will restart once nothing is running{why}")
+        return
     _confirm_running_agents(ns, "restarting", ask=True)
     _refuse_restart_with_no_server()
     _restart(ns)
@@ -1433,6 +1583,30 @@ def _restart(ns: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         raise SystemExit(1)
+
+
+def restart_kind(run_dir: Path | None = None) -> Literal["service", "detached", "attached"]:
+    """How the server running now can be restarted, for a restart nobody is
+    at a terminal for (`when_free`). Decided in this order:
+
+    - `service`: this process is the one launchd or systemd started
+      (`apply.managed`). Its mode file reads `attached`, since a service runs
+      `start` without `KRAFT_DETACHED`, so the file cannot decide this.
+    - `detached`: otherwise, the mode file says so.
+    - `attached`: anything else, which only its own terminal can bring back.
+
+    Not `_restart`'s test, which takes the service path whenever a unit is
+    *installed*: restarting the unit while a hand-started server holds the
+    pid would fail and leave the old one up.
+    """
+    from kraft import apply
+
+    if apply.managed():
+        return "service"
+    mode = RunDirs(run_dir or _pid_path().parent).mode
+    if mode.is_file() and mode.read_text().strip() == "detached":
+        return "detached"
+    return "attached"
 
 
 def _render_health(payload: dict) -> str:
@@ -1584,25 +1758,130 @@ def _confirm_dropped_addons(version: str, assume_yes: bool) -> None:
         raise SystemExit("kraft admin update: nothing installed. Pass -y to install anyway.")
 
 
-def _cmd_update(ns: argparse.Namespace) -> None:
-    from kraft import update
+def _config_precheck(*, interactive: bool, assume_yes: bool) -> str | None:
+    """The configuration first: a pre-V1 home is what a legacy install's first
+    V1 binary finds, and that binary is the one running this. Interactive, a
+    pre-V1 home is replaced once the operator says yes; unattended, it is a
+    reason."""
     from kraft.templates.library import is_pre_v1
 
-    # The configuration first: a pre-V1 home is what a legacy install's first V1
-    # binary finds, and that binary is the one running this.
     templates_dir = config_dir()
     finish_interrupted_update(templates_dir)
-    if is_pre_v1(templates_dir):
-        _accept_major_update(templates_dir, ns.yes)
+    if not is_pre_v1(templates_dir):
+        return None
+    if interactive:
+        _accept_major_update(templates_dir, assume_yes)
+        return None
+    return (
+        f"{templates_dir} holds a Kraft 0.x configuration, which only `kraft admin update` replaces"
+    )
+
+
+def _channel_precheck(channel: str) -> str | None:
+    from kraft import update
+
+    if channel != "stable" and update._is_homebrew_install():
+        return (
+            "the Homebrew formula only tracks stable releases; "
+            f"install --channel {channel} with `uv tool` instead."
+        )
+    return None
+
+
+def update_prechecks(
+    release, *, interactive: bool, assume_yes: bool = False, channel: str = "stable"
+) -> str | None:
+    """What `kraft admin update` checks before it installs `release`.
+
+    Interactive, it asks where a check needs an answer, exactly as the command
+    does, and exits on a no. Unattended (`when_free`), it asks nothing: it
+    returns why it would have asked, and None when `release` may be installed
+    with nobody there.
+    """
+    from kraft import update
+    from kraft.addons import load as addons_load
+
+    if why := _config_precheck(interactive=interactive, assume_yes=assume_yes):
+        return why
+    if why := _channel_precheck(channel):
+        if interactive:
+            _exit(why)
+        return why
+    version = release.tag.removeprefix("v")
+    if interactive:
+        _confirm_dropped_addons(version, assume_yes)
+        return None
+    if dropped := addons_load.left_out_by(version):
+        return (
+            f"kraft {version} would stop loading {', '.join(dropped)}; "
+            "`kraft admin update` asks before installing it"
+        )
+    if update._stale_kraft_tool(subprocess.run):
+        return (
+            "uv still has a `kraft` tool from before the rename; "
+            "`kraft admin update` says what to run"
+        )
+    return None
+
+
+def _exit(why: str) -> NoReturn:
+    raise SystemExit(f"kraft admin update: {why}")
+
+
+def _when_free_call(make_call, *, instead: str):
+    """A `--when-free` request, which a running server holds until Kraft is
+    free. With none running there is nothing to hold it, and `instead` says
+    what works without one."""
+    try:
+        return asyncio.run(make_call())
+    except client.transport.ClientError as exc:
+        if exc.kind != client.transport.Failure.UNREACHABLE:
+            raise
+        print(f"kraft: no server is running to hold the request: {instead}", file=sys.stderr)
+        raise SystemExit(1) from None
+
+
+def _update_when_free(ns: argparse.Namespace) -> None:
+    """`update --when-free [TAG]`: mark a release for when Kraft is free, the
+    newest on the channel unless a tag is given."""
+    instead = "`kraft admin update` installs now, and works without one"
+    tag = ns.when_free
+    if not tag:
+        state = _when_free_call(lambda: client.update_available(ns.channel), instead=instead)
+        tag = state.get("latest")
+        if not tag:
+            print(
+                "kraft admin update: could not reach the release feed. Try again.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if state.get("behind") is False:
+            print(f"kraft {state['installed']} is up to date ({tag} is the newest release)")
+            return
+    state = _when_free_call(lambda: client.mark_update(tag, ns.channel), instead=instead)
+    why = f" (waiting: {state['blocked'][0]})" if state.get("blocked") else ""
+    print(f"kraft: {tag} will be installed when Kraft is free{why}")
+
+
+def _cmd_update(ns: argparse.Namespace) -> None:
+    from kraft import update
+
+    if ns.cancel_when_free:
+        _when_free_call(client.unmark_update, instead="there is no mark to drop without one")
+        print("kraft: no release is marked for when Kraft is free")
+        return
+    if ns.when_free is not None:
+        _update_when_free(ns)
+        return
+
+    if why := _config_precheck(interactive=True, assume_yes=ns.yes):
+        _exit(why)
 
     # An install follows its own channel unless told otherwise: a release
     # candidate compared with the stable feed would be told v1.4.0 is the newest.
     channel = ns.channel or update.channel_of(update.installed())
-    if channel != "stable" and update._is_homebrew_install():
-        raise SystemExit(
-            "kraft admin update: the Homebrew formula only tracks stable releases; "
-            f"install --channel {channel} with `uv tool` instead."
-        )
+    if why := _channel_precheck(channel):
+        _exit(why)
     release = update.latest(force=True, channel=channel)
     if release is None:
         print(
@@ -1623,7 +1902,7 @@ def _cmd_update(ns: argparse.Namespace) -> None:
         # Before installing, so answering no leaves nothing half done.
         _confirm_running_agents(ns, "restarting", ask=True, declined="nothing installed or stopped")
     print(f"kraft {here} -> {release.tag}")
-    _confirm_dropped_addons(release.tag.removeprefix("v"), ns.yes)
+    update_prechecks(release, interactive=True, assume_yes=ns.yes, channel=channel)
     code = update.perform(release)
     if code != 0:
         raise SystemExit(code)
@@ -1681,6 +1960,16 @@ def _add_admin(subs, common: argparse.ArgumentParser) -> None:
         ),
     )
     restart.add_argument("-y", "--yes", action="store_true", help="do not ask about running agents")
+    restart.add_argument(
+        "--when-free",
+        action="store_true",
+        help=(
+            "ask for one restart at the next free moment instead: nothing running, "
+            "inside the allowed hours (update.yaml); needs a running server to hold it"
+        ),
+    )
+    # The helper an update when Kraft is free hands the restart to; not for typing.
+    restart.add_argument("--confirm", action="store_true", help=argparse.SUPPRESS)
     restart.set_defaults(func=_cmd_restart)
 
     install_service = subs.add_parser(
@@ -1729,6 +2018,23 @@ def _add_admin(subs, common: argparse.ArgumentParser) -> None:
             "restart a running server after a successful update, the same way it was "
             "running; this ends any running agent, so pause running items first"
         ),
+    )
+    update_p.add_argument(
+        "--when-free",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="TAG",
+        help=(
+            "install the newest release on the channel, or TAG, once nothing is running "
+            "and the hour is allowed (update.yaml), then restart; needs a running server "
+            "to hold the request"
+        ),
+    )
+    update_p.add_argument(
+        "--cancel-when-free",
+        action="store_true",
+        help="drop the release marked with --when-free (or marked on the About page)",
     )
     update_p.set_defaults(func=_cmd_update)
 

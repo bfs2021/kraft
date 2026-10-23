@@ -254,3 +254,158 @@ def test_a_major_update_lists_the_addons_it_would_drop(
     assert (refused is not None) == (not installs)
     if refused:
         assert "nothing installed" in refused
+
+
+@pytest.mark.parametrize("why", ["dropped-addon", "pre-v1"])
+def test_unattended_precheck_refuses_where_the_command_would_ask(
+    monkeypatch, tmp_path, capsys, why
+):
+    """With nobody to ask, `update_prechecks` hands back the reason instead of
+    prompting, and asks nothing."""
+    from support.addons import AGENT, chain, home, install, make_collection
+
+    config_dir = home(tmp_path)
+    if why == "pre-v1":
+        config_dir, _ = _pre_v1_home(tmp_path)
+        (config_dir / "registry.yaml").write_text("hooks: []\n")
+    monkeypatch.setenv("KRAFT_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("KRAFT_RUN_DIR", str(tmp_path / "run"))
+    if why == "dropped-addon":
+        addon = {"library": {"tasks": {"base": AGENT}}, "chains": {"ship": chain("base")}}
+        collection = make_collection(tmp_path, {"release": addon})
+        install(config_dir, tmp_path / "run" / "addons", collection, "release")
+    monkeypatch.setattr(update, "_is_homebrew_install", lambda: False)
+    monkeypatch.setattr(update, "_stale_kraft_tool", lambda _run: False)
+    monkeypatch.setattr("builtins.input", lambda *_: pytest.fail("asked"))
+
+    reason = cli.admin.update_prechecks(update.Release("v3.0.0", "u"), interactive=False)
+
+    assert reason is not None
+    assert ("release@acme" in reason) if why == "dropped-addon" else ("0.x" in reason)
+    assert capsys.readouterr().err == ""
+
+
+def test_unattended_precheck_passes_a_plain_update(monkeypatch, tmp_path):
+    from support.addons import home
+
+    monkeypatch.setenv("KRAFT_CONFIG_DIR", str(home(tmp_path)))
+    monkeypatch.setenv("KRAFT_RUN_DIR", str(tmp_path / "run"))
+    monkeypatch.setattr(update, "_is_homebrew_install", lambda: False)
+    monkeypatch.setattr(update, "_stale_kraft_tool", lambda _run: False)
+    assert cli.admin.update_prechecks(update.Release("v2.9.0", "u"), interactive=False) is None
+
+
+def test_unattended_precheck_refuses_a_stale_kraft_tool(monkeypatch, tmp_path):
+    from support.addons import home
+
+    monkeypatch.setenv("KRAFT_CONFIG_DIR", str(home(tmp_path)))
+    monkeypatch.setenv("KRAFT_RUN_DIR", str(tmp_path / "run"))
+    monkeypatch.setattr(update, "_is_homebrew_install", lambda: False)
+    monkeypatch.setattr(update, "_stale_kraft_tool", lambda _run: True)
+    reason = cli.admin.update_prechecks(update.Release("v2.9.0", "u"), interactive=False)
+    assert reason is not None and "before the rename" in reason
+
+
+# ── --when-free ──
+
+
+@pytest.fixture
+def held(monkeypatch):
+    """A running server that holds the request: what the client was asked."""
+    from kraft import client
+
+    calls = []
+    state = {
+        "installed": "2.2.0",
+        "latest": "v2.3.0",
+        "behind": True,
+        "blocked": ["waiting for 1 running item"],
+    }
+
+    async def update_available(channel=None):
+        calls.append(("update_available", channel))
+        return state
+
+    async def mark_update(tag, channel=None):
+        calls.append(("mark", tag, channel))
+        return state
+
+    async def unmark_update():
+        calls.append(("unmark",))
+        return state
+
+    async def restart_when_free():
+        calls.append(("restart",))
+        return state
+
+    monkeypatch.setattr(client, "update_available", update_available)
+    monkeypatch.setattr(client, "mark_update", mark_update)
+    monkeypatch.setattr(client, "unmark_update", unmark_update)
+    monkeypatch.setattr(client, "restart_when_free", restart_when_free)
+    monkeypatch.setattr(
+        cli.admin,
+        "_confirm_running_agents",
+        lambda *_a, **_k: pytest.fail("asked about running agents"),
+    )
+    return calls, state
+
+
+def test_when_free_marks_newest(held, capsys):
+    calls, _ = held
+    cli.main(["admin", "update", "--when-free"])
+    assert calls == [("update_available", None), ("mark", "v2.3.0", None)]
+    assert "v2.3.0 will be installed when Kraft is free (waiting: waiting for 1" in (
+        capsys.readouterr().out
+    )
+
+
+def test_when_free_with_a_tag(held):
+    calls, _ = held
+    cli.main(["admin", "update", "--when-free", "v3.0.0", "--channel", "rc"])
+    assert calls == [("mark", "v3.0.0", "rc")]
+
+
+def test_when_free_when_already_current_marks_nothing(held, capsys):
+    calls, state = held
+    state["behind"] = False
+    cli.main(["admin", "update", "--when-free"])
+    assert calls == [("update_available", None)]
+    assert "up to date" in capsys.readouterr().out
+
+
+def test_cancel_when_free(held):
+    calls, _ = held
+    cli.main(["admin", "update", "--cancel-when-free"])
+    assert calls == [("unmark",)]
+
+
+def test_restart_when_free(held, capsys):
+    calls, _ = held
+    cli.main(["admin", "restart", "--when-free"])
+    assert calls == [("restart",)]
+    assert "Kraft will restart once nothing is running" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("argv", "says"),
+    [
+        pytest.param(["update", "--when-free"], "kraft admin update", id="update"),
+        pytest.param(["restart", "--when-free"], "kraft admin start", id="restart"),
+    ],
+)
+def test_when_free_with_no_server_exits_1(monkeypatch, capsys, argv, says):
+    """Nothing holds the request, so it is refused and what works without a
+    server is named."""
+    from kraft import client
+
+    async def unreachable(*_a, **_k):
+        raise client.transport._unreachable()
+
+    for name in ("update_available", "mark_update", "restart_when_free"):
+        monkeypatch.setattr(client, name, unreachable)
+
+    with pytest.raises(SystemExit) as exit_:
+        cli.main(["admin", *argv])
+
+    assert exit_.value.code == 1
+    assert says in capsys.readouterr().err
