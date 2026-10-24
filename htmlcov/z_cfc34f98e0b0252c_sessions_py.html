@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">201 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">201<span class="text"> run</span></button>
+            <span class="text">203 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">203<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_cfc34f98e0b0252c_work_items_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-24 12:07 +0000
+            created at 2026-10-24 18:32 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -1185,24 +1185,34 @@
     <p class="run"><span class="n"><a id="t1103" href="#t1103">1103</a></span><span class="t">    <span class="key">return</span> <span class="key">None</span> <span class="key">if</span> <span class="nam">newer_pass</span> <span class="key">else</span> <span class="nam">latest</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1104" href="#t1104">1104</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1105" href="#t1105">1105</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1106" href="#t1106">1106</a></span><span class="t"><span class="key">def</span> <span class="nam">pinned_machine</span><span class="op">(</span><span class="nam">conn</span><span class="op">,</span> <span class="nam">work_item_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">node_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1107" href="#t1107">1107</a></span><span class="t">    <span class="str">&quot;&quot;&quot;The machine of the node&#x27;s latest remote session since the node was last entered: where an</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1108" href="#t1108">1108</a></span><span class="t"><span class="str">    `any` step started stays where it started for the rest of the pass (resume state lives</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1109" href="#t1109">1109</a></span><span class="t"><span class="str">    there).&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1110" href="#t1110">1110</a></span><span class="t">    <span class="nam">entered</span> <span class="op">=</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1111" href="#t1111">1111</a></span><span class="t">        <span class="nam">conn</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1112" href="#t1112">1112</a></span><span class="t">            <span class="str">&quot;SELECT MAX(created_at) FROM events &quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1113" href="#t1113">1113</a></span><span class="t">            <span class="str">&quot;WHERE work_item_id = ? AND type = ? AND node_id = ?&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1114" href="#t1114">1114</a></span><span class="t">            <span class="op">(</span><span class="nam">work_item_id</span><span class="op">,</span> <span class="nam">ChainEvent</span><span class="op">.</span><span class="nam">NODE_STARTED</span><span class="op">,</span> <span class="nam">node_id</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1115" href="#t1115">1115</a></span><span class="t">        <span class="op">)</span><span class="op">.</span><span class="nam">fetchone</span><span class="op">(</span><span class="op">)</span><span class="op">[</span><span class="num">0</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1116" href="#t1116">1116</a></span><span class="t">        <span class="key">or</span> <span class="str">&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1117" href="#t1117">1117</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1118" href="#t1118">1118</a></span><span class="t">    <span class="nam">row</span> <span class="op">=</span> <span class="nam">conn</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1119" href="#t1119">1119</a></span><span class="t">        <span class="str">&quot;SELECT runner FROM worker_sessions WHERE work_item_id = ? AND node_id = ? &quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1120" href="#t1120">1120</a></span><span class="t">        <span class="str">&quot;AND runner IS NOT NULL AND created_at &gt;= ? ORDER BY created_at DESC, rowid DESC LIMIT 1&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1121" href="#t1121">1121</a></span><span class="t">        <span class="op">(</span><span class="nam">work_item_id</span><span class="op">,</span> <span class="nam">node_id</span><span class="op">,</span> <span class="nam">entered</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t1122" href="#t1122">1122</a></span><span class="t">    <span class="op">)</span><span class="op">.</span><span class="nam">fetchone</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1123" href="#t1123">1123</a></span><span class="t">    <span class="key">return</span> <span class="nam">row</span><span class="op">[</span><span class="str">&quot;runner&quot;</span><span class="op">]</span> <span class="key">if</span> <span class="nam">row</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">else</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1106" href="#t1106">1106</a></span><span class="t"><span class="key">def</span> <span class="nam">running_local_sessions</span><span class="op">(</span><span class="nam">conn</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">int</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1107" href="#t1107">1107</a></span><span class="t">    <span class="str">&quot;&quot;&quot;How many sessions the local worker is running: a running row with a pid and no `runner`</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1108" href="#t1108">1108</a></span><span class="t"><span class="str">    (a forge or builtin row has no pid, and a remote step names its machine).&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1109" href="#t1109">1109</a></span><span class="t">    <span class="key">return</span> <span class="nam">conn</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1110" href="#t1110">1110</a></span><span class="t">        <span class="str">&quot;SELECT COUNT(*) FROM worker_sessions &quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1111" href="#t1111">1111</a></span><span class="t">        <span class="str">&quot;WHERE status = ? AND runner IS NULL AND pid IS NOT NULL&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1112" href="#t1112">1112</a></span><span class="t">        <span class="op">(</span><span class="nam">SessionStatus</span><span class="op">.</span><span class="nam">RUNNING</span><span class="op">,</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1113" href="#t1113">1113</a></span><span class="t">    <span class="op">)</span><span class="op">.</span><span class="nam">fetchone</span><span class="op">(</span><span class="op">)</span><span class="op">[</span><span class="num">0</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1114" href="#t1114">1114</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1115" href="#t1115">1115</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1116" href="#t1116">1116</a></span><span class="t"><span class="key">def</span> <span class="nam">pinned_machine</span><span class="op">(</span><span class="nam">conn</span><span class="op">,</span> <span class="nam">work_item_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">node_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1117" href="#t1117">1117</a></span><span class="t">    <span class="str">&quot;&quot;&quot;The machine of the node&#x27;s latest remote session since the node was last entered: where an</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1118" href="#t1118">1118</a></span><span class="t"><span class="str">    `any` step started stays where it started for the rest of the pass (resume state lives</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1119" href="#t1119">1119</a></span><span class="t"><span class="str">    there).&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1120" href="#t1120">1120</a></span><span class="t">    <span class="nam">entered</span> <span class="op">=</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1121" href="#t1121">1121</a></span><span class="t">        <span class="nam">conn</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1122" href="#t1122">1122</a></span><span class="t">            <span class="str">&quot;SELECT MAX(created_at) FROM events &quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1123" href="#t1123">1123</a></span><span class="t">            <span class="str">&quot;WHERE work_item_id = ? AND type = ? AND node_id = ?&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1124" href="#t1124">1124</a></span><span class="t">            <span class="op">(</span><span class="nam">work_item_id</span><span class="op">,</span> <span class="nam">ChainEvent</span><span class="op">.</span><span class="nam">NODE_STARTED</span><span class="op">,</span> <span class="nam">node_id</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1125" href="#t1125">1125</a></span><span class="t">        <span class="op">)</span><span class="op">.</span><span class="nam">fetchone</span><span class="op">(</span><span class="op">)</span><span class="op">[</span><span class="num">0</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1126" href="#t1126">1126</a></span><span class="t">        <span class="key">or</span> <span class="str">&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1127" href="#t1127">1127</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1128" href="#t1128">1128</a></span><span class="t">    <span class="nam">row</span> <span class="op">=</span> <span class="nam">conn</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1129" href="#t1129">1129</a></span><span class="t">        <span class="str">&quot;SELECT runner FROM worker_sessions WHERE work_item_id = ? AND node_id = ? &quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1130" href="#t1130">1130</a></span><span class="t">        <span class="str">&quot;AND runner IS NOT NULL AND created_at &gt;= ? ORDER BY created_at DESC, rowid DESC LIMIT 1&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1131" href="#t1131">1131</a></span><span class="t">        <span class="op">(</span><span class="nam">work_item_id</span><span class="op">,</span> <span class="nam">node_id</span><span class="op">,</span> <span class="nam">entered</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1132" href="#t1132">1132</a></span><span class="t">    <span class="op">)</span><span class="op">.</span><span class="nam">fetchone</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1133" href="#t1133">1133</a></span><span class="t">    <span class="key">return</span> <span class="nam">row</span><span class="op">[</span><span class="str">&quot;runner&quot;</span><span class="op">]</span> <span class="key">if</span> <span class="nam">row</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">else</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -1212,7 +1222,7 @@
             <a class="nav" href="z_cfc34f98e0b0252c_work_items_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-24 12:07 +0000
+            created at 2026-10-24 18:32 +0000
         </p>
     </div>
 </footer>
