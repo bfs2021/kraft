@@ -67,6 +67,7 @@ No key on an entry passes silently. A key within two edits of a field below (`au
 | `areas` | mapping of id to area | `{}` | Path-scoped contexts inside this repo: `{paths: [...], setup: "...", verification: {test_scopes: [...]}}`. See [`areas`](#areas). |
 | `intent_dir` | string, a relative path | `null` | Where the repo's intent tree lives, relative to its root. When set, every agent in the repo is told to follow it. Kraft does not run the tree's check: add it to the repo's `test_scopes` yourself. |
 | `local_files` | list of strings | `[]` | Files to copy into every new worktree, for ones `git worktree add` cannot carry: relative paths, no globs or directories, covered by the worktree's `.gitignore`. Anything else is refused, and named in the `worktree_prepared` event (`kraft view events`). |
+| `carry` | list of strings | `[]` | Files a test-selection tool keeps its state in, such as `.testmondata`. Kraft seeds them into each new worktree and saves them back after a passing local targeted round. See [`carry`](#carry). _Added in next_ |
 
 ### Environment
 
@@ -133,7 +134,7 @@ It applies above the harness profile's own `defaults:`, below a task's `model:` 
 
 ### `test_scopes`
 
-Every command runs from the repository root, without a shell, so one for a project in a subdirectory names that directory itself: `sh -c 'cd frontend && npm test'` (what connect proposes) or `npm --prefix frontend test`, not `npm test`.
+Every command runs from the repository root, without a shell, so one for a project in a subdirectory names that directory itself: `sh -c 'cd frontend && npm test'` (what connect proposes) or `npm --prefix frontend test`, not `npm test`. A command whose own word is a shell operator (`&&`, `|`, `;`, `>`) is refused, and named, when it would run, rather than run with the operator as an argument and the rest ignored.
 
 Kraft does not synthesize `test_scopes` from `test_command`: the two stay independently editable.
 
@@ -160,6 +161,19 @@ Commands compare after shell splitting, so `just  test` and `just test` are one 
 ### `areas`
 
 An area's test scopes join the repo's and are selected by changed paths the same way. Its `setup` runs once before the first of its scopes runs. Areas are never forge targets.
+
+### `carry`
+_Added in next_
+
+Files a test-selection tool keeps its state in, such as testmon's `.testmondata`. They follow `local_files`' rules: literal file paths inside the repo, no globs or directories, covered by the worktree's `.gitignore`, and never listed in both. Kraft seeds them into every new worktree and saves them back, so the tool does not start cold in each one.
+
+- **Seeding.** Kraft copies the whole set from one source: the repo's newest saved copy when it holds any listed file, else the repo's checkout, never a mix. The checkout is only read, and the copy is discarded when a file changes while it is copied, so the tool starts cold. With neither, it starts cold.
+- **Saving.** After a verification round of `suite: targeted` in which every scope passed on this machine, and a listed file changed, Kraft saves the worktree's set as the newest copy. A sandboxed item, a remote machine, an in-place item and a workspace member never save.
+- **What it is for.** Only state that is safe when stale: the tool checks file content, runs more when unsure, and updates on every run. A tool that trusts its cache by timestamp alone does not belong here.
+- **Throwing one away.** `run/carried/<repo>-<hash>/current` points at the newest copy, under `$KRAFT_RUN_DIR`. Delete that repo's folder and the next item seeds from the checkout, or starts cold. `kraft view storage` counts the copies under "other", outside the quota.
+- **Sandboxed repos.** A repo whose items always run sandboxed never saves, so it stays as warm as its checkout's own record.
+
+`kraft repo connect --verify` seeds the same set and lists where each file came from.
 
 ### `env`
 

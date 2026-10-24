@@ -38,6 +38,7 @@ from kraft import builtins as builtins_mod
 from kraft import config as config_mod
 from kraft import detect
 from kraft.adapters.forge.git import LOCK_COMMANDS
+from kraft.paths import RunDirs, default_run_dir
 from kraft.worker.env import TEST_ENV, worker_env
 
 #: Lines of a failed command's output shown; the rest is in the log it names.
@@ -211,6 +212,19 @@ def _steps(
             ok = False
     ran_setups: set[str] = set()
     for label, area_setup, command, targeted in scopes:
+        refused = [
+            (cmd, op)
+            for cmd in (area_setup, command, targeted)
+            if cmd and (op := config_mod.shell_operator(cmd)) is not None
+        ]
+        for cmd, op in refused:
+            say(
+                f"  test [{label}]: {cmd!r} runs without a shell, so {op!r} is passed to it "
+                "as an argument and the rest never runs; write it as sh -c '...' in repos.yaml"
+            )
+            ok = False
+        if refused:
+            continue
         if area_setup and area_setup not in ran_setups:
             ran_setups.add(area_setup)
             steps.append((f"area setup ({label})", shlex.split(area_setup), None))
@@ -271,6 +285,45 @@ def verify(stored: dict, *, say=print, timeout_minutes: float = 30, on_host: boo
     return ok
 
 
+def _seed_carry(entry, repo, worktree, say) -> bool:
+    """Seed the `carry` files as a work item's worktree is seeded, and say where
+    each came from. False when git does not ignore one, which a work item would
+    refuse. Never saves a copy back."""
+    if not entry.carry:
+        return True
+    run_dirs = RunDirs(Path(os.environ.get("KRAFT_RUN_DIR") or default_run_dir()))
+    carry_in = builtins_mod._carry_set(run_dirs, repo, worktree, list(entry.carry), None)
+    where = "saved copy" if carry_in.source == "saved" else "checkout"
+    if carry_in.torn:
+        say("  carry: the checkout's files changed while they were copied; the tool starts cold")
+    ok = True
+    for rel in entry.carry:
+        if rel in carry_in.refused or (
+            rel not in carry_in.carried
+            and not carry_in.torn
+            and not builtins_mod._is_ignored(worktree, rel)
+        ):
+            say(
+                f"  carry: {rel} not carried: git does not ignore it, "
+                "so a work item would refuse it"
+            )
+            ok = False
+        elif rel in carry_in.carried:
+            say(f"  carry: {rel} <- the {where} (git ignores it)")
+        elif carry_in.torn:
+            continue
+        elif carry_in.source == "none":
+            say(
+                f"  carry: {rel} <- no saved copy and none in the checkout; "
+                "the tool starts cold (git ignores it)"
+            )
+        else:
+            say(
+                f"  carry: {rel} <- not in the {where}; the tool starts without it (git ignores it)"
+            )
+    return ok
+
+
 def _rehearse(entry, repo, worktree, env, logs, timeout_minutes, say) -> bool:
     # The worker's own copy, with its guards: a file the repo does not
     # ignore, or one that would land outside the worktree, is not carried.
@@ -278,6 +331,7 @@ def _rehearse(entry, repo, worktree, env, logs, timeout_minutes, say) -> bool:
     ok = not refused
     for rel in refused:
         say(f"  local_files: {rel} not carried: it is not a file, or the repo does not ignore it")
+    ok = _seed_carry(entry, repo, worktree, say) and ok
     baseline, installed = _changed(worktree)
     steps, declared = _steps(entry, say, _change(worktree, logs))
     ok = ok and declared

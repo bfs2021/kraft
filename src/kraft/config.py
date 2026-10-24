@@ -19,7 +19,7 @@ import shlex
 import stat
 import subprocess
 import tempfile
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Self
@@ -257,6 +257,29 @@ def command_key(text: str) -> str:
         return text.strip()
 
 
+#: Words that mean something to a shell and nothing to the `exec` a test command
+#: gets: whole words only.
+_SHELL_OPERATORS = frozenset({"&&", "||", "|", ";", ">", ">>", "<", "2>&1", "&"})
+
+
+def shell_operator_in(argv: Sequence[str]) -> str | None:
+    """The first word of `argv` that is a shell operator (`&&`, `|`, `;`...), else
+    None. Test commands run without a shell (`shlex.split`, then exec), so
+    `cd web && npm ci` runs `cd` with `&&` and the rest as arguments, and
+    passes. Only a whole word counts: `sh -c 'cd x && y'` is one word, and so is
+    `--opt=a|b`."""
+    return next((word for word in argv if word in _SHELL_OPERATORS), None)
+
+
+def shell_operator(command: str) -> str | None:
+    """`shell_operator_in` of the command's words. A command `shlex` cannot
+    read gives None; the paths that split it report that."""
+    try:
+        return shell_operator_in(shlex.split(command))
+    except ValueError:
+        return None
+
+
 #: Keys an older `repos.yaml` entry may still carry, and where each went.
 #: `repos.yaml` keys 2.0 renamed, old name to new: read under the old name,
 #: with a warning naming the new one, and written back under the new name at
@@ -333,6 +356,9 @@ class RepoEntry(BaseModel):
     # like this starts dragging `.venv` and `node_modules` into every worktree,
     # and a glob is the same trap with extra steps.
     local_files: list[Annotated[str, Field(min_length=1)]] = []
+    # State a selection tool keeps (`.testmondata`), seeded into each new
+    # worktree and saved back after a passing targeted round (`kraft.carried`).
+    carry: list[Annotated[str, Field(min_length=1)]] = []
     # How this repo's worktree is prepared. No default and no fallback: an
     # absent key is "nobody has decided yet" and stops the chain when the
     # worktree is built, while `""` is a deliberate "nothing to do"
@@ -420,9 +446,9 @@ class RepoEntry(BaseModel):
         TypeAdapter(dict[Identifier, Area]).validate_python(v)
         return v
 
-    @field_validator("local_files")
+    @field_validator("local_files", "carry")
     @classmethod
-    def _safe_local_files(cls, v: list[str]) -> list[str]:
+    def _safe_paths(cls, v: list[str]) -> list[str]:
         for rel in v:
             if rel.endswith("/"):
                 raise ValueError(f"entry {rel!r} must name a file")
@@ -431,6 +457,16 @@ class RepoEntry(BaseModel):
             if any(c in rel for c in "*?["):
                 raise ValueError(f"entry {rel!r} must be a literal path, not a glob")
         return v
+
+    @model_validator(mode="after")
+    def _carry_and_local_files_are_disjoint(self) -> RepoEntry:
+        both = set(self.carry) & set(self.local_files)
+        if both:
+            raise ValueError(
+                f"repos.yaml: {self.path}: {', '.join(sorted(both))} listed in both 'carry' and "
+                "'local_files'; carry is saved back after a round, local_files is only copied"
+            )
+        return self
 
     @model_validator(mode="after")
     def _scope_commands_name_one_scope(self) -> RepoEntry:
