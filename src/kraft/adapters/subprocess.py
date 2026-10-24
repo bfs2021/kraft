@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import psutil
 
-from kraft import caps, events, item_paths, logs, store
+from kraft import caps, events, ids, item_paths, logs, store
 from kraft import harness as _harness
 from kraft import usage as _usage
 from kraft.paths import private
@@ -29,6 +29,7 @@ from kraft.vocab import (
     AGENT_REPORTABLE,
     UNREADABLE_EXIT,
     LimitEvent,
+    RemoteEvent,
     SandboxEvent,
     SessionEvent,
     SessionStatus,
@@ -463,6 +464,66 @@ def _resolve_exit_file(path: Path) -> str | None:
     return "done" if code == 0 else "failed"
 
 
+class _NoLocalWorker(OSError):
+    """A session was asked to start locally in a process with no link to a local worker."""
+
+
+def _append(path: Path, text: str) -> None:
+    """`text` at the end of the log: the worker appends to it too, so nothing here may write
+    at an offset of its own."""
+    with open(path, "a") as f:
+        f.write(text)
+
+
+async def _start_locally(
+    argv: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str],
+    key: str,
+    log_path: Path,
+    exit_path: Path,
+    db,
+    work_item_id: str,
+    node_id: str,
+    hook_point: str,
+    time_cap: caps.Deadline | None,
+):
+    """`(proc, time_cap)`: the local worker starts `argv` and this server supervises it by pid and
+    by the files it writes. A wait for the worker (it is starting, or being restarted) is
+    said on the board and in the log, and moves `time_cap` on by as long as it lasted."""
+    # Lazy: `kraft.remote` imports `store` and `caps`, which import this module's callers.
+    from kraft.remote import local_link
+
+    link = local_link.current()
+    if link is None:
+        raise _NoLocalWorker("no local worker in this process")
+
+    async def note_wait(text: str) -> None:
+        payload = {"task": hook_point, "node_id": node_id, "reason": text}
+        await db.write(
+            lambda c: events.append(
+                c, work_item_id, RemoteEvent.STEP_WAITING, payload, node_id=node_id
+            )
+        )
+        _append(log_path, f"kraft: {text}\n")
+
+    began = caps.monotonic()
+    proc = await link.spawn(
+        key,
+        argv,
+        cwd=cwd,
+        env=env,
+        log_path=log_path,
+        exit_path=exit_path,
+        on_wait=note_wait,
+    )
+    waited = caps.monotonic() - began
+    if time_cap is not None and waited > 0.05:
+        time_cap = caps.Deadline(time_cap.at + waited, time_cap.hit)
+    return proc, time_cap
+
+
 def _missing_executable(cmd0: str, cwd: Path, env: dict[str, str]) -> bool:
     """True when `cmd[0]` names nothing runnable -- the check `Popen` used to do.
 
@@ -669,14 +730,51 @@ def _declared_members(db, work_item_id: str) -> list[str]:
 
 #: Event loops whose server is shutting down (`server_stopping`).
 _STOPPING: weakref.WeakSet = weakref.WeakSet()
+#: Those of them that leave running local sessions running (`keep_local`).
+_KEEPING: weakref.WeakSet = weakref.WeakSet()
 
 
-def server_stopping() -> None:
+def server_stopping(*, keep_local: bool = True) -> None:
     """The server on this loop is cancelling its walks: a session cut off
     before its launch now stays `pending`, for restart's reattach to stop
     its item as `infra` ("spawn unconfirmed"). While the server is down the
-    lease holds nothing back."""
-    _STOPPING.add(asyncio.get_running_loop())
+    lease holds nothing back.
+
+    `keep_local`: a local session of a worktree item that is still running is left running, as
+    after a crash, for the next start to adopt through the local worker. `kraft admin stop
+    --now` passes False."""
+    loop = asyncio.get_running_loop()
+    _STOPPING.add(loop)
+    if keep_local:
+        _KEEPING.add(loop)
+    else:
+        _KEEPING.discard(loop)
+
+
+def keeping_local_sessions() -> bool:
+    """Whether the server stopping on this loop leaves running local sessions running."""
+    try:
+        return asyncio.get_running_loop() in _KEEPING
+    except RuntimeError:
+        return False
+
+
+async def kept_through_stop(db, work_item_id: str, session_id: str, *, alive: bool) -> bool:
+    """Whether a local session cancelled by a stopping server is left running. Called only for a
+    session that is local and whose task was cancelled; true when the stop keeps local sessions,
+    its process still `alive`, its row still reads `running` (a pause, skip or cancel by a person
+    writes the row first and stays a stop) and its item is not in place (that session runs in the
+    person's own checkout). A session over its cap never gets here: the poll loop leaves it
+    without a cancel."""
+    if not alive or not keeping_local_sessions():
+        return False
+
+    def _read(c):
+        status = store.session_status(c, session_id, work_item_id=work_item_id)
+        row = c.execute("SELECT * FROM work_items WHERE id = ?", (work_item_id,)).fetchone()
+        return status == SessionStatus.RUNNING and not store.is_in_place(row)
+
+    return await db.write(_read)
 
 
 async def run_task(db, run_dirs, *, session_id: str, work_item_id: str, **kwargs) -> str:
@@ -1221,27 +1319,54 @@ async def _run_task(
                 # stream-json mode waits on stdin before it starts (measured: a 3s
                 # "no stdin data received" stall), and no hook has any business
                 # reading the server's own stdin.
-                proc = subprocess.Popen(
-                    _wrap_with_exit_file(cmd, exit_path),
-                    cwd=str(client_cwd or cwd),
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                    env=full_env,
-                    stdin=subprocess.DEVNULL,
-                )
+                argv = _wrap_with_exit_file(cmd, exit_path)
+                if run is not None:
+                    proc = subprocess.Popen(
+                        argv,
+                        cwd=str(client_cwd or cwd),
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                        env=full_env,
+                        stdin=subprocess.DEVNULL,
+                    )
+                else:
+                    proc, time_cap = await _start_locally(
+                        argv,
+                        cwd=str(client_cwd or cwd),
+                        env=full_env,
+                        key=ids.session_ref(work_item_id, session_id),
+                        log_path=log_path,
+                        exit_path=exit_path,
+                        db=db,
+                        work_item_id=work_item_id,
+                        node_id=node_id,
+                        hook_point=hook_point,
+                        time_cap=time_cap,
+                    )
                 # `start_new_session=True` makes this the group's pgid for life,
                 # captured now rather than re-derived after the leader exits.
                 pgid = proc.pid
                 launched = True
-            except FileNotFoundError as exc:
-                # Popen raises this for a missing cwd as well as a missing
+            except OSError as exc:
+                # Popen raises FileNotFoundError for a missing cwd as well as a missing
                 # executable, and the two are fixed in different places. Say which:
                 # the alternative is what this branch used to leave behind — a
                 # zero-byte log, a 5ms "failed", and no way to tell them apart.
-                # Safe to write: in this path the child never took the fd.
-                missing = "working directory" if not Path(cwd).is_dir() else f"command {cmd[0]!r}"
-                log.write(f"could not start {' '.join(cmd)} in {cwd}: no such {missing} ({exc})\n")
+                # Appended, never written at offset 0: a wait note is already there, and
+                # the local worker has the file open too.
+                if isinstance(exc, _NoLocalWorker):
+                    _append(log_path, f"kraft: {exc}\n")
+                elif isinstance(exc, FileNotFoundError):
+                    missing = (
+                        "working directory" if not Path(cwd).is_dir() else f"command {cmd[0]!r}"
+                    )
+                    _append(
+                        log_path,
+                        f"could not start {' '.join(cmd)} in {cwd}: no such {missing} ({exc})\n",
+                    )
+                else:
+                    _append(log_path, f"could not start {' '.join(cmd)} in {cwd}: {exc}\n")
                 if run is not None:
                     await _remote_runs.current().signal(run, "KILL")
                 # Not "failed": a task that never launched is a configuration
@@ -1287,6 +1412,8 @@ async def _run_task(
     watcher.start()
     oom: _backends.OomKill | None = None
     started = False
+    capped = False
+    cancelled = False  # the poll loop was cancelled: a pause, a skip, a stop
 
     async def wind_down() -> None:
         """The `finally` below, past stopping the watcher: every way out of the
@@ -1311,6 +1438,15 @@ async def _run_task(
             await db.write(lambda c: store.session_status(c, session_id, work_item_id=work_item_id))
             == SessionStatus.PAUSED
         )
+        # A clean stop leaves a running local session of a worktree item running, as a crash
+        # does, for the next start to adopt through the local worker. Nothing of it is torn
+        # down: not its group, its sandbox, its egress route, nor its refs.
+        if (
+            cancelled
+            and run is None
+            and await kept_through_stop(db, work_item_id, session_id, alive=proc.poll() is None)
+        ):
+            return
         # Only a session that started was ever sent the SIGINT this waits on.
         if paused and started and flush_grace:
             await _flush_sleep(flush_grace)
@@ -1396,7 +1532,6 @@ async def _run_task(
         seen_usage: dict[str, _usage.Usage] = {}
         log_offset = 0
         next_progress = time.monotonic() + progress_s
-        capped = False
         hit: caps.Hit | None = None
         # The idle watchdog: the log's size, read on the usage tick below.
         last_size = 0
@@ -1437,6 +1572,9 @@ async def _run_task(
                     )
             except Exception:
                 logger.exception("usage progress tick failed for session %s", session_id)
+    except asyncio.CancelledError:
+        cancelled = True
+        raise
     finally:
         # A pause or skip cancels this task from inside the poll loop above
         # (deps.cancel -> CancelledError), which used to skip straight past
