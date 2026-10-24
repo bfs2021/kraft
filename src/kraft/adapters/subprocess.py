@@ -595,6 +595,7 @@ async def open_egress(
     lists: PhaseLists,
     credentials: tuple[InjectRule, ...] = (),
     repo: str | None = None,
+    channels=None,
 ) -> dict:
     """Open a session's egress under `sandbox['network']`: its channel, with
     the `credentials` its proxy injects, the lists (and those credentials,
@@ -602,8 +603,9 @@ async def open_egress(
     setup command, which has no row and is never reattached), and the
     backend's route to the channel. The proxy environment the launch adds;
     `SandboxNotReady` whenever any of it is missing -- never a launch with
-    open egress."""
-    channels = _channel.current()
+    open egress. `channels` is the registry to open it in when not this
+    process's (a machine's, which has no database either)."""
+    channels = channels or _channel.current()
     if channels is None:
         raise _sandbox.SandboxNotReady(
             "a sandbox with `network:` reaches out only through the Kraft server's egress "
@@ -635,12 +637,12 @@ async def open_egress(
     return proxy_env
 
 
-async def close_egress(backend, session_id: str, *, work_item_id: str) -> None:
+async def close_egress(backend, session_id: str, *, work_item_id: str, channels=None) -> None:
     """Undo `open_egress`: the backend's route, then the channel."""
     try:
         await backend.close_session(session_id, work_item_id=work_item_id)
     finally:
-        if (channels := _channel.current()) is not None:
+        if (channels := channels or _channel.current()) is not None:
             await channels.close(session_id, work_item_id=work_item_id)
 
 
@@ -827,7 +829,6 @@ async def _run_task(
             node_id=node_id,
             runner=runner,
             repo_entry=repo_entry,
-            sandbox=sandbox,
             time_cap=time_cap,
         )
     files = files or item_paths.session_files(run_dirs, work_item_id, session_id)
@@ -912,8 +913,34 @@ async def _run_task(
     credentials = _harness.manage(every, declared, phase="runtime")
     sentinels = {c.env: c.sentinel for c in credentials}
     withheld = {n for c in every for n in (c.env, c.source) if n}
-    rules = _inject.rules(credentials, full_env)
+    rules = _inject.rules(credentials, {} if runner is not None else full_env)
     full_env = {k: v for k, v in full_env.items() if k not in withheld}
+    sandbox_job: dict = {}
+    if backend is not None and runner is not None:
+        # The machine builds this sandbox, so nothing below runs a backend here: it is sent what
+        # the backend needs, and the credentials as declarations only (their values are read
+        # from the machine's own environment).
+        install = _harness.manage(every, phase="install")
+        sandbox_job = {
+            "sandbox": dict(sandbox),
+            "egress": PhaseLists.of(
+                sandbox["network"], "runtime", () if sandbox.get("kit") else network_requires
+            ).to_json()
+            if network
+            else None,
+            "credentials": [r.to_json() for r in rules],
+            "sentinels": sentinels,
+            "withheld": sorted(withheld),
+            # The setup command runs in it too, under the install phase's lists and credentials.
+            "setup_sandbox": {
+                "egress": PhaseLists.of(sandbox["network"], "install").to_json()
+                if network
+                else None,
+                "credentials": [r.to_json() for r in _inject.rules(install, {})],
+                "sentinels": {c.env: c.sentinel for c in install},
+            },
+        }
+        backend, network = None, False
     refs: Sequence = ()
     root, members = checkout if checkout is not None else (Path(cwd), {})
     # What a sandboxed worker may write outside its worktree and its home:
@@ -1158,6 +1185,7 @@ async def _run_task(
                         entries=entries,
                         time_cap=time_cap,
                         idle_s=idle_s,
+                        **sandbox_job,
                     )
                     run = await _remote_runs.current().launch(
                         spec, claim, entries=entries, folder=files.folder
@@ -1300,6 +1328,8 @@ async def _run_task(
             if run is not None:
                 # The machine's commits, result and documents are home before this reads them.
                 await _remote_runs.current().wait_delivered(run, 60)
+                if run.oom is not None:  # the machine's sandbox was killed under its memory limit
+                    oom = _backends.OomKill(run.oom["memory"], bool(run.oom["confirmed"]))
             # Nested so neither a collect nor a close that raises skips what
             # follows it: the session's commits are published whatever became
             # of its result file.

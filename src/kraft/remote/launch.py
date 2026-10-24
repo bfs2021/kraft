@@ -12,7 +12,7 @@ from kraft.remote.hub import PlacementRefused
 from kraft.remote.jobs import JobSpec
 
 
-async def claim(db, *, work_item_id, session_id, node_id, runner, repo_entry, sandbox, time_cap):
+async def claim(db, *, work_item_id, session_id, node_id, runner, repo_entry, time_cap):
     """`(claim, refusal, time_cap)`. A refusal is text for the session's log; a wait is a
     cancellable `await` here, with `time_cap` moved on by however long it lasted."""
     runs = runs_mod.current()
@@ -29,7 +29,6 @@ async def claim(db, *, work_item_id, session_id, node_id, runner, repo_entry, sa
         workers=runs.hub.file,
         repos=repos,
         in_place=bool(row is not None and store.is_in_place(row)),
-        sandboxed=sandbox is not None,
         repo_path=row["repo"] if row is not None else ".",
         members=builtins.item_mounts(row) if row is not None else [],
     )
@@ -70,6 +69,12 @@ def build(
     entries,
     time_cap: caps.Deadline | None,
     idle_s: float | None,
+    sandbox: dict | None = None,
+    egress: dict | None = None,
+    credentials: list[dict] | None = None,
+    sentinels: dict[str, str] | None = None,
+    withheld: list[str] | None = None,
+    setup_sandbox: dict | None = None,
 ) -> JobSpec:
     done = subprocess.run(
         ["git", "-C", str(cwd), "rev-parse", "--verify", f"refs/heads/{branch}"],
@@ -104,4 +109,11 @@ def build(
         deadline_s=None if time_cap is None else max(0.0, time_cap.at - caps.monotonic()),
         cap=None if time_cap is None else asdict(time_cap.hit),
         idle_s=idle_s,
+        sandbox=sandbox,
+        egress=egress,
+        credentials=list(credentials or []),
+        sentinels=dict(sentinels or {}),
+        withheld=list(withheld or []),
+        setup_sandbox=setup_sandbox,
+        ro=[str(e.path) for e in entries if not e.rw],
     )

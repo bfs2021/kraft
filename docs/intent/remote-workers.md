@@ -71,8 +71,8 @@ enforced-by: tests/api/test_workers.py::test_a_kraft_session_cannot_manage_machi
 origin: src/kraft/api/routes/workers.py §_forbid_sessions
 
 ## REQ worker-check-fails-on-missing-essentials
-IF `git` or every agent CLI is missing, or the server given to `kraft admin worker check` cannot be reached, THEN the system SHALL exit 1, and a missing credential or sandbox runtime SHALL only warn.
-enforced-by: tests/remote/test_check.py::test_git_and_one_agent_cli_pass_and_a_missing_credential_only_warns, tests/remote/test_check.py::test_what_must_be_present_fails_when_it_is_not[nothing], tests/remote/test_check.py::test_what_must_be_present_fails_when_it_is_not[no-agent], tests/remote/test_check.py::test_what_must_be_present_fails_when_it_is_not[no-git], tests/remote/test_check.py::test_a_server_that_refuses_the_token_fails_the_server_row, tests/cli/test_worker.py::test_check_exits_1_when_a_row_fails
+IF `git` or every agent CLI is missing, or the server given to `kraft admin worker check` cannot be reached, THEN the system SHALL exit 1, and a missing credential or a sandbox backend that does not work there SHALL only warn.
+enforced-by: tests/remote/test_check.py::test_git_and_one_agent_cli_pass_and_a_missing_credential_only_warns, tests/remote/test_check.py::test_what_must_be_present_fails_when_it_is_not[nothing], tests/remote/test_check.py::test_what_must_be_present_fails_when_it_is_not[no-agent], tests/remote/test_check.py::test_what_must_be_present_fails_when_it_is_not[no-git], tests/remote/test_check.py::test_a_server_that_refuses_the_token_fails_the_server_row, tests/remote/test_check.py::test_a_row_per_sandbox_backend_with_its_health_and_a_warning_when_none_is_usable[one-usable], tests/remote/test_check.py::test_a_row_per_sandbox_backend_with_its_health_and_a_warning_when_none_is_usable[none-usable], tests/remote/test_check.py::test_a_row_per_sandbox_backend_with_its_health_and_a_warning_when_none_is_usable[check-crashes], tests/cli/test_worker.py::test_check_exits_1_when_a_row_fails
 origin: src/kraft/remote/check.py
 
 ## REQ doctor-warns-on-offline-machines
@@ -91,8 +91,8 @@ enforced-by: tests/remote/test_placement.py::test_a_machine_that_is_unknown_or_n
 origin: src/kraft/remote/placement.py §refusal
 
 ## REQ runner-refuses-items-a-machine-cannot-take
-IF an item with a machine runner is in place, sandboxed, or has workspace members, submodules or Git LFS, THEN the system SHALL refuse it, naming both settings.
-enforced-by: tests/remote/test_placement.py::test_filing_problems_name_both_settings_for_in_place_and_sandbox, tests/remote/test_placement.py::test_a_checkout_a_single_bundle_cannot_carry_is_named[submodule-submodules], tests/remote/test_placement.py::test_a_checkout_a_single_bundle_cannot_carry_is_named[lfs-Git LFS], tests/adapters/test_subprocess_remote.py::test_a_placement_that_cannot_hold_is_a_config_error_naming_why_and_runs_nothing[unknown-machine], tests/adapters/test_subprocess_remote.py::test_a_placement_that_cannot_hold_is_a_config_error_naming_why_and_runs_nothing[sandboxed-item]
+IF an item with a machine runner is in place, or has workspace members, submodules or Git LFS, THEN the system SHALL refuse it, naming both settings.
+enforced-by: tests/remote/test_placement.py::test_filing_problems_name_both_settings_for_in_place, tests/remote/test_placement.py::test_a_checkout_a_single_bundle_cannot_carry_is_named[submodule-submodules], tests/remote/test_placement.py::test_a_checkout_a_single_bundle_cannot_carry_is_named[lfs-Git LFS], tests/adapters/test_subprocess_remote.py::test_a_placement_that_cannot_hold_is_a_config_error_naming_why_and_runs_nothing[unknown-machine]
 origin: src/kraft/remote/placement.py §filing_problems
 
 ## REQ any-never-means-the-server
@@ -224,3 +224,53 @@ origin: src/kraft/doctor.py §_chains_check
 WHEN a machine loses or regains its connection, the system SHALL record that on each item with an unfinished step on it, and on no other.
 enforced-by: tests/remote/test_runs.py::test_a_drop_and_a_reconnect_each_note_the_item_whose_step_runs_there
 origin: src/kraft/remote/runs.py §_note_machine
+
+## REQ sandboxed-step-runs-in-its-sandbox-on-the-machine
+WHEN a step of a sandboxed item runs on a machine, the system SHALL run it inside the sandbox the item was filed with, built by the machine's own backend, and SHALL NOT run a sandbox backend on the server for it.
+enforced-by: tests/remote/test_sandboxed.py::test_the_backend_is_called_in_the_order_a_local_step_uses, tests/remote/test_sandboxed.py::test_a_setup_command_runs_in_the_sandbox_too, tests/adapters/test_subprocess_remote.py::test_a_sandboxed_remote_step_runs_no_backend_on_the_server, tests/remote/test_sandboxed_step.py::test_a_step_runs_in_a_seatbelt_sandbox_the_machine_built, tests/remote/test_sandboxed_step.py::test_a_step_runs_in_a_docker_sandbox_the_machine_built
+origin: src/kraft/remote/sandboxed.py
+
+## REQ sandbox-the-machine-cannot-build-is-a-config-error
+IF a machine cannot build the sandbox of a step it was sent, or lacks a credential value the sandbox injects, THEN the system SHALL end the step `config_error` naming the machine and what is missing, and SHALL NOT run the command.
+enforced-by: tests/remote/test_sandboxed.py::test_a_sandbox_the_machine_cannot_build_stops_the_step_and_runs_nothing[probe-refuses], tests/remote/test_sandboxed.py::test_a_sandbox_the_machine_cannot_build_stops_the_step_and_runs_nothing[prepare-cannot], tests/remote/test_sandboxed.py::test_a_credential_the_machine_lacks_stops_the_step_naming_the_variable, tests/remote/test_sandboxed.py::test_a_machine_with_no_sandbox_support_never_runs_a_sandboxed_step, tests/remote/test_machine.py::test_a_sandbox_the_machine_cannot_build_is_rejected_naming_it_and_nothing_runs
+origin: src/kraft/remote/sandboxed.py §Sandboxed
+
+## REQ no-secret-crosses-to-the-machine
+The system SHALL send a machine the declarations of a sandbox's credentials and never a value, and SHALL give the worker a sentinel where the machine's proxy injects the value.
+enforced-by: tests/adapters/test_subprocess_remote.py::test_a_sandboxed_job_carries_its_sandbox_lists_and_credential_declarations, tests/remote/test_sandboxed.py::test_the_workers_env_holds_the_sentinel_never_the_machines_secret
+origin: src/kraft/adapters/subprocess.py §_run_task
+
+## REQ machine-host-git-never-reads-the-workers-gitdir
+The system SHALL keep a machine's copy of an item as a linked worktree of a bare repository, so that a sandboxed worker gets a private ref store and nothing it writes under its checkout's `.git` is read by the git that updates, sweeps and bundles on the machine.
+enforced-by: tests/remote/test_workdir.py::test_the_copy_is_a_linked_worktree_so_ref_stores_apply, tests/remote/test_workdir.py::test_an_old_plain_clone_is_rebuilt_as_a_worktree, tests/remote/test_sandboxed_step.py::test_a_step_runs_in_a_seatbelt_sandbox_the_machine_built, tests/remote/test_sandboxed_step.py::test_a_step_runs_in_a_docker_sandbox_the_machine_built
+origin: src/kraft/remote/workdir.py
+
+## REQ sandboxed-worker-calls-cross-the-connection-after-the-allowlist
+WHEN a worker in a sandbox on a machine calls the worker API or asks for a permission over MCP, the system SHALL refuse a call outside its session's allowlist on the machine without sending it, and SHALL send the rest to the server over the connection.
+enforced-by: tests/worker/test_egress_worker_api.py::test_a_machines_worker_call_goes_over_its_connection_as_the_channel_session, tests/worker/test_egress_worker_api.py::test_a_call_outside_the_allowlist_is_refused_on_the_machine_before_it_is_sent[act-on-another-item], tests/worker/test_egress_worker_api.py::test_a_call_outside_the_allowlist_is_refused_on_the_machine_before_it_is_sent[read-another-item], tests/worker/test_egress_worker_api.py::test_a_permission_ask_over_mcp_reaches_the_server_and_its_answer_comes_back
+origin: src/kraft/worker/egress.py §EgressProxy
+
+## REQ machine-sandbox-memory-kill-ends-config-error
+WHEN a machine reports that a step's sandbox was killed under its memory limit, the system SHALL end the session `config_error` and record `sandbox_oom_killed`, as for a local step.
+enforced-by: tests/adapters/test_subprocess_remote.py::test_a_memory_kill_in_the_machines_sandbox_ends_the_session_config_error, tests/remote/test_machine.py::test_a_sandboxed_step_runs_in_the_backend_and_its_oom_is_in_the_finished_frame
+origin: src/kraft/remote/runs.py §_deliver
+
+## REQ machine-adds-only-sandbox-events
+WHEN a machine sends an event for a step, the system SHALL append it to the item's history only if it is a sandbox event other than a memory kill.
+enforced-by: tests/remote/test_runs.py::test_a_machine_adds_sandbox_events_to_its_items_history_and_nothing_else[egress-refused], tests/remote/test_runs.py::test_a_machine_adds_sandbox_events_to_its_items_history_and_nothing_else[not-synced], tests/remote/test_runs.py::test_a_machine_adds_sandbox_events_to_its_items_history_and_nothing_else[oom-kill-is-not-an-event-frame], tests/remote/test_runs.py::test_a_machine_adds_sandbox_events_to_its_items_history_and_nothing_else[not-a-sandbox-event]
+origin: src/kraft/remote/runs.py §_machine_event
+
+## REQ machine-skips-the-sweep-over-a-planted-repository
+WHEN a sandboxed step ends on a machine and its checkout holds a git repository Kraft did not create, or git cannot say, the system SHALL skip the sweep there, say so in the step's log, bundle only what the worker committed, and replace the checkout from the bare repository before the item's next step instead of checking out over it.
+enforced-by: tests/remote/test_machine.py::test_a_sandboxed_checkout_holding_a_repository_it_made_is_not_swept_and_is_rebuilt, tests/remote/test_workdir.py::test_a_copy_marked_for_rebuild_is_replaced_not_checked_out_over
+origin: src/kraft/remote/machine.py §_finish
+
+## REQ machine-leaves-no-ref-store-for-a-refused-sandbox
+IF a machine refuses a sandboxed step or setup command after it made the session's ref store, or cannot run the setup command, THEN the system SHALL remove that ref store and end the step `config_error` naming the machine.
+enforced-by: tests/remote/test_sandboxed.py::test_a_refusal_after_the_ref_store_was_made_leaves_none_behind, tests/remote/test_sandboxed.py::test_a_setup_runtime_that_vanished_before_the_exec_is_a_config_error
+origin: src/kraft/remote/sandboxed.py §Sandboxed._wrap
+
+## REQ one-channel-registry-per-machine-process
+The system SHALL give every machine a process hosts one egress channel registry, the one the sandbox backends read, whichever servers' machines open channels in it.
+enforced-by: tests/remote/test_daemon.py::test_two_servers_machines_in_one_daemon_share_the_registry_the_backends_read
+origin: src/kraft/remote/channels.py

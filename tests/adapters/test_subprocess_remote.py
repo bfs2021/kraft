@@ -2,18 +2,24 @@
 
 import asyncio
 import contextlib
+import json
 import sys
 
 import pytest
 from support.chain_builders import v1_node
+from support.fake_backend import Remote
 from support.harness import entry_of, v1_chain
 
 from kraft import caps
 from kraft.adapters import subprocess as sp
+from kraft.remote import launch
 from kraft.remote import runs as runs_mod
+from kraft.worker import backends
+from kraft.worker.backends.docker import OomKill
 
 
 def _args(rig, sid, cmd, **kw):
+    kw.setdefault("repo_entry", entry_of({"setup_command": ""}))
     return dict(
         session_id=sid,
         work_item_id=rig.wid,
@@ -21,7 +27,6 @@ def _args(rig, sid, cmd, **kw):
         hook_point="build.main.a",
         cmd=cmd,
         cwd=rig.repo,
-        repo_entry=entry_of({"setup_command": ""}),
         poll_s=0.02,
         **kw,
     )
@@ -78,9 +83,8 @@ async def test_a_cap_the_machine_enforced_ends_the_session_time_capped(rig, monk
     ("runner", "kwargs", "says"),
     [
         ("ghost", {}, "'ghost' is not a machine in workers.yaml"),
-        ("gpu", {"sandbox": {"kind": "os"}}, "sandboxed item"),
     ],
-    ids=["unknown-machine", "sandboxed-item"],
+    ids=["unknown-machine"],
 )
 async def test_a_placement_that_cannot_hold_is_a_config_error_naming_why_and_runs_nothing(
     rig, runner, kwargs, says
@@ -124,7 +128,6 @@ async def test_a_wait_moves_the_time_cap_on_by_however_long_it_lasted(rig):
         node_id="build",
         runner="gpu",
         repo_entry=None,
-        sandbox=None,
         time_cap=cap,
     )
     assert refusal is None and got.machine == "gpu"
@@ -153,3 +156,72 @@ async def test_with_no_machines_in_this_process_a_remote_runner_is_a_config_erro
         runner="gpu",
     )
     assert status == "config_error"
+
+
+SECRET = "s3cr3t-value-of-the-servers-key"
+SANDBOX = {
+    "kind": "remote",
+    "network": {"runtime": {"allow": ["api.example.com"]}},
+    "credentials": [
+        {
+            "env": "EXAMPLE_KEY",
+            "inject": [
+                {"domain": "api.example.com", "header": "authorization", "format": "Bearer %s"}
+            ],
+        }
+    ],
+}
+
+
+@pytest.fixture
+def sandboxed(rig, tmp_path, short_run, monkeypatch):
+    """The fake backend registered as the item's sandbox kind -- the machine in this process
+    builds it in a run dir of its own -- and every `JobSpec` the launch builds kept."""
+    backend = Remote(tmp_path)
+    monkeypatch.setitem(backends._BACKENDS, backend.kind, backend)
+    monkeypatch.setenv("KRAFT_RUN_DIR", str(short_run.base))
+    monkeypatch.setenv("EXAMPLE_KEY", SECRET)
+    built = []
+    build = launch.build
+    monkeypatch.setattr(launch, "build", lambda **kw: built.append(build(**kw)) or built[-1])
+    return backend, built
+
+
+async def test_a_sandboxed_job_carries_its_sandbox_lists_and_credential_declarations(
+    rig, sandboxed
+):
+    _, built = sandboxed
+    repo = entry_of({"setup_command": "", "env_passthrough": ["EXAMPLE_KEY"]})
+    await _run(rig, "s1", ["true"], runner="gpu", sandbox=SANDBOX, repo_entry=repo)
+    (spec,) = built
+    assert spec.sandbox == SANDBOX
+    assert spec.egress == {"phase": "runtime", "allow": ["api.example.com"], "deny": []}
+    assert [(c["env"], c["domain"], c["header"]) for c in spec.credentials] == [
+        ("EXAMPLE_KEY", "api.example.com", "authorization")
+    ]
+    assert spec.withheld == ["EXAMPLE_KEY"] and set(spec.sentinels) == {"EXAMPLE_KEY"}
+    assert SECRET not in json.dumps(spec.to_frame())
+    assert _row(rig, "s1")["sandbox"] == "remote" and _row(rig, "s1")["runner"] == "gpu"
+
+
+async def test_a_sandboxed_remote_step_runs_no_backend_on_the_server(rig, sandboxed):
+    backend, _ = sandboxed
+    repo = entry_of({"setup_command": "", "env_passthrough": ["EXAMPLE_KEY"]})
+    status = await _run(rig, "s1", ["true"], runner="gpu", sandbox=SANDBOX, repo_entry=repo)
+    assert status == "done", rig.files("s1").log.read_text()
+    # every call came from the machine, in its own run dir; none was made in the server's
+    assert backend.bases and rig.run_dirs.base not in backend.bases
+
+
+async def test_a_memory_kill_in_the_machines_sandbox_ends_the_session_config_error(rig, sandboxed):
+    backend, _ = sandboxed
+    backend.oom = OomKill("1g", True)
+    repo = entry_of({"setup_command": "", "env_passthrough": ["EXAMPLE_KEY"]})
+    status = await _run(rig, "s1", ["false"], runner="gpu", sandbox=SANDBOX, repo_entry=repo)
+    assert status == "config_error"
+    assert "killed by its memory limit (1g)" in rig.files("s1").log.read_text()
+    kinds = [
+        r["type"]
+        for r in rig.database.read(lambda c: c.execute("SELECT type FROM events").fetchall())
+    ]
+    assert kinds.count("sandbox_oom_killed") == 1

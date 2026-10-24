@@ -20,12 +20,16 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from kraft import item_paths, paths
+from kraft.paths import RunDirs
 from kraft.remote import blobs, files, protocol
+from kraft.remote.channels import Channels
 from kraft.remote.forwarder import Forwarder
 from kraft.remote.jobs import JobRunner, JobSpec, job_dir
 from kraft.remote.paths import PathMap
+from kraft.remote.sandboxed import Host
 from kraft.remote.transport import FRAME_LIMIT, WebSocketTransport
 from kraft.remote.workdir import Copy
+from kraft.worker import channel
 
 CONNECT_PATH = "/api/workers/connect"
 _SCHEMES = {"http": "ws", "https": "wss"}
@@ -63,7 +67,10 @@ async def dial_in(
     from websockets.exceptions import WebSocketException
 
     url, delay = dial_url(server), first_delay
-    machine = Machine(paths.kraft_home(), kraft_version=kraft_version)
+    channels = Channels()  # this process's: the sandbox backends find them in `channel.current()`
+    machine = Machine(paths.kraft_home(), kraft_version=kraft_version, channels=channels)
+    before = channel.current()
+    channel.install(channels.registry)
 
     async def once() -> bool:
         """One connection; True when the server welcomed it."""
@@ -99,6 +106,8 @@ async def dial_in(
         delay = first_delay if attempt.result() else min(delay * 2, max_delay)
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), delay)
+    channel.install(before)
+    await channels.close()
 
 
 def _spawn_daemon() -> None:
@@ -164,6 +173,7 @@ class Machine:
         kill_grace_s: float = 5.0,
         clock: Callable[[], float] = time.monotonic,
         give_up_poll_s: float = 1.0,
+        channels: Channels | None = None,
     ) -> None:
         self.home, self.kraft_version, self._grace = Path(home), kraft_version, kill_grace_s
         # monotonic: it does not advance while a laptop sleeps, so neither does the wait
@@ -184,6 +194,28 @@ class Machine:
         ] = {}  # item -> preparing its copy, one job at a time
         self._delivered: dict[str, list[str]] = {}  # item -> tips the server has already taken
         self._background: set[asyncio.Task] = set()
+        self._name = ""  # what the server calls this machine, from its latest welcome
+        # The process's, shared with every other Machine it hosts: the sandbox backends find the
+        # one registry in `channel.current()`. A Machine on its own makes its own.
+        self._channels = channels or Channels()
+        self._channels.add(self)
+
+    @property
+    def channels(self) -> channel.ChannelRegistry:
+        """The egress channels of the sandboxes built here: the worker API and the session MCP
+        server go over the connection, a refusal goes up as an event."""
+        return self._channels.registry
+
+    @property
+    def run_dirs(self) -> RunDirs:
+        return self._channels.run_dirs
+
+    def holds(self, key: str) -> bool:
+        """Is `key` (`<work item>/<session>`) one of this machine's jobs?"""
+        return key in self._jobs
+
+    def runs_item(self, work_item_id: str) -> bool:
+        return any(j.spec.work_item_id == work_item_id for j in self._running())
 
     def busy(self) -> bool:
         """Does it hold a job: running, or finished and not yet taken by the server?"""
@@ -195,6 +227,7 @@ class Machine:
         self._area.mkdir(parents=True, exist_ok=True)
         self._sink = blobs.BlobSink(self._area / "blobs")
         self._give_up_s = welcome.get("give_up_after_s")
+        self._name = str(welcome.get("name") or "")
         self._t = t
         self._stop_watchdog()
         try:
@@ -363,14 +396,32 @@ class Machine:
         if job.stopped is not None:  # given up on while it was being prepared
             await self._reject(job, "failed", job.stopped.strip())
             return
+        # A sandboxed worker reaches Kraft through its egress proxy (`channels`), not a port.
+        sandboxed = spec.sandbox is not None
         forwarder = Forwarder(lambda m, target, h, b: self._forward(job, m, target, h, b))
-        port = await forwarder.start()
+        port = None if sandboxed else await forwarder.start()
+        host = None
+        if sandboxed:
+            try:
+                await self._channels.serve_mcp()
+                self.run_dirs.ensure()
+            except OSError as exc:
+                await self._reject(job, "config_error", f"{self._name}: {exc}")
+                return
+            host = Host(
+                machine=self._name or "this machine",
+                run_dirs=self.run_dirs,
+                channels=self.channels,
+                live=lambda: [j.spec.session_id for j in self._co_tasks(job)],
+                start_tls=self._channels.ensure_tls,
+            )
         job.runner = JobRunner(
             spec,
             area=self._area,
             api_port=port,
             kill_grace_s=self._grace,
             received_at=job.received,
+            host=host,
         )
         try:
             out = await job.runner.run(
@@ -393,13 +444,37 @@ class Machine:
             and j.state == "running"
         ]
 
+    @staticmethod
+    async def _planted(job: _Job, copy: Copy) -> list[str]:
+        """What a sandboxed job left in its checkout that host git must not read: the repositories
+        it planted, or a note that git could not say (treated as planted)."""
+        try:
+            found = await asyncio.to_thread(copy.planted, job.spec.base)
+        except Exception:
+            found = None
+        return ["(git could not say)"] if found is None else found
+
     async def _finish(self, job: _Job, out, copy: Copy, mapper, pushed: dict[str, str]) -> None:
         spec = job.spec
         if not self._co_tasks(job):
-            with contextlib.suppress(Exception):  # the sweep is best effort, as on the server
-                await copy.sweep(
-                    branch=spec.branch, base=spec.base, node_id=spec.node_id, identity=spec.identity
+            planted = await self._planted(job, copy) if spec.sandbox is not None else []
+            if planted:
+                # as on the server (Kraft-nx4id): host git must not read the config of a
+                # repository the sandboxed worker made, in the sweep or the next checkout
+                await job.runner.note(
+                    self._emit,
+                    f"kraft: skipped the sweep on {self._name or 'this machine'}: the sandboxed "
+                    f"checkout holds git repositories Kraft did not create: {', '.join(planted)}\n",
                 )
+                copy.rebuild_on_update()
+            else:
+                with contextlib.suppress(Exception):  # the sweep is best effort, as on the server
+                    await copy.sweep(
+                        branch=spec.branch,
+                        base=spec.base,
+                        node_id=spec.node_id,
+                        identity=spec.identity,
+                    )
         folder = job_dir(self._area, spec.key)
         tip = await asyncio.to_thread(
             copy.bundle_since,
@@ -423,6 +498,7 @@ class Machine:
             "tip": tip,
             "pushed": changed,
             "capped": out.capped,
+            "oom": out.oom,
         }
         job.state = "finished"
         await self._hand_in(job)
@@ -494,6 +570,27 @@ class Machine:
         if isinstance(answer, tuple):
             return answer
         return answer["status"], answer.get("headers", {}), base64.b64decode(answer.get("body", ""))
+
+    async def proxy_api(self, method: str, target: str, caller: str, kw: dict):
+        """A sandboxed worker's call through the egress proxy, sent to the server as the job's
+        own (`caller` is the job's key). The server checks it against the allowlist again."""
+        if (job := self._jobs.get(caller)) is None:
+            return 404, {"content-type": "application/json"}, b'{"detail": "no such job here"}'
+        return await self._forward(
+            job, method, target, kw.get("headers") or {}, kw.get("content", b"")
+        )
+
+    async def record_event(self, work_item_id: str, session_id: str, type_: str, payload: dict):
+        """A sandbox event (a refused host, a branch not synced) for the server to append. It
+        belongs to the job named, else to a running job of the item (a setup command has none)."""
+        job = self._jobs.get(f"{work_item_id}/{session_id}") or next(
+            (j for j in self._running() if j.spec.work_item_id == work_item_id), None
+        )
+        if job is not None:
+            with contextlib.suppress(protocol.Closed):
+                await self._emit(
+                    {"t": "event", "id": job.spec.key, "type": type_, "payload": payload}
+                )
 
     async def call_server(self, job_id: str, method: str, path: str, body: bytes = b""):
         """The forwarder's code path, for a test to call without a socket."""

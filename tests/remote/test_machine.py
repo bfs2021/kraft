@@ -16,6 +16,7 @@ from kraft.remote import blobs, bundle, machine, protocol, registry
 from kraft.remote.hub import Hub
 from kraft.remote.machine import Machine
 from kraft.remote.transport import FRAME_LIMIT, StreamTransport, WebSocketTransport
+from kraft.remote.workdir import Copy
 
 TOKEN = "kwt_machine"
 
@@ -155,12 +156,12 @@ async def _until(cond, timeout=5.0):
             await asyncio.sleep(0.01)
 
 
-async def _job(tmp_path, argv, *, sid="s1", welcome=None, **machine_kw):
+async def _job(tmp_path, argv, *, sid="s1", welcome=None, job=None, **machine_kw):
     """A `Machine` on one end of an in-process pair; the test plays the server and sends one job."""
     server, machine_t = memory_pair()
     machine = Machine(tmp_path / "home", kraft_version="2.3.0", **machine_kw)
     task = asyncio.create_task(machine.serve(machine_t, {"server": "srv", **(welcome or {})}))
-    spec = await send_job(server, tmp_path, argv, sid=sid)
+    spec = await send_job(server, tmp_path, argv, sid=sid, **(job or {}))
     return machine, task, server, spec
 
 
@@ -407,3 +408,74 @@ async def test_keep_removes_every_item_the_server_no_longer_lists(tmp_path):
     await _frames_until(server, "pong")
     assert all(p.exists() for p in kept) and not any(p.exists() for p in gone)
     await _end(server, task)
+
+
+async def _sandboxed_job(tmp_path, short_run, monkeypatch, argv, backend=None, **job):
+    from support.fake_backend import Remote
+
+    from kraft.worker import backends
+
+    fake = Remote(tmp_path)
+    vars(fake).update(backend or {})
+    monkeypatch.setitem(backends._BACKENDS, fake.kind, fake)
+    monkeypatch.setenv("KRAFT_RUN_DIR", str(short_run.base))
+    result = str(tmp_path / "home" / "remote" / "srv" / "run" / "result.json")
+    job = {"sandbox": {"kind": "remote"}, "env": {"KRAFT_RESULT_PATH": result}, **job}
+    machine, task, t, spec = await _job(tmp_path, argv, welcome={"name": "gpu"}, job=job)
+    return fake, machine, task, t
+
+
+async def test_a_sandbox_the_machine_cannot_build_is_rejected_naming_it_and_nothing_runs(
+    tmp_path, short_run, monkeypatch
+):
+    marker = tmp_path / "ran"
+    fake_argv = [sys.executable, "-c", f"open({str(marker)!r}, 'w')"]
+    fake, machine, task, t = await _sandboxed_job(
+        tmp_path, short_run, monkeypatch, fake_argv, {"unrunnable": "docker is not installed"}
+    )
+    frames = await _frames_until(t, "rejected")
+    assert frames[-1]["outcome"] == "config_error" and frames[-1]["reason"].startswith("gpu: ")
+    assert "docker is not installed" in frames[-1]["reason"] and not marker.exists()
+    await _end(t, task)
+
+
+async def test_a_sandboxed_step_runs_in_the_backend_and_its_oom_is_in_the_finished_frame(
+    tmp_path, short_run, monkeypatch
+):
+    from kraft.worker.backends.docker import OomKill
+
+    fake, machine, task, t = await _sandboxed_job(
+        tmp_path, short_run, monkeypatch, ["sh", "-c", "echo hi"], {"oom": OomKill("1g", False)}
+    )
+    frames = await _frames_until(t, "finished")
+    assert frames[-1]["oom"] == {"memory": "1g", "confirmed": False}
+    assert "wrap" in fake.touched and b"hi" in b"".join(
+        base64.b64decode(f["data"]) for f in frames if f["t"] == "log"
+    )
+    await _end(t, task)
+
+
+PLANT = (
+    "import subprocess; subprocess.run(['git', 'init', '-q', 'sub'], check=True); "
+    "open('stray.txt', 'w').write('x')"
+)
+
+
+async def test_a_sandboxed_checkout_holding_a_repository_it_made_is_not_swept_and_is_rebuilt(
+    tmp_path, short_run, monkeypatch
+):
+    fake, machine, task, t = await _sandboxed_job(
+        tmp_path, short_run, monkeypatch, [sys.executable, "-c", PLANT]
+    )
+    frames = await _frames_until(t, "finished")
+    assert frames[-1]["tip"] is None  # the sweep would have committed stray.txt
+    log = b"".join(base64.b64decode(f["data"]) for f in frames if f["t"] == "log").decode()
+    assert (
+        "kraft: skipped the sweep on gpu: the sandboxed checkout holds git repositories "
+        "Kraft did not create: sub\n" in log
+    )
+    copy = Copy(tmp_path / "home" / "remote" / "srv" / "items" / "w1" / "repo")
+    assert (copy.root / "sub" / ".git").exists()
+    copy.update(None, branch="kraft/x", head=copy._git("rev-parse", "HEAD").stdout.strip())
+    assert not (copy.root / "sub").exists() and not (copy.root / "stray.txt").exists()
+    await _end(t, task)
