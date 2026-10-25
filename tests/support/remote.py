@@ -10,6 +10,7 @@ import signal
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 from kraft import item_paths, store
 from kraft.remote import blobs, bundle, protocol, registry
@@ -70,14 +71,30 @@ def workers_file(**machines) -> registry.WorkersFile:
     )
 
 
-async def attach(hub: Hub, machine: Machine, name: str = "gpu", caps=protocol.CAPS) -> None:
-    """Dial `machine` into `hub` over a fresh in-process pair, saying it understands `caps`;
-    then wait for it to show online."""
+class Peer:
+    """A machine for `attach` that only takes part in the handshake and the pings."""
+
+    def __init__(self) -> None:
+        self.task = None
+
+    async def serve(self, t, welcome) -> None:
+        await protocol.pump(t, on_frame=AsyncMock())
+
+
+async def attach(
+    hub: Hub, machine: Machine, name: str = "gpu", caps=None, token: str = TOKEN
+) -> None:
+    """Dial `machine` into `hub` over a fresh in-process pair, saying it understands `caps`
+    (what the machine itself lists, by default); then wait for it to show online."""
     server, client = memory_pair()
     machine.server_t = server
     machine.accepted = asyncio.create_task(hub.accept(server))
     welcome = await protocol.machine_handshake(
-        client, kraft_version="2.3.0", token=TOKEN, host="box", caps=caps
+        client,
+        kraft_version="2.3.0",
+        token=token,
+        host="box",
+        caps=machine.caps() if caps is None else caps,
     )
     machine.task = asyncio.create_task(machine.serve(client, welcome))
     await hub.wait_online(name)
@@ -192,7 +209,15 @@ def _recording_call(calls: list):
 
 
 async def make_rig(
-    tmp_path, database, run_dirs, item_on, *, online: bool = True, hub_kwargs=None, workers=None
+    tmp_path,
+    database,
+    run_dirs,
+    item_on,
+    *,
+    online: bool = True,
+    hub_kwargs=None,
+    workers=None,
+    machine_kwargs: dict | None = None,
 ) -> Rig:
     repo = make_repo(tmp_path, "server")
     it = await item_on(v1_chain([v1_node("build")], repo=repo), "build", repo=repo, wid="rig1")
@@ -206,7 +231,7 @@ async def make_rig(
     runs_mod.install(runs)
     listener = Listener(runs, run_dirs.base)
     await listener.start()
-    machine = Machine(tmp_path / "machine-home", kraft_version="2.3.0")
+    machine = Machine(tmp_path / "machine-home", kraft_version="2.3.0", **(machine_kwargs or {}))
     rig = Rig(
         hub,
         runs,

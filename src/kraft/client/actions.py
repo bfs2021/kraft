@@ -63,7 +63,7 @@ async def create_work_item(
     API's presence rule: left at `...` it is not sent and the policy default
     applies; `None` is an explicit "no cap".
 
-    `runner` is where the item's steps run: a machine from workers.yaml, `any`,
+    `runner` is where the item's steps run: a machine or a group from workers.yaml, `any`,
     or `local`; unset, the chain decides.
     """
     if repo is None:
@@ -831,24 +831,47 @@ async def add_worker(
     name: str,
     *,
     ssh: str | None = None,
-    capacity: int = 1,
+    capacity: int | None = None,
     repos: list[str] | None = None,
     give_up_after: str | None = None,
+    groups: list[str] | None = None,
+    enabled: bool = True,
 ) -> dict:
     """Register a machine. Without `ssh` the answer carries its one-time token
     and the command to run on it; with `ssh` the server connects once and
-    answers what happened."""
-    body: dict = {"name": name, "capacity": capacity}
+    answers what happened. `enabled=False` registers it taking no new steps."""
+    body: dict = {"name": name}
     body |= {
         key: value
-        for key, value in (("ssh", ssh), ("repos", repos), ("give_up_after", give_up_after))
+        for key, value in (
+            ("ssh", ssh),
+            ("capacity", capacity),
+            ("repos", repos),
+            ("give_up_after", give_up_after),
+            ("groups", groups),
+            ("enabled", None if enabled else False),
+        )
         if value is not None
     }
     return await transport._act("/workers", body)
 
 
+async def edit_worker(name: str, fields: dict) -> dict:
+    """Change a machine, or the local worker. `fields` is sent as it is: a field left out is
+    unchanged, and `None` is sent as `null`, which only `capacity` (take the machine's limit)
+    and `repos` (every repo) accept."""
+    return await transport._patch(f"/workers/{quote(name, safe='')}", fields)
+
+
+async def rotate_worker_token(name: str) -> dict:
+    """A new token for a dial-in machine, in the answer once. The old one stops working at once
+    and the machine's connection ends."""
+    return await transport._act(f"/workers/{quote(name, safe='')}/rotate-token")
+
+
 async def remove_worker(name: str) -> dict:
-    """Forget a machine: its token or ssh entry stops working, its connection ends."""
+    """Forget a machine: its token or ssh entry stops working, its connection ends. Refused
+    (the server says why) while a step holds it."""
     return await transport._delete(f"/workers/{quote(name, safe='')}")
 
 

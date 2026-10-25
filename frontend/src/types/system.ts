@@ -108,15 +108,33 @@ export interface Machine {
   online: boolean;
   /** Why it is offline; empty or null while online. */
   reason: string | null;
+  /** False: it takes no new steps; the ones running on it finish. */
+  enabled: boolean;
+  /** The ssh host Kraft connects to; null for a dial-in machine and the local worker. */
+  ssh: string | null;
   slots_used: number;
-  /** Null for the local worker: only `max_concurrent` limits local work. */
+  /** The limit in use: the lower of `workers.yaml`'s and the machine's own. Null for the local
+   * worker without a `local: capacity:`. */
   capacity: number | null;
+  /** The limit `workers.yaml` sets (`local: capacity:` for the local worker); null if none. */
+  configured_capacity: number | null;
+  /** Which side set `capacity`; "default" is neither (one). Absent on the local worker. */
+  capacity_source?: "server" | "machine" | "default";
+  /** The limit the machine set for itself in `machine.yaml`; null if none. Absent on the local worker. */
+  machine_capacity?: number | null;
+  /** The groups it is in (`groups:` in `workers.yaml`, `local: groups:` for the local worker);
+   * a step's `runner` can name one. */
+  groups: string[];
   /** The repos it is limited to; null for every repo. */
   repos: string[] | null;
   last_seen: string | null;
   kraft_version: string | null;
   /** `2h`, `30m`, `never`. */
   give_up_after: string;
+  /** The work items with a step on it. */
+  holders: { id: string; title: string; steps: number }[];
+  /** Why it cannot be removed now, in the server's words; null when it can. */
+  remove_blocked: string | null;
 }
 export interface StorageUsage {
   measured_at: string;

@@ -101,12 +101,32 @@ enforced-by: tests/remote/test_hub.py::test_any_takes_the_first_connected_allowe
 origin: src/kraft/remote/hub.py §decide
 
 ## REQ machine-capacity-bounds-its-sessions
-WHILE a machine runs as many sessions as its capacity, the system SHALL NOT start another on it.
-enforced-by: tests/remote/test_hub.py::test_a_named_machine_offline_or_full_makes_the_step_wait_and_never_run_elsewhere, tests/remote/test_hub.py::test_a_waiting_claim_is_granted_when_a_slot_frees_and_is_cancellable
+WHILE a machine runs as many sessions as its limit, the lower of `workers.yaml`'s capacity and the machine's own (one when neither is set), the system SHALL NOT start another on it.
+enforced-by: tests/remote/test_hub.py::test_a_named_machine_offline_or_full_makes_the_step_wait_and_never_run_elsewhere, tests/remote/test_hub.py::test_a_waiting_claim_is_granted_when_a_slot_frees_and_is_cancellable, tests/remote/test_hub.py::test_the_limit_in_use_is_the_lower_of_the_servers_and_the_machines[machine-lower], tests/remote/test_hub.py::test_the_limit_in_use_is_the_lower_of_the_servers_and_the_machines[server-lower]
 origin: src/kraft/remote/hub.py §claim
 
+## REQ machine-turns-away-a-step-beyond-its-own-limit
+WHEN the server asks a machine to hold a slot for a step and the machine runs as many as its own limit, the machine SHALL refuse, and the system SHALL give the step to another free machine it may use, or wait for the named one, with no session row, bundle or blob made for the refusal.
+enforced-by: tests/remote/test_machine.py::test_a_machine_holds_a_slot_for_a_step_until_its_job_or_an_unreserve, tests/adapters/test_subprocess_remote.py::test_a_step_a_machine_turns_away_runs_on_another_with_no_session_on_the_first, tests/adapters/test_subprocess_remote.py::test_a_step_named_for_a_machine_at_its_limit_waits_and_runs_there_once_a_slot_frees
+origin: src/kraft/remote/launch.py §claim
+
+## REQ machine-refuses-an-unreserved-job-beyond-its-limit
+IF a job arrives without a reservation at a machine that runs as many as its own limit, THEN the machine SHALL refuse it as `full` before any of its blobs is written, and the server SHALL end the step with the machine's reason.
+enforced-by: tests/remote/test_machine.py::test_a_job_with_no_reservation_beyond_the_limit_is_refused_before_its_blobs, tests/remote/test_runs.py::test_a_job_a_full_machine_refuses_ends_the_run_with_the_machines_reason
+origin: src/kraft/remote/machine.py §_on_job
+
+## REQ machine-reports-its-limit
+The machine SHALL report its own limit from `machine.yaml` in its hello and again whenever the file changes, and a machine that reports none SHALL be limited by the server's alone.
+enforced-by: tests/remote/test_machine.py::test_the_machine_reports_a_changed_limit[lowered], tests/remote/test_machine.py::test_the_machine_reports_a_changed_limit[raised], tests/remote/test_protocol.py::test_a_machines_own_limit_travels_in_its_hello_caps[limit], tests/remote/test_machine_config.py::test_the_limit_is_what_the_file_says_or_none[set]
+origin: src/kraft/remote/machine.py §_report
+
+## REQ unused-reservation-is-given-back
+WHEN a launch ends after a machine held a slot for it and before the job is sent, the system SHALL tell the machine to drop the slot and free its own.
+enforced-by: tests/adapters/test_subprocess_remote.py::test_a_launch_that_ends_before_the_run_starts_gives_back_the_slot_and_the_hold[spec-fails], tests/adapters/test_subprocess_remote.py::test_a_launch_that_ends_before_the_run_starts_gives_back_the_slot_and_the_hold[cancelled-at-reserve], tests/adapters/test_subprocess_remote.py::test_a_reconnect_keeps_the_holds_the_server_still_has_and_drops_the_rest
+origin: src/kraft/remote/launch.py §release
+
 ## REQ step-waits-for-an-offline-or-full-machine
-WHILE the machine a step is placed on is offline or full, the system SHALL park the step as waiting with no session row, SHALL NOT run it elsewhere, and SHALL NOT count the wait against its time cap.
+WHILE the named machine a step is placed on is offline or full, the system SHALL park the step as waiting with no session row, SHALL NOT run it elsewhere, and SHALL NOT count the wait against its time cap.
 enforced-by: tests/executor/test_dispatch_remote.py::test_a_step_on_an_offline_machine_parks_the_item_and_runs_when_it_returns, tests/adapters/test_subprocess_remote.py::test_a_step_waiting_for_a_full_machine_has_no_session_row_and_never_runs_elsewhere, tests/adapters/test_subprocess_remote.py::test_a_wait_moves_the_time_cap_on_by_however_long_it_lasted
 origin: src/kraft/executor/dispatch.py §_dispatch_task
 
@@ -190,9 +210,24 @@ WHEN a machine has been out of reach for its `give_up_after` of time the server 
 enforced-by: tests/remote/test_hub.py::test_offline_for_counts_from_the_drop_on_the_monotonic_clock, tests/remote/test_runs.py::test_a_run_whose_machine_is_gone_give_up_after_ends_unknown_and_kills_it_on_reconnect, tests/remote/test_runs.py::test_never_does_not_give_up, tests/adapters/test_subprocess_remote.py::test_a_step_given_up_on_ends_its_session_unknown
 origin: src/kraft/remote/runs.py §watch
 
-## REQ removed-machine-gives-up-its-runs
-WHEN a machine is removed from workers.yaml, the system SHALL give up every unfinished step on it at once.
-enforced-by: tests/remote/test_runs.py::test_removing_a_machine_gives_up_its_runs_at_once, tests/api/test_workers.py::test_removing_a_machine_gives_up_the_runs_it_held
+## REQ removal-refused-while-steps-hold-the-machine
+IF a machine holds a step, THEN the system SHALL refuse to remove it with a 409 that names the items, and SHALL NOT give any step up because a machine was removed.
+enforced-by: tests/api/test_workers.py::test_a_machine_that_holds_a_step_cannot_be_removed_even_before_its_session_runs, tests/api/test_workers.py::test_a_session_row_alone_holds_a_machine_and_the_claim_is_not_counted_twice, tests/api/test_workers.py::test_the_refusal_names_three_items_then_counts_the_rest, tests/api/test_workers.py::test_a_machine_with_a_step_waiting_for_it_can_be_removed_and_gives_no_run_up
+origin: src/kraft/api/routes/workers.py
+
+## REQ disabled-machine-takes-no-new-steps
+WHERE a machine, or the local worker, is disabled in `workers.yaml`, the system SHALL let the steps running on it finish, SHALL NOT start another there, and SHALL say a step waiting for it by name waits for it `(disabled)`.
+enforced-by: tests/remote/test_hub.py::test_a_disabled_machine_takes_no_new_step_and_a_named_wait_says_it_is_disabled[online-named], tests/remote/test_hub.py::test_a_disabled_machine_takes_no_new_step_and_a_named_wait_says_it_is_disabled[offline-named], tests/remote/test_hub.py::test_a_disabled_machine_takes_no_new_step_and_a_named_wait_says_it_is_disabled[online-any], tests/remote/test_hub.py::test_a_disabled_machine_takes_no_new_step_and_a_named_wait_says_it_is_disabled[online-group], tests/remote/test_runs.py::test_a_step_running_on_a_machine_that_is_then_disabled_finishes_and_frees_its_slot, tests/remote/test_local_link.py::test_a_disabled_local_worker_takes_no_session_and_one_waits_saying_so_until_enabled
+origin: src/kraft/remote/hub.py
+
+## REQ machine-edit-rewrites-workers-yaml
+WHEN a machine is edited, the system SHALL change only the fields sent, refuse a value `workers.yaml` could not load again in words, and apply the result without a restart.
+enforced-by: tests/api/test_workers.py::test_editing_a_machine_changes_what_was_sent_and_writes_the_file[disable], tests/api/test_workers.py::test_editing_a_machine_changes_what_was_sent_and_writes_the_file[enable], tests/api/test_workers.py::test_editing_a_machine_changes_what_was_sent_and_writes_the_file[capacity-null], tests/api/test_workers.py::test_editing_a_machine_changes_what_was_sent_and_writes_the_file[ssh-host], tests/api/test_workers.py::test_a_bad_edit_is_refused_in_words_and_the_file_is_unchanged[local-ssh], tests/api/test_workers.py::test_a_bad_edit_is_refused_in_words_and_the_file_is_unchanged[dial-in-ssh], tests/api/test_workers.py::test_a_bad_edit_is_refused_in_words_and_the_file_is_unchanged[enabled-null], tests/api/test_workers.py::test_a_bad_edit_is_refused_in_words_and_the_file_is_unchanged[unknown-repo], tests/api/test_workers.py::test_a_bad_edit_is_refused_in_words_and_the_file_is_unchanged[group-named-like-a-machine], tests/api/test_workers.py::test_an_empty_edit_is_a_200_and_leaves_the_file_alone, tests/api/test_workers.py::test_the_local_workers_edit_writes_only_the_local_block_and_answers_its_row
+origin: src/kraft/api/routes/workers.py
+
+## REQ rotating-a-token-replaces-it
+WHEN a dial-in machine's token is rotated, the system SHALL show the new token once, SHALL NOT accept the old one, and SHALL end the machine's connection.
+enforced-by: tests/api/test_workers.py::test_rotating_a_token_stops_the_old_one_and_drops_the_connection, tests/api/test_workers.py::test_only_a_dial_in_machine_has_a_token_to_rotate[ssh], tests/api/test_workers.py::test_only_a_dial_in_machine_has_a_token_to_rotate[local]
 origin: src/kraft/api/routes/workers.py
 
 ## REQ machine-enforces-the-steps-caps
@@ -210,10 +245,20 @@ The system SHALL name the machine a session ran on, and WHILE a session still ru
 enforced-by: tests/api/test_board_runner.py::test_a_live_session_on_a_machine_that_is_out_of_reach_says_since_when[running-on-a-dropped-machine], tests/api/test_board_runner.py::test_a_live_session_on_a_machine_that_is_out_of_reach_says_since_when[finished-session], tests/api/test_board_runner.py::test_a_live_session_on_a_machine_that_is_out_of_reach_says_since_when[local-session], tests/remote/test_hub.py::test_unreachable_since_names_the_moment_the_connection_ended_until_it_is_back, tests/cli/test_watching.py::test_logs_name_the_machine_a_remote_session_ran_on[remote]
 origin: src/kraft/api/routes/board.py §_sessions_out
 
-## REQ settings-lists-machines-read-only
-The system SHALL list the registered machines in Settings with their state, and SHALL NOT offer to add, change or remove one there.
+## REQ settings-lists-machines
+The system SHALL list the registered machines in Settings with their state.
 enforced-by: frontend/src/ng/settings/WorkersPage.test.tsx::Settings › Workers, tests/api/test_api_shapes.py::test_the_table_is_what_the_server_returns
 origin: frontend/src/ng/settings/WorkersPage.tsx
+
+## REQ settings-manages-machines
+The system SHALL let a person add, edit, enable or disable a machine and rotate a dial-in machine's token in Settings, SHALL show a dial-in token once, and SHALL show the server's own words for every refusal.
+enforced-by: frontend/src/ng/settings/AddWorkerDialog.test.tsx::AddWorkerDialog, frontend/src/ng/settings/EditWorkerDialog.test.tsx::EditWorkerDialog
+origin: frontend/src/ng/settings/WorkersPage.tsx
+
+## REQ settings-removal-waits-for-undo
+WHEN a machine is removed in Settings, the system SHALL hold the request for an Undo window, SHALL send it at once if the page is left, and IF the server then refuses it, SHALL bring the row back with the server's reason.
+enforced-by: frontend/src/ng/settings/WorkersPage.test.tsx::Settings › Workers > removing a machine, frontend/src/ng/later.test.ts::sendLater
+origin: frontend/src/ng/later.ts
 
 ## REQ doctor-names-a-chain-on-an-unknown-machine
 IF a chain places a step on a machine that is not in workers.yaml, THEN doctor SHALL fail its chains row naming the machine.
@@ -289,3 +334,38 @@ origin: src/kraft/remote/jobs.py §from_frame
 IF a machine runs another major version of Kraft than the server, THEN the server SHALL refuse it with the version to update to.
 enforced-by: tests/remote/test_protocol.py::test_another_major_is_turned_away_whatever_the_protocol[another-major-same-protocol], tests/remote/test_protocol.py::test_another_major_is_turned_away_whatever_the_protocol[same-major], tests/remote/test_protocol.py::test_protocol_refusal_text[same-major-other-protocol]
 origin: src/kraft/remote/protocol.py §server_handshake
+
+## REQ group-names-share-the-machine-namespace
+IF a machine is named like a group, or a group like a machine, THEN the system SHALL refuse `workers.yaml` or the machine being added, naming the clash.
+enforced-by: tests/remote/test_registry.py::test_a_bad_group_is_refused[clashes-with-a-machine], tests/remote/test_registry.py::test_a_bad_group_is_refused[local-joins-a-machines-name], tests/api/test_workers.py::test_groups_are_written_kept_and_checked_against_machine_names
+origin: src/kraft/remote/registry.py §WorkersFile
+
+## REQ step-on-a-group-takes-a-members-slot-when-it-chooses
+WHERE a step's runner names a group, the system SHALL take the slot of the first remote member, in name order, that is online, allowed for the item's repos and under its limit, else the local worker's slot when the local worker is a member, and SHALL hold it from the choice until the launch ends.
+enforced-by: tests/remote/test_launch.py::test_the_first_free_remote_member_is_taken_and_reserved_then_given_back_on_exit, tests/remote/test_launch.py::test_the_local_worker_is_taken_when_every_remote_member_is_busy_or_refuses, tests/remote/test_launch.py::test_two_placements_never_take_one_free_slot, tests/executor/test_dispatch_group.py::test_a_free_remote_member_takes_the_step, tests/executor/test_dispatch_group.py::test_a_busy_remote_member_sends_the_step_to_the_local_worker_at_once
+origin: src/kraft/remote/launch.py §Placement
+
+## REQ step-on-a-group-parks-while-no-member-is-free
+WHILE no member of a group has a free slot, the system SHALL park the step as waiting for a machine in the group, with no session row, and start it on the first member that frees.
+enforced-by: tests/executor/test_dispatch_group.py::test_a_step_with_no_free_member_parks_and_runs_on_whichever_frees_first, tests/executor/test_dispatch_group.py::test_a_group_with_only_the_local_worker_free_waits_for_its_slot_not_a_refusal
+origin: src/kraft/executor/dispatch.py §_place_group
+
+## REQ member-that-turns-a-step-away-is-passed-over
+WHEN a member of a group turns the step away at its own limit, the system SHALL place the step on another member, or the local worker, and SHALL leave the first alone until it reports a free slot.
+enforced-by: tests/remote/test_launch.py::test_a_member_that_refuses_the_reservation_is_marked_full_and_the_next_is_taken, tests/executor/test_dispatch_group.py::test_a_machine_that_refuses_the_reservation_sends_the_step_on_to_the_local_worker
+origin: src/kraft/remote/launch.py §Placement
+
+## REQ resumed-session-on-a-group-returns-to-its-machine
+WHEN a step on a group resumes a session, the system SHALL wait for the machine, or the local worker, that session started on, and SHALL NOT place a launch that does not resume by where an earlier one ran.
+enforced-by: tests/remote/test_launch.py::test_a_resumed_session_goes_back_to_where_it_ran_and_waits_for_it, tests/remote/test_launch.py::test_an_escalation_or_review_reply_runs_where_its_nodes_task_ran[on-a-machine], tests/remote/test_launch.py::test_an_escalation_or_review_reply_runs_where_its_nodes_task_ran[on-the-local-worker], tests/store/test_pinned_machine.py::test_a_tasks_runner_is_where_its_latest_started_session_ran_local_when_it_ran_there
+origin: src/kraft/store/sessions.py §pinned_runner
+
+## REQ group-refuses-items-no-member-can-take
+IF no member of a group could take an item (it is in place or has workspace members, submodules or Git LFS, and the local worker is not a member), THEN the system SHALL refuse it at filing, naming the group.
+enforced-by: tests/remote/test_placement.py::test_a_group_holds_when_a_member_could_take_the_item[remote-only-in-place], tests/remote/test_placement.py::test_a_group_with_a_submodule_checkout_names_why_no_remote_member_can_take_it, tests/remote/test_placement.py::test_a_group_holds_when_a_member_could_take_the_item[with-local-in-place]
+origin: src/kraft/remote/placement.py §group_problem
+
+## REQ step-on-a-group-places-again-for-a-missing-cap
+IF the member a step on a group was given lacks a capability the launch needs, THEN the system SHALL place the step again, on a capable member or the local worker.
+enforced-by: tests/remote/test_launch.py::test_a_launch_the_group_member_cannot_take_places_the_step_again, tests/remote/test_launch.py::test_a_codex_step_places_again_on_the_local_worker_when_no_remote_member_has_the_cap
+origin: src/kraft/remote/launch.py §run_placed

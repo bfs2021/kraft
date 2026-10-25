@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import itertools
 import json
 import logging
 from dataclasses import dataclass, field
@@ -55,6 +56,14 @@ def current() -> Runs | None:
     return _current
 
 
+@dataclass(frozen=True)
+class Reserved:
+    """A machine's answer to `reserve`: `ok`, and its own limit (None: it sets none)."""
+
+    ok: bool
+    capacity: int | None = None
+
+
 @dataclass
 class Run:
     spec: JobSpec
@@ -82,6 +91,9 @@ class Runs:
         self.hub, self._run_dirs, self._db, self._call = hub, run_dirs, db, call
         self._runs: dict[str, Run] = {}
         self._asks: dict[str, asyncio.Future] = {}
+        self._rids = itertools.count(1)
+        # machine -> keys of steps it holds a slot for that this server has not sent yet
+        self._reserved: dict[str, set[str]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._synced: dict[str, str] = {}
         self._killed: dict[str, set[str]] = {}
@@ -95,6 +107,11 @@ class Runs:
         task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    def owns(self, key: str) -> bool:
+        """Whether a run for step `key` is live: it holds the step's claim until it finishes."""
+        run = self._runs.get(key)
+        return run is not None and run.exit_code is None
 
     def find(self, work_item_id: str, session_id: str) -> Run | None:
         return self._runs.get(ids.session_ref(work_item_id, session_id))
@@ -113,20 +130,53 @@ class Runs:
             try:
                 await self._send_job(run)
                 run.state = "sent"
+                self._reserved.get(run.claim.machine, set()).discard(run.spec.key)  # the job has it
                 return
             except protocol.Closed:
                 await self.hub.wait_online(run.claim.machine)
 
-    async def _ask(self, machine: str, frame: dict) -> dict:
+    async def _ask(self, machine: str, frame: dict, *, timeout: float = 30) -> dict:
         fut = asyncio.get_running_loop().create_future()
         self._asks[frame["rid"]] = fut
         try:
             await self.hub.transport(machine).send(frame)
-            return await asyncio.wait_for(fut, 30)
+            return await asyncio.wait_for(fut, timeout)
         except TimeoutError as exc:
             raise protocol.Closed("the machine did not answer") from exc
         finally:
             self._asks.pop(frame["rid"], None)
+
+    async def reserve(self, machine: str, key: str, *, timeout: float = 30) -> Reserved:
+        """Ask `machine` to hold a slot for `key`. A refusal says the machine's limit; a machine
+        that does not answer, or whose connection is lost, reads as `ok: False` with no limit,
+        not as full: the caller gives the slot back (`unreserve`) and waits for the machine."""
+        rid = f"reserve:{key}:{next(self._rids)}"
+        self._reserved.setdefault(machine, set()).add(key)  # held, as far as this side knows
+        try:
+            reply = await self._ask(
+                machine, {"t": "reserve", "rid": rid, "id": key}, timeout=timeout
+            )
+        except protocol.Closed:
+            return Reserved(False)
+        ok = reply.get("ok") is True
+        if not ok:
+            self._reserved[machine].discard(key)
+        return Reserved(ok, protocol.valid_capacity(reply.get("capacity")))
+
+    async def unreserve(self, machine: str, key: str) -> None:
+        """Give back the slot `reserve` held for `key`, if this server still holds it. Best
+        effort: a machine that is away drops it on its next `reserves`."""
+        held = self._reserved.get(machine)
+        if held is None or key not in held:
+            return
+        held.discard(key)
+        with contextlib.suppress(protocol.Closed):
+            await self.hub.transport(machine).send({"t": "unreserve", "id": key})
+
+    def unreserve_soon(self, machine: str, key: str) -> None:
+        """`unreserve`, from code that cannot await (a `finally` of a cancelled task)."""
+        if key in self._reserved.get(machine, ()):
+            self._spawn(self.unreserve(machine, key))
 
     async def _send_job(self, run: Run) -> None:
         spec, machine = run.spec, run.claim.machine
@@ -163,7 +213,10 @@ class Runs:
 
     async def on_frame(self, machine: str, frame: dict) -> None:
         kind = frame.get("t")
-        if kind == "have":
+        if kind == "capacity":
+            self.hub.set_machine_capacity(machine, protocol.valid_capacity(frame.get("capacity")))
+            return
+        if kind in ("have", "reserved"):
             if (fut := self._asks.get(frame.get("rid"))) is not None and not fut.done():
                 fut.set_result(frame)
             return
@@ -216,6 +269,7 @@ class Runs:
     async def _finish(self, run: Run, code: int) -> None:
         run.exit_code, run.state = code, "finished"
         self.hub.release(run.claim)
+        await self.unreserve(run.claim.machine, run.spec.key)  # a job never sent has no use for it
         with contextlib.suppress(protocol.Closed):
             await self.hub.transport(run.claim.machine).send({"t": "delivered", "id": run.spec.key})
         run.delivered.set()
@@ -350,6 +404,7 @@ class Runs:
                 self._say(run, f"\nkraft: cancelled while {run.claim.machine} was offline\n")
                 self._runs.pop(run.spec.key, None)
                 self.hub.release(run.claim)
+                await self.unreserve(run.claim.machine, run.spec.key)
                 run.exit_code, run.state = 143, "finished"
                 run.delivered.set()
                 await self._notify(run)
@@ -371,7 +426,7 @@ class Runs:
                     )
             await asyncio.sleep(poll_s)
 
-    async def give_up(self, run: Run, why: str, *, after: str = "removed") -> None:
+    async def give_up(self, run: Run, why: str, *, after: str) -> None:
         """End a run whose machine is not coming back in time: its session becomes `unknown`, the
         machine is told to stop it when it returns, and what it hands in then is ignored."""
         if run.exit_code is not None:
@@ -386,11 +441,6 @@ class Runs:
         self._killed.setdefault(machine, set()).add(spec.key)
         run.abandoned = True
         await self._finish(run, REMOTE_GAVE_UP)
-
-    async def machine_removed(self, name: str) -> None:
-        """`name` is no longer in workers.yaml: nothing will come back from it."""
-        for run in [r for r in self._runs.values() if r.claim.machine == name]:
-            await self.give_up(run, f"{name} was removed from workers.yaml")
 
     async def wait_delivered(self, run: Run, timeout: float) -> bool:
         try:
@@ -482,6 +532,8 @@ class Runs:
         ]
         with contextlib.suppress(protocol.Closed):
             t = self.hub.transport(machine)
+            if protocol.RESERVE in self.hub.caps(machine):
+                await t.send({"t": "reserves", "ids": sorted(self._reserved.get(machine, ()))})
             for key in self._killed.pop(machine, ()):
                 await t.send({"t": "signal", "id": key, "sig": "KILL"})
             await t.send(

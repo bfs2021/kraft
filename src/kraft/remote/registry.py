@@ -52,6 +52,22 @@ def check_name(name: str) -> str:
     return name
 
 
+def check_group(name: str) -> str:
+    if name in RESERVED:
+        raise ValueError(f"group name {name!r} is reserved (it is a placement value)")
+    if _NAME.fullmatch(name) is None:
+        raise ValueError(
+            f"group name {name!r} must be lowercase letters, digits, - or _, 1-39 characters"
+        )
+    return name
+
+
+def _groups(value: list[str]) -> list[str]:
+    for name in value:
+        check_group(name)
+    return list(dict.fromkeys(value))
+
+
 class _Strict(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -59,9 +75,17 @@ class _Strict(BaseModel):
 class Worker(_Strict):
     ssh: str | None = None
     token_sha256: str | None = None
-    capacity: int = Field(default=1, ge=1)
+    capacity: int | None = Field(default=None, ge=1)
     repos: list[str] | None = None
     give_up_after: str = DEFAULT_GIVE_UP
+    groups: list[str] = Field(default_factory=list)
+    #: False: running steps finish and nothing new starts here.
+    enabled: bool = True
+
+    @field_validator("groups")
+    @classmethod
+    def _group_names(cls, value: list[str]) -> list[str]:
+        return _groups(value)
 
     @field_validator("ssh")
     @classmethod
@@ -98,8 +122,24 @@ class Worker(_Strict):
         return parse_duration(self.give_up_after)
 
 
+class LocalWorker(_Strict):
+    """The local worker's settings, a top-level `local:` key: it is not a machine
+    under `workers:`, so the name and connection rules above do not apply to it.
+    Unset `capacity` means no limit."""
+
+    capacity: int | None = Field(default=None, ge=1)
+    groups: list[str] = Field(default_factory=list)
+    enabled: bool = True
+
+    @field_validator("groups")
+    @classmethod
+    def _group_names(cls, value: list[str]) -> list[str]:
+        return _groups(value)
+
+
 class WorkersFile(_Strict):
     workers: dict[str, Worker] = Field(default_factory=dict)
+    local: LocalWorker | None = None
 
     @field_validator("workers", mode="before")
     @classmethod
@@ -113,6 +153,35 @@ class WorkersFile(_Strict):
             check_name(name)
         return value
 
+    @model_validator(mode="after")
+    def _groups_clash(self) -> WorkersFile:
+        """Group and machine names share one namespace."""
+        named = [(name, w.groups) for name, w in self.workers.items()]
+        if self.local is not None:
+            named.append(("local", self.local.groups))
+        for owner, groups in named:
+            for group in groups:
+                if group in self.workers:
+                    raise ValueError(
+                        f"group {group!r} (on {owner!r}) is also a machine name; "
+                        "group and machine names share one namespace"
+                    )
+        return self
+
+    def groups(self) -> dict[str, list[str]]:
+        """Group -> its members: remote machines in name order, then `local`."""
+        found: dict[str, list[str]] = {}
+        for name in sorted(self.workers):
+            for group in self.workers[name].groups:
+                found.setdefault(group, []).append(name)
+        if self.local is not None:
+            for group in self.local.groups:
+                found.setdefault(group, []).append("local")
+        return found
+
+    def is_group(self, name: str) -> bool:
+        return name in self.groups()
+
     @classmethod
     def load(cls, path: str | Path) -> WorkersFile:
         """The file at `path`; a missing one is no machines. Raises `ConfigError`."""
@@ -121,8 +190,23 @@ class WorkersFile(_Strict):
         except ValidationError as exc:
             raise ConfigError(first_error(exc, FILE)) from exc
 
+    def with_workers(self, workers: dict[str, Worker]) -> WorkersFile:
+        """A copy with `workers` replaced and everything else (`local:`) kept,
+        checked again: a machine named like a group is a `ValidationError`."""
+        return type(self).model_validate({"workers": workers, "local": self.local})
+
+    def with_local(self, local: LocalWorker) -> WorkersFile:
+        """A copy with the `local:` block replaced and the machines kept, checked again."""
+        return type(self).model_validate({"workers": self.workers, "local": local})
+
     def to_yaml(self) -> dict:
-        return self.model_dump(exclude_none=True)
+        doc = self.model_dump(exclude_none=True)
+        for entry in [*doc["workers"].values(), *([doc["local"]] if "local" in doc else [])]:
+            if not entry["groups"]:
+                del entry["groups"]
+            if entry["enabled"]:
+                del entry["enabled"]
+        return doc
 
 
 def new_token() -> str:

@@ -2,20 +2,43 @@ import type { Machine } from "../../types";
 
 export const NO_MACHINES = "No machines yet. Add one in a terminal:";
 export const ADD_COMMAND = "kraft admin worker add NAME --ssh HOST";
-export const READ_ONLY_NOTE = "Machines are added and removed in a terminal (kraft admin worker) or through the MCP tools; this page only lists them.";
+/** The phone's: it lists machines and changes none. */
+export const READ_ONLY_NOTE = "Add and edit machines in Settings on a wider screen, or with kraft admin worker in a terminal.";
 export const EVERY_REPO = "every repo";
 
-/** `gpu-box`'s state in a sentence: online, or offline and why. */
-export const stateWords = (m: Machine) => (m.online ? "online" : m.reason ? `offline: ${m.reason}` : "offline");
+/** The State column's word. Never colour alone: a badge carries it. */
+export const stateWord = (m: Machine): "online" | "offline" | "disabled" => (!m.enabled ? "disabled" : m.online ? "online" : "offline");
+
+/** What goes with `stateWord`: why it is offline, or that a disabled machine takes no new steps. */
+export const stateReason = (m: Machine) => {
+  if (m.enabled) return m.online ? "" : (m.reason ?? "");
+  return m.online ? "takes no new steps" : `offline: ${m.reason ?? "no connection"}`;
+};
 
 /** What `give_up_after` means for a machine, in words. */
 export const giveUpWords = (after: string) => (after === "never" ? "never gives up" : `gives up after ${after}`);
 
-/** Slots in use, as "1 of 2"; the local worker has no limit of its own: "1 · no limit". */
-export const slotsWords = (m: Machine) => (m.capacity === null ? `${m.slots_used} · no limit` : `${m.slots_used} of ${m.capacity}`);
+/** Slots in use, as "1 of 2", with "· machine's limit" when the machine's own limit is the lower;
+ * the local worker without a limit: "1 · no limit". */
+export const slotsWords = (m: Machine) => {
+  if (m.capacity === null) return `${m.slots_used} · no limit`;
+  const of = `${m.slots_used} of ${m.capacity}`;
+  return m.capacity_source === "machine" ? `${of} · machine's limit` : of;
+};
 
 /** The row for this machine's own worker, apart from the machines it can dial. */
 export const isLocal = (m: Machine) => m.mode === "local";
 
-/** What the Mode column says: `local` reads as the machine Kraft itself runs on. */
-export const modeWords = (m: Machine) => (isLocal(m) ? "this machine" : m.mode);
+/** What the Connects column says: how Kraft reaches the machine. */
+export const modeWords = (m: Machine) => (isLocal(m) ? "this machine" : m.mode === "ssh" ? "over ssh" : "dials in");
+
+/** The presets of Give up after: `workers.yaml`'s value, then how it reads. */
+export const GIVE_UP_PRESETS = [
+  { value: "30m", label: "30 minutes" },
+  { value: "1h", label: "1 hour" },
+  { value: "2h", label: "2 hours" },
+  { value: "8h", label: "8 hours" },
+  { value: "1d", label: "1 day" },
+  { value: "never", label: "never" },
+];
+export const DEFAULT_GIVE_UP = "2h";
