@@ -571,11 +571,7 @@ async def _sentinel_stop(
     if verdict == BUDGET:
         return await stops.stop_for_budget(db, work_item_id, node, budget)
     if verdict == REPAIR_DOUBTED:
-        doubts = "; ".join(dispatch.repair_doubts(db, work_item_id, node, failed))
-        reason = (
-            f"a repair in node {node.id} finished with concerns, so the node "
-            f"was not measured again: {doubts}"
-        )
+        reason = _doubted_repair_reason(db, work_item_id, node, failed)
         # `stuck`, not `failed`: nothing failed, the repair doubts itself and a
         # person decides (`context.py`'s "a person decides").
         await db.write(
@@ -583,6 +579,14 @@ async def _sentinel_stop(
         )
         return "needs_human"
     return None
+
+
+def _doubted_repair_reason(db, work_item_id: str, node: ResolvedNode, doubted) -> str:
+    doubts = "; ".join(dispatch.repair_doubts(db, work_item_id, node, doubted))
+    return (
+        f"a repair in node {node.id} finished with concerns, so the node "
+        f"was not measured again: {doubts}"
+    )
 
 
 @dataclass(frozen=True)
@@ -594,8 +598,10 @@ class _Stuck:
     ever reading `needs_human`.
 
     **The one definition of the stuck set** (Ruling 176): a task failed after
-    recovery, an exhausted fix-loop cap, a stall, and the judge's
-    `stop_needs_human` -- the four places this is constructed. Automatic
+    recovery, an exhausted fix-loop cap, a stall, the judge's
+    `stop_needs_human`, and a node-level repair that finished with concerns in
+    a node with no fix loop (Kraft-yi005) -- the five places this is
+    constructed. Automatic
     escalation answers these and nothing else: the node's declared escalation
     reads this value, and the generic `gates.auto_escalate_stuck` reads the
     `stuck` mark `_stop_stuck` records from it. Every other stop (config,
@@ -1810,6 +1816,14 @@ async def _walk_node_once(
                     loop_severities=loop_severities,
                     spent=spent,
                 )
+                if verdict == REPAIR_DOUBTED:
+                    # No fix loop to take it (Kraft-yi005): a stuck stop, so the
+                    # node's escalation or `gates.auto_escalate_stuck` answers
+                    # it before a person is asked.
+                    return _Stuck(
+                        _doubted_repair_reason(db, work_item_id, node, failed),
+                        kind=StopKind.STUCK,
+                    )
                 # The same ladder as the measurement: a repair that could not
                 # start, or a re-measure that hit a sentinel, is not "task
                 # failed" (review finding 1).
@@ -1919,6 +1933,9 @@ async def _walk_node_once(
     resume_step = start_step
     # The last fix pass's exceptions, for the cap's reason on the next cycle.
     fix_excs: list[BaseException] = []
+    # What a doubted repair said, for the first cycle only (Kraft-yi005): it
+    # makes the judge due then, and is cleared with `_first_iteration`.
+    repair_doubted: list[str] = []
     while True:
         verdict, failed, excs = await dispatch.measure_node(
             db,
@@ -2022,9 +2039,10 @@ async def _walk_node_once(
             # back from here: a fix loop that fell through the WAITING case, in
             # particular, would spend a paid fix cycle on a pipeline that has
             # not even finished settling for the repaired head.
-            stop = await _sentinel_stop(db, work_item_id, node, r_verdict, r_failed, budget)
-            if stop is not None:
-                return stop
+            if r_verdict != REPAIR_DOUBTED:
+                stop = await _sentinel_stop(db, work_item_id, node, r_verdict, r_failed, budget)
+                if stop is not None:
+                    return stop
             if r_verdict == BASE_MOVED:
                 return await _moved_base(db, work_item_id, node)
             if r_verdict == MERGE_REJECTED:
@@ -2054,17 +2072,26 @@ async def _walk_node_once(
                     run_dirs=run_dirs,
                 )
                 return "ok"
-            # Only "failed" reaches here, and that fall-through is deliberate:
-            # the repair ran, didn't resolve things, and the ordinary paid fix
-            # cycle below should now see the failure for what it actually is.
-            #
-            # The repair's own re-measure just wrote its findings/session rows
-            # under `_REPAIR_ROUND`, not the `round` this loop was on when it
-            # entered this block -- the fall-through below reads
-            # `collect_findings`/`needs_context_question` at `round`, so `round`
-            # has to move to match, or those calls read the stale pre-repair
-            # rows instead of the fresher re-measure this repair just produced.
-            verdict, failed, excs, round = r_verdict, r_failed, r_excs, _REPAIR_ROUND
+            if r_verdict == REPAIR_DOUBTED:
+                # The repair says the failure needs a code fix, which is this
+                # loop's work (Kraft-yi005). Nothing was re-measured, so
+                # `verdict`, `failed` and `round` stay the measurement's own --
+                # `r_failed` is the doubted repair tasks, and fixing those
+                # would fix the repair, not the node. The judge rules on the
+                # repair's concerns before the first cycle is paid for.
+                repair_doubted = dispatch.repair_doubts(db, work_item_id, node, r_failed)
+            else:
+                # Only "failed" reaches here, and that fall-through is deliberate:
+                # the repair ran, didn't resolve things, and the ordinary paid fix
+                # cycle below should now see the failure for what it actually is.
+                #
+                # The repair's own re-measure just wrote its findings/session rows
+                # under `_REPAIR_ROUND`, not the `round` this loop was on when it
+                # entered this block -- the fall-through below reads
+                # `collect_findings`/`needs_context_question` at `round`, so `round`
+                # has to move to match, or those calls read the stale pre-repair
+                # rows instead of the fresher re-measure this repair just produced.
+                verdict, failed, excs, round = r_verdict, r_failed, r_excs, _REPAIR_ROUND
 
         previous_found, fix_ran, previous_head = dispatch.last_measurement(
             db, work_item_id, node.id
@@ -2108,7 +2135,9 @@ async def _walk_node_once(
         # discarding it before delivery is the data loss this comment warns
         # about rather than the misattribution (Kraft-s7c04.6).
         exempt = steer is not None and bool(steer) and steer.exempts_judge
-        judge_due = previous_fix is not None and counter_row is not None and not exempt
+        judge_due = (
+            (previous_fix is not None and counter_row is not None) or bool(repair_doubted)
+        ) and not exempt
         # `reported_hooks`, not `reported`: it is the set of task paths that
         # wrote a parseable result file, and `blind_failures` below is computed
         # from it. Named for what it holds so nothing else in this function can
@@ -2283,6 +2312,7 @@ async def _walk_node_once(
                 policy=policy,
                 launch=launch,
                 budget=budget,
+                doubts=repair_doubted,
             )
             if verdict == "paused":
                 return "paused"
@@ -2417,6 +2447,7 @@ async def _walk_node_once(
         # judge having actually run rather than on the name's current value.
         if judge_ran:
             instruction += prompts.judge_note(reasoning)
+        instruction += prompts.repair_doubts_fix_note(repair_doubted)
         # Every round, not just the last one (Kraft-s7c04.7). `last_measurement`
         # gives the fixer one round of memory, which is why round N+2 reverted
         # the security property round N established on e983d85c -- the loop had
@@ -2499,6 +2530,7 @@ async def _walk_node_once(
         )
         round = count
         _first_iteration = False
+        repair_doubted = []
 
 
 def _repair_outcome(fix: str, fix_failed: list[ResolvedTask]) -> bool:
