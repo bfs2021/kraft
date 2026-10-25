@@ -593,12 +593,15 @@ NO_POST_MERGE_CI_GRACE = timedelta(minutes=5)
 
 
 def _no_run_past_grace(db, work_item_id: str, task: str) -> bool:
-    """Whether `task`'s wait started `NO_POST_MERGE_CI_GRACE` ago or more. A
-    first look has no wait yet, so it never is."""
+    """Whether `task`'s wait, or its watch of the commit it last moved onto,
+    started `NO_POST_MERGE_CI_GRACE` ago or more. A first look has no wait
+    yet, so it never is."""
     wait = db.read(lambda c: waits.open_wait(c, work_item_id, task))
     if wait is None:
         return False
-    started = datetime.fromisoformat(wait.started["started_at"])
+    started = datetime.fromisoformat(
+        (wait.last or {}).get("grace_from") or wait.started["started_at"]
+    )
     return waits.now() - started >= NO_POST_MERGE_CI_GRACE
 
 
@@ -1387,8 +1390,30 @@ async def _run_one(
         case "merge_watch":
             if not ci_checks:
                 return (*await _skip_ci(db, work_item_id, node_id, hook_point, orig_repo), None)
-            # `base`: the item's base branch, what its merge landed on.
-            head_sha = await _builtins.upstream_head(orig_repo, base)
+            # The commit this item merged, kept from the first observation on
+            # (Kraft-h6wi2): what it asks is whether *this* merge broke `base`, and
+            # a base that keeps moving must not keep the answer waiting.
+            wait = db.read(lambda c: waits.open_wait(c, work_item_id, hook_point))
+            seen = wait.last if wait is not None and wait.last else {}
+            head_sha = seen.get("watched_sha")
+            retry = ""
+            if head_sha is None:
+                try:
+                    merged = await forge.find_mr(repo=repo, branch=branch)
+                except ForgeError as exc:
+                    retry = f"the merge commit is not known yet ({exc}), will retry\n"
+                else:
+                    if merged is not None and merged.state != "merged":
+                        retry = f"!{merged.number} is {merged.state}, not merged yet, will retry\n"
+                    else:
+                        # `base`: the item's base branch, what its merge landed on.
+                        # The forge may report no commit, or no merge request at
+                        # all: the tip as first read is then the nearest thing,
+                        # and kept.
+                        head_sha = (
+                            merged.merged_sha if merged is not None else ""
+                        ) or await _builtins.upstream_head(orig_repo, base)
+                        retry = f"rev-parse HEAD failed in {orig_repo}, will retry\n"
             if head_sha is None:
                 # Peer callers (`ensure_worktree`, `refresh_worktree_base`) treat a
                 # failed `rev-parse HEAD` as "nothing to report yet", not a value to
@@ -1396,8 +1421,14 @@ async def _run_one(
                 # both land here. Passing None through would crash
                 # `GhCli.branch_ci_status` (`head_sha[:7]`) or, on GitLab, silently pin
                 # the previous commit's pipeline to this merge's head (code-review).
-                log, status = f"rev-parse HEAD failed in {orig_repo}, will retry\n", "waiting"
+                log, status = retry, "waiting"
             else:
+                note = WaitNote(
+                    None,
+                    {"watched_sha": head_sha, "grace_from": seen.get("grace_from")},
+                    False,
+                    waits.now(),
+                )
                 stored = db.read(
                     lambda c: c.execute(
                         "SELECT ci_pipeline_ref FROM work_items WHERE id = ?", (work_item_id,)
@@ -1445,11 +1476,42 @@ async def _run_one(
                     ci_status, forge=forge, repo=orig_repo, branch=base, head_sha=head_sha
                 )
                 if status == "abandoned":
+                    # A run cancelled for a newer push to the base (they share a
+                    # concurrency group, and the forge keeps one pending run) has
+                    # a successor: the tip holds this merge, and its CI answers
+                    # too. With the watched commit still the tip, a person did it.
+                    tip = await _builtins.upstream_head(orig_repo, base)
+                    if tip is None or tip == head_sha:
+                        return (
+                            log,
+                            await _stop_for_abandoned_run(db, work_item_id, node_id, log),
+                            None,
+                            None,
+                        )
+                    payload = {
+                        "node_id": node_id,
+                        "task": hook_point,
+                        "repo": str(orig_repo),
+                        "branch": base,
+                        "from": head_sha,
+                        "to": tip,
+                        "why": log.rstrip().splitlines()[-1],
+                    }
+                    await db.write(
+                        lambda c: events.append(
+                            c, work_item_id, ForgeEvent.POST_MERGE_CI_MOVED, payload
+                        )
+                    )
+                    moved = waits.now()
+                    note = WaitNote(
+                        None, {"watched_sha": tip, "grace_from": moved.isoformat()}, False, moved
+                    )
                     return (
-                        log,
-                        await _stop_for_abandoned_run(db, work_item_id, node_id, log),
-                        None,
-                        None,
+                        f"{log.rstrip()}\nwatching {tip[:7]} on {base} instead, which holds "
+                        f"{head_sha[:7]}\n",
+                        "waiting",
+                        findings,
+                        note,
                     )
                 if status == "infra":
                     # Same counter, same key format, as `ci_poll`'s own
@@ -1797,16 +1859,19 @@ async def run_task(
         targets = [t for t in targets if t[0] not in untouched]
 
     if handler == "merge_watch" and targets:
-        # `merge_watch` ignores the per-target `repo` entirely -- it reads
-        # the item's base branch in `orig_repo`. One pass, not one per target: a
-        # multi-repo item would otherwise poll the same branch N times and
-        # file N identical follow-up beads (gate review). Root by preference,
-        # first target when `root_policy == "skip"` already dropped it -- the
-        # choice is cosmetic (it only decides `_run_one`'s unused `repo`
-        # argument), but it keeps the log line naming the repo a reader
-        # expects. After the `multi` block above on purpose: that block still
-        # needs the root row to resolve `root_has_changes`.
-        targets = [next((t for t in targets if t[2] == "root"), targets[0])]
+        # `merge_watch` reads the item's base branch in `orig_repo`, and finds
+        # the merge commit it watches through `repo`'s merge request
+        # (Kraft-h6wi2). One pass, not one per target: a multi-repo item would
+        # otherwise poll the same branch N times and file N identical
+        # follow-up beads (gate review). Always the root: a member's merge
+        # request landed on the member's own base, not this one, so its
+        # merged commit is never on the branch whose CI is read. With
+        # `root_policy == "skip"` the root has no merge request, and the watch
+        # starts from the base's tip. After the `multi` block above on
+        # purpose: that block still needs the root row to resolve
+        # `root_has_changes`.
+        root = next((r for r in rows if r["role"] == "root"), None)
+        targets = [(root["id"], Path(root["repo_path"]), "root") if root else targets[0]]
 
     if handler == "open_mr" and multi and not targets:
         # Every selected repository untouched: the workspace form of
