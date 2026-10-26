@@ -78,16 +78,10 @@ def test_any_with_no_machine_allowed_is_refused():
     assert "no machine" in placement.refusal("any", workers=only_gpu, repos=repos)
 
 
-@pytest.mark.parametrize(
-    ("kind", "says"),
-    [("submodule", "submodules"), ("plain", None)],
-)
-def test_a_checkout_a_single_bundle_cannot_carry_is_named(tmp_path, kind, says):
+def test_a_repo_with_submodules_and_no_members_is_not_refused(tmp_path):
     repo = make_repo(tmp_path)
-    if kind == "submodule":
-        (repo / ".gitmodules").write_text('[submodule "x"]\n\tpath = x\n\turl = ./x\n')
-    got = placement.checkout_problem(repo)
-    assert (got is None) if says is None else (says in got)
+    (repo / ".gitmodules").write_text('[submodule "x"]\n\tpath = x\n\turl = ./x\n')
+    assert placement.checkout_problem(repo) is None
 
 
 def test_workspace_members_are_named(tmp_path):
@@ -154,16 +148,15 @@ def test_a_group_whose_remote_members_do_not_allow_the_repo_and_has_no_local_is_
     assert "group 'gpu'" in got and "infra" in got
 
 
-def test_a_group_with_a_submodule_checkout_names_why_no_remote_member_can_take_it(tmp_path):
+def test_a_group_with_workspace_members_names_why_no_remote_member_can_take_it(tmp_path):
     repo = make_repo(tmp_path)
-    (repo / ".gitmodules").write_text('[submodule "x"]\n\tpath = x\n\turl = ./x\n')
     workers = registry.WorkersFile.model_validate(
         {"workers": {"gpu-1": {"ssh": "g1", "groups": ["gpu"]}}}
     )
     (got,) = placement.filing_problems(
-        ["gpu"], workers=workers, repos=[], in_place=False, repo_path=repo
+        ["gpu"], workers=workers, repos=[], in_place=False, repo_path=repo, members=["libs/a"]
     )
-    assert "group 'gpu'" in got and "submodules" in got
+    assert "group 'gpu'" in got and "workspace members" in got
 
 
 def test_library_runners_lists_every_machine_the_chain_names():
