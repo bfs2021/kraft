@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_323e79e8bb4dca6e_mr_poller_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-26 10:38 +0000
+            created at 2026-10-26 12:01 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -278,7 +278,7 @@
     <p class="pln"><span class="n"><a id="t196" href="#t196">196</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t197" href="#t197">197</a></span><span class="t"><span class="str">        `runner` is where the item&#x27;s steps run: a machine or a group from</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t198" href="#t198">198</a></span><span class="t"><span class="str">        workers.yaml, `any` or `local`. A name must be in workers.yaml; a sandboxed,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t"><span class="str">        in-place, workspace-member, submodule or Git LFS item is refused. Leave</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t"><span class="str">        in-place, workspace-member or submodule item is refused. Leave</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t200" href="#t200">200</a></span><span class="t"><span class="str">        it out unless a human asked for one.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t201" href="#t201">201</a></span><span class="t">        <span class="key">return</span> <span class="key">await</span> <span class="nam">client</span><span class="op">.</span><span class="nam">create_work_item</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t202" href="#t202">202</a></span><span class="t">            <span class="nam">title</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -617,8 +617,8 @@
     <p class="pln"><span class="n"><a id="t535" href="#t535">535</a></span><span class="t"><span class="str">        binding; naming a field replaces the stored override rather than merging</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t536" href="#t536">536</a></span><span class="t"><span class="str">        with it, but a call that does not name `runner` keeps the stored one. `runner` is</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t537" href="#t537">537</a></span><span class="t"><span class="str">        where the steps run: a machine or a group from</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t538" href="#t538">538</a></span><span class="t"><span class="str">        workers.yaml, `any` or `local`; a sandboxed, in-place, workspace-member, submodule or</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t539" href="#t539">539</a></span><span class="t"><span class="str">        Git LFS item is refused. It takes effect at the next step launch.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t538" href="#t538">538</a></span><span class="t"><span class="str">        workers.yaml, `any` or `local`; a sandboxed, in-place, workspace-member or submodule</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t539" href="#t539">539</a></span><span class="t"><span class="str">        item is refused. It takes effect at the next step launch.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t540" href="#t540">540</a></span><span class="t">        <span class="key">return</span> <span class="key">await</span> <span class="nam">client</span><span class="op">.</span><span class="nam">set_agent_overrides</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t541" href="#t541">541</a></span><span class="t">            <span class="nam">model</span><span class="op">,</span> <span class="nam">escalate_model</span><span class="op">,</span> <span class="nam">effort</span><span class="op">,</span> <span class="nam">runner</span><span class="op">=</span><span class="nam">runner</span><span class="op">,</span> <span class="nam">clear</span><span class="op">=</span><span class="nam">clear</span><span class="op">,</span> <span class="nam">work_item_id</span><span class="op">=</span><span class="nam">work_item_id</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t542" href="#t542">542</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -646,7 +646,7 @@
     <p class="pln"><span class="n"><a id="t564" href="#t564">564</a></span><span class="t"><span class="str">        screen&#x27;s system defaults or the chain everyone else uses. A</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t565" href="#t565">565</a></span><span class="t"><span class="str">        model/effort the node&#x27;s harness refuses is refused here. `runner` is</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t566" href="#t566">566</a></span><span class="t"><span class="str">        where the node&#x27;s steps run: a machine or a group from workers.yaml,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t567" href="#t567">567</a></span><span class="t"><span class="str">        `any` or `local`; a sandboxed, in-place, workspace-member, submodule or Git LFS</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t567" href="#t567">567</a></span><span class="t"><span class="str">        `any` or `local`; a sandboxed, in-place, workspace-member or submodule</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t568" href="#t568">568</a></span><span class="t"><span class="str">        item is refused. `clear` resets this node back to the template&#x27;s own</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t569" href="#t569">569</a></span><span class="t"><span class="str">        binding; naming a field sets it and keeps the node&#x27;s other fields.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t570" href="#t570">570</a></span><span class="t"><span class="str">        409s once the node has started, except a `runner` alone, which takes</span>&nbsp;</span><span class="r"></span></p>
@@ -807,7 +807,7 @@
             <a class="nav" href="z_323e79e8bb4dca6e_mr_poller_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-26 10:38 +0000
+            created at 2026-10-26 12:01 +0000
         </p>
     </div>
 </footer>
