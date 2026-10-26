@@ -8,6 +8,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from support.api import _seed_session
 from support.harness import v1_chain
 
 from kraft import events, store
@@ -188,27 +189,11 @@ def test_stop_detail_needs_human(client, repo):
     needs_human stop), `reason` and `facts` from the event."""
     wid = _paused_item(client, repo)
     _run(lambda c: store.load_chain(c, wid, "implement"))
-    _run(
-        lambda c: store.create_session(
-            c,
-            id="s1",
-            work_item_id=wid,
-            node_id="implement",
-            hook_point="implement.main.implement",
-            log_path="/l",
-            result_path="/r",
-        )
+    _seed_session(
+        client, wid, session_id="s1", hook_point="implement.main.implement", node_id="implement"
     )
-    _run(
-        lambda c: store.create_session(
-            c,
-            id="s2",
-            work_item_id=wid,
-            node_id="implement",
-            hook_point="implement.main.implement",
-            log_path="/l",
-            result_path="/r",
-        )
+    _seed_session(
+        client, wid, session_id="s2", hook_point="implement.main.implement", node_id="implement"
     )
     _run(lambda c: store.mark_needs_human(c, wid, "implement", "task failed", kind="failed"))
 
@@ -225,23 +210,26 @@ def test_stop_detail_needs_human(client, repo):
     }
 
 
-def test_stop_detail_waiting(client, repo):
+@pytest.mark.parametrize(
+    ("reason", "reentered"),
+    [(None, False), ("waiting for gpu-box (full)", False), ("waiting for gpu-box (full)", True)],
+    ids=["external-wait", "machine-wait-says-why", "machine-wait-ends-when-reentered"],
+)
+def test_stop_detail_waiting(client, repo, reason, reentered):
     wid = _paused_item(client, repo)
     _run(lambda c: store.load_chain(c, wid, "ci_poll"))
+    _seed_session(client, wid, session_id="s1", hook_point="ci_poll.main.poll", node_id="ci_poll")
     _run(
-        lambda c: store.create_session(
-            c,
-            id="s1",
-            work_item_id=wid,
-            node_id="ci_poll",
-            hook_point="ci_poll.main.poll",
-            log_path="/l",
-            result_path="/r",
-        )
+        lambda c: store.mark_waiting(c, wid, "ci_poll", "2026-10-01T00:10:00+00:00", reason=reason)
     )
-    _run(lambda c: store.mark_waiting(c, wid, "ci_poll", "2026-10-01T00:10:00+00:00"))
+    if reentered:  # the wait scheduler's re-entry writes no event: the status ends the stop
+        _run(lambda c: store.mark_reentered(c, wid))
 
     body = client.get(f"/api/work-items/{wid}").json()
+    row = next(i for i in client.get("/api/work-items").json()["items"] if i["id"] == wid)
+    if reentered:
+        assert (body["stop"], body["stop_reason"], row["stop"]) == (None, None, None)
+        return
     assert body["display_status"] == "waiting"
     assert body["stop"] == {
         "kind": "wait",
@@ -249,25 +237,19 @@ def test_stop_detail_waiting(client, repo):
         "task": "ci_poll.main.poll",
         "attempt": 1,
         "resume_at": "2026-10-01T00:10:00+00:00",
-        "reason": None,
+        "reason": reason,
         "facts": {},
     }
+    assert body["stop_reason"] == reason
     assert body["retry_at"] == body["stop"]["resume_at"]
+    assert row["stop"]["reason"] == reason
 
 
 def test_stop_detail_rate_limited(client, repo):
     wid = _paused_item(client, repo)
     _run(lambda c: store.load_chain(c, wid, "implement"))
-    _run(
-        lambda c: store.create_session(
-            c,
-            id="s1",
-            work_item_id=wid,
-            node_id="implement",
-            hook_point="implement.main.implement",
-            log_path="/l",
-            result_path="/r",
-        )
+    _seed_session(
+        client, wid, session_id="s1", hook_point="implement.main.implement", node_id="implement"
     )
     _run(lambda c: store.mark_rate_limited(c, wid, "implement", "2026-10-01T00:05:00+00:00"))
 
@@ -296,17 +278,7 @@ def _escalation_turn(wid: str, session: str | None, status: str = "pending") -> 
     _run(lambda c: events.append(c, wid, "escalation_message", {"session_id": "e1", "thread": 1}))
     if session is None:
         return
-    _run(
-        lambda c: store.create_session(
-            c,
-            id="e1",
-            work_item_id=wid,
-            node_id="implement",
-            hook_point="escalation",
-            log_path="/l",
-            result_path="/r",
-        )
-    )
+    _seed_session(None, wid, session_id="e1", hook_point="escalation", node_id="implement")
     _run(
         lambda c: c.execute(
             "UPDATE worker_sessions SET status = ? WHERE work_item_id = ? AND id = 'e1'",
@@ -387,16 +359,8 @@ def test_list_display_status_and_stop_without_facts(client, repo):
     `task` or `attempt` -- it reads no sessions per row (B.4)."""
     wid = _paused_item(client, repo)
     _run(lambda c: store.load_chain(c, wid, "implement"))
-    _run(
-        lambda c: store.create_session(
-            c,
-            id="s1",
-            work_item_id=wid,
-            node_id="implement",
-            hook_point="implement.main.implement",
-            log_path="/l",
-            result_path="/r",
-        )
+    _seed_session(
+        client, wid, session_id="s1", hook_point="implement.main.implement", node_id="implement"
     )
     _run(lambda c: store.mark_needs_human(c, wid, "implement", "task failed", kind="failed"))
 
@@ -434,16 +398,8 @@ def test_rate_limit_fallback_facts(client, repo):
     chain = v1_chain(nodes, repo=repo)
     wid = _paused_item(client, repo, materialized_chain=chain.to_json())
     _run(lambda c: store.load_chain(c, wid, "implement"))
-    _run(
-        lambda c: store.create_session(
-            c,
-            id="s1",
-            work_item_id=wid,
-            node_id="implement",
-            hook_point="implement.main.implement",
-            log_path="/l",
-            result_path="/r",
-        )
+    _seed_session(
+        client, wid, session_id="s1", hook_point="implement.main.implement", node_id="implement"
     )
     _run(lambda c: store.mark_rate_limited(c, wid, "implement", "2026-10-01T00:05:00+00:00"))
     override = policy_mod.WorkItemPolicy.model_validate({"allowed_harnesses": ["codex", "claude"]})

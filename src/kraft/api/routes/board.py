@@ -97,7 +97,8 @@ def _reject_default(st, row, gate: str | None) -> str | None:
 #: the same shape of boundary `_pending_gate` models. A stop needs one because
 #: `store.request_gate` also sets status 'needs_human' while appending no
 #: `work_item_needs_human`: without this set a first-match scan reads an
-#: answered-and-resumed stop, or a pending gate, as a live one forever.
+#: answered-and-resumed stop, or a pending gate, as a live one forever. A
+#: `work_item_waiting` is one too, and is itself a stop when it has a reason.
 _STOP_BOUNDARY = (
     WorkItemEvent.NEEDS_HUMAN,
     GateEvent.REQUESTED,
@@ -106,7 +107,20 @@ _STOP_BOUNDARY = (
     WorkItemEvent.RETRIED,
     WorkItemEvent.COMPLETED,
     WorkItemEvent.RATE_LIMITED,
+    WorkItemEvent.WAITING,
 )
+
+
+def _stop_payload(event_type: str, payload: dict, status: str | None) -> dict | None:
+    """A boundary event's payload when it is a stop: a `work_item_needs_human`,
+    or, while the item still waits, a `work_item_waiting` that says why (a step
+    waiting for its machine, `store.mark_waiting`). The scheduler's re-entry
+    writes no event, so `status` is what ends the wait. An external wait's
+    says nothing: no stop reason."""
+    if event_type == WorkItemEvent.NEEDS_HUMAN:
+        return payload
+    waits = event_type == WorkItemEvent.WAITING and status == WorkItemStatus.WAITING
+    return payload if waits and "reason" in payload else None
 
 
 #: How long an `escalation_message` with no session row yet still reads as a
@@ -140,11 +154,12 @@ def _stop_episode(st, wid: str) -> tuple[dict | None, bool]:
         if e["type"] in _STOP_BOUNDARY:
             boundary = e
             break
-    stop = (
-        boundary["payload"]
-        if boundary is not None and boundary["type"] == WorkItemEvent.NEEDS_HUMAN
-        else None
-    )
+    stop = None
+    if boundary is not None:
+        row = st.db.read(
+            lambda c: c.execute("SELECT status FROM work_items WHERE id = ?", (wid,)).fetchone()
+        )
+        stop = _stop_payload(boundary["type"], boundary["payload"], row and row["status"])
     last = next((e for e in reversed(evs) if e["type"] == EscalationEvent.ESCALATION_MESSAGE), None)
     escalated = False
     if boundary is not None and last is not None and last["seq"] > boundary["seq"]:
@@ -484,7 +499,7 @@ async def list_work_items(request: Request):
             request.app,
             r,
             pending_gate=pending.get(wid),
-            stop_payload=_boundary_payload(boundary_by_item.get(wid)),
+            stop_payload=_boundary_payload(boundary_by_item.get(wid), status),
             mr_ref=mr_ref,
             escalation_live=wid in doors["escalating"],
             agent_paused=bool(paused) and bool(paused & set(executor.agent_task_paths(r, chain))),
@@ -530,7 +545,7 @@ async def list_work_items(request: Request):
                     r["stop_kind"],
                     r["status"],
                     pending.get(r["id"]),
-                    _boundary_payload(boundary_by_item.get(r["id"])),
+                    _boundary_payload(boundary_by_item.get(r["id"]), r["status"]),
                 ),
                 _list_escalated(r["id"]),
                 pending.get(r["id"]),
@@ -579,12 +594,12 @@ def _latest_payload(c, wid: str, event_type: str) -> dict | None:
     return json.loads(hit["payload"]) if hit else None
 
 
-def _boundary_payload(boundary) -> dict | None:
-    """The `work_item_needs_human` payload of a list row's latest stop-boundary
-    event, or None when that event is not a stop."""
-    if boundary is not None and boundary["type"] == WorkItemEvent.NEEDS_HUMAN:
-        return json.loads(boundary["payload"])
-    return None
+def _boundary_payload(boundary, status: str) -> dict | None:
+    """The payload of a list row's latest stop-boundary event, or None when
+    that event is not a stop (`_stop_payload`)."""
+    if boundary is None:
+        return None
+    return _stop_payload(boundary["type"], json.loads(boundary["payload"]), status)
 
 
 def _list_stop(row, pending_gate: str | None, boundary) -> dict | None:
@@ -595,7 +610,7 @@ def _list_stop(row, pending_gate: str | None, boundary) -> dict | None:
     status = row["status"]
     if status not in STOPPED:
         return None
-    payload = _boundary_payload(boundary)
+    payload = _boundary_payload(boundary, status)
     reason = payload["reason"] if payload else None
     return {
         "kind": _stop_kind(row["stop_kind"], status, pending_gate, payload),
