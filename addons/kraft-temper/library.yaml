@@ -3,30 +3,37 @@
 # loads each `temper:` skill from the Temper plugin, which must be installed
 # where it runs (https://github.com/galando/temper).
 #
-# Temper's stage commands (/temper:plan, /temper:build, ...) run Temper's own
-# gated flow, which would compete with Kraft's gates, so only its skills are
-# used. Kraft's gates stand in for Temper's.
+# The method is named in steering, not in `skill:`: an agent task with a skill
+# is one that judges the change, and Kraft tells the one without a skill to
+# implement it. Temper's stage commands (/temper:plan, /temper:build, ...) run
+# Temper's own gated flow, which would compete with Kraft's, so only its skill
+# is used and Kraft's gates stand in for Temper's.
 
 steering:
-  kraft-runs-the-flow:
+  unattended:
     instructions: >-
       This session runs unattended inside a Kraft worktree, and Kraft runs the
-      flow: do not start a Temper run or any Temper stage command, and do not
-      ask a person anything. Write what you produce where Kraft's instructions
-      say. Do not push, open pull requests or merge: Kraft does those.
+      flow: do not start a Temper run or any Temper stage command, and never
+      ask a person anything. Stop with status "needs_context" when the work
+      item and its approved documents cannot decide something. Do not push,
+      open pull requests or merge: Kraft does those.
+
+  source-driven-development:
+    instructions: >-
+      Follow temper:source-driven-development wherever you write code against
+      a framework or library: check its documentation for the version this
+      repository uses before you write the code. Load it before you start,
+      and if you cannot, stop with status "needs_context" naming it.
 
 tasks:
   implementer:
     extends: kraft-default:implementer
-    skill: temper:source-driven-development
-    steering: [kraft-runs-the-flow]
+    steering: [source-driven-development, unattended]
 
   repair_verification:
     extends: kraft-default:repair_verification
-    skill: temper:source-driven-development
-    steering: [kraft-runs-the-flow]
+    steering: [source-driven-development, unattended]
 
   repair_mr_feedback:
     extends: kraft-default:repair_mr_feedback
-    skill: temper:source-driven-development
-    steering: [kraft-runs-the-flow]
+    steering: [source-driven-development, unattended]

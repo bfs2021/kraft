@@ -217,8 +217,12 @@ add-on's `version` changes, so a change to `config/library.yaml`,
 the same pull request: patch for a fix, minor for something new, major for a
 removed or renamed chain or task. When the change uses something the last
 release cannot read, raise `requires.kraft` too.
+`dev/check_addon_versions.py` (in `just lint`) fails when an add-on changed since
+the latest release and kept its version, and
 `tests/addons/test_kraft_sdlc_collection.py` fails when a change to `config/`
-breaks an add-on built on it.
+breaks an add-on built on it. In this repository, `kraft-superpowers` chains are
+refused their superpowers skills: `.claude/hooks/kraft-worker-plugins.sh` turns
+superpowers off in Kraft workers.
 
 The dot-directories are mostly the maintainer's agent tooling. You can ignore
 them unless you use the same tools:
@@ -287,7 +291,7 @@ verification runs it.
 
 | CI job | What it runs | Run it locally with |
 |---|---|---|
-| `lint` | ruff check and format, `dev/check_docs_coverage.py`, `dev/check_docs_walls.py`, `dev/check_docs_redirects.py`, `dev/check_docs_landings.py`, `dev/check_docs_shell.py`, `dev/check_docs_ledes.py`, `dev/check_docs_added_in.py`, `dev/check_tests.py` | `just ci-test`, or `just lint` and `just check-tests` |
+| `lint` | ruff check and format, `dev/check_docs_coverage.py`, `dev/check_docs_walls.py`, `dev/check_docs_redirects.py`, `dev/check_docs_landings.py`, `dev/check_docs_shell.py`, `dev/check_docs_ledes.py`, `dev/check_docs_added_in.py`, `dev/check_addon_versions.py`, `dev/check_tests.py` | `just ci-test`, or `just lint` and `just check-tests` |
 | `changes` | decides whether the pull request is docs-only, or changes no Python | nothing to run |
 | `test (python 3.12 / 3.13 / 3.14, 1/3 … 3/3)` *(code)* | the unit tier (`-m "not e2e"`) in three shards on each supported Python, with `python -m kraft.intent` in the first; on 3.14 alone when the pull request changes no Python | `just ci-test`, or `just test` and `just intent`; `just test-py 3.12` for another version |
 | `test report` *(code)* | the shards' junit annotations and the coverage comment; reports only, so it is not part of `test` | nothing to run |

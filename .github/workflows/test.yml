@@ -102,6 +102,8 @@ jobs:
       - run: uv run python dev/check_docs_ledes.py
       # Needs the release tags the checkout above fetches (fetch-depth: 0).
       - run: uv run python dev/check_docs_added_in.py
+      # An add-on of Kraft's own collection that changed since the latest tag has a new version.
+      - run: uv run python dev/check_addon_versions.py
       - run: uv run python dev/check_tests.py
 
   test:

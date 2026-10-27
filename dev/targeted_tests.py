@@ -38,6 +38,9 @@ BLIND: tuple[tuple[str, bool], ...] = (
     ("src/kraft", True),
     ("fixtures", False),
     ("config", False),
+    # Kraft's own collection: read as data by tests/addons/test_kraft_sdlc_collection.py.
+    ("addons", False),
+    (".kraft", False),
     ("tests/support", True),
     # Run as subprocesses, found by grepping how tests start them; a test in
     # tests/test_dev_targeted_tests.py fails when a new one is not listed.

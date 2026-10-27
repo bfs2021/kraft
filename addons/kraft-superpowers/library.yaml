@@ -1,40 +1,64 @@
 # Kraft's shipped chains (inherited from kraft-default), with superpowers'
-# methods on the tasks that write a plan, implement it, or repair it. The
-# agent loads each `superpowers:` skill from the superpowers plugin, which
-# must be installed where it runs (https://github.com/obra/superpowers).
+# methods on the tasks that plan, implement and repair. The agent loads each
+# `superpowers:` skill from the superpowers plugin, which must be installed
+# where it runs (https://github.com/obra/superpowers).
 #
-# Only the methods that work with no person present are used: brainstorming
-# asks questions, and using-git-worktrees and finishing-a-development-branch
-# do what Kraft does itself, so the spec and the merge request stay Kraft's.
+# The methods are named in steering, not in `skill:`: an agent task with a
+# skill is one that judges the change, and Kraft tells the one without a
+# skill to implement it. Planning keeps Kraft's own plan method, whose output
+# the plan gate and the board read, and borrows writing-plans' style.
+#
+# Only methods that work with no person present are used: brainstorming asks
+# questions, and using-git-worktrees and finishing-a-development-branch do
+# what Kraft does itself.
 
 steering:
-  no-person-present:
+  unattended:
     instructions: >-
-      This session runs unattended inside a Kraft worktree. Where the method
-      asks a person something or offers a choice, take the choice the work
-      item and its approved documents support, and say which you took. Write
-      what you produce where Kraft's instructions say, not where the method
-      would. Do not create worktrees or branches, push, open pull requests or
-      merge: Kraft does those. Before you finish, follow
+      This session runs unattended inside a Kraft worktree. Never ask a person
+      anything or wait for an answer: where a method says to ask, discuss or
+      offer a choice, take the choice the work item and its approved documents
+      support and say which you took, or stop with status "needs_context" when
+      they cannot decide it. Do not create worktrees or branches, push, open
+      pull requests or merge: Kraft does those.
+
+  plan-like-writing-plans:
+    instructions: >-
+      Write the plan in the style of superpowers:writing-plans: bite-sized
+      steps, the failing test first, exact files and commands. Keep Kraft's
+      plan format and its `### Task N:` headings. Leave out its "REQUIRED
+      SUB-SKILL" line and its execution handoff: Kraft's plan gate is the
+      review, and Kraft runs the plan.
+
+  test-driven-development:
+    instructions: >-
+      Follow superpowers:test-driven-development for every change; load it
+      before you start, and if you cannot, stop with status "needs_context"
+      naming it. Run the tests for what you changed by path, as Kraft's
+      instructions say, not the whole suite. Before you finish, follow
       superpowers:verification-before-completion.
+
+  systematic-debugging:
+    instructions: >-
+      Follow superpowers:systematic-debugging to find the root cause before
+      you change anything; load it before you start, and if you cannot, stop
+      with status "needs_context" naming it. Where it says to discuss with a
+      person after repeated failed fixes, stop with status "needs_context"
+      and say what you tried.
 
 tasks:
   plan_author:
     extends: kraft-default:plan_author
-    skill: superpowers:writing-plans
-    steering: [no-person-present]
+    steering: [plan-like-writing-plans, unattended]
 
   implementer:
     extends: kraft-default:implementer
-    skill: superpowers:test-driven-development
-    steering: [no-person-present]
+    steering: [test-driven-development, unattended]
 
   repair_verification:
     extends: kraft-default:repair_verification
-    skill: superpowers:systematic-debugging
-    steering: [no-person-present]
+    steering: [systematic-debugging, unattended]
 
   repair_mr_feedback:
     extends: kraft-default:repair_mr_feedback
-    skill: superpowers:systematic-debugging
-    steering: [no-person-present]
+    steering: [systematic-debugging, unattended]

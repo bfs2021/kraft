@@ -556,6 +556,7 @@ ci-checks:
     uv run python dev/check_docs_shell.py
     uv run python dev/check_docs_ledes.py
     uv run python dev/check_docs_added_in.py
+    uv run python dev/check_addon_versions.py
     uv run python dev/check_tests.py
     uv run python -m kraft.intent
 
