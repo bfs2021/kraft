@@ -45,6 +45,17 @@ def base_commit(root: Path, upstream: str = "origin/main") -> str | None:
     return base
 
 
+def resolve_base(root: Path, given: str | None) -> str | None:
+    """`--base` as a commit, refusing one this clone lacks; none given, or a
+    push's all-zero `before` (nothing came before it), is `base_commit`'s."""
+    if given and given.strip("0"):
+        found = _git(root, "rev-parse", "--verify", "--quiet", f"{given}^{{commit}}")
+        if found is None:
+            raise SystemExit(f"--base {given} is not a commit in this clone")
+        return found
+    return base_commit(root)
+
+
 def _version(files) -> str:
     return json.loads(files[manifest.ADDON_JSON][1])["version"]
 
@@ -82,11 +93,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--base", help="the commit to compare with (CI: the commit before a push)")
     args = ap.parse_args()
-    base = (
-        _git(ROOT, "rev-parse", "--verify", "--quiet", f"{args.base}^{{commit}}")
-        if args.base
-        else base_commit(ROOT)
-    )
+    base = resolve_base(ROOT, args.base)
     if base is None:
         print("no base to compare with: git fetch origin main", file=sys.stderr)
         # A clone with no origin/main cannot tell; CI always can.

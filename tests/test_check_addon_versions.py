@@ -82,3 +82,14 @@ def test_the_base_is_the_merge_base_or_the_commit_before(cv, tmp_path):
     publish(repo, "release", version="1.1.0")
     # A branch off it: where it left.
     assert cv.base_commit(repo, "upstream") == second
+
+
+def test_a_named_base_must_be_a_commit_here(cv, tmp_path):
+    repo = make_collection(tmp_path, RELEASE)
+    head = git(repo, "rev-parse", "HEAD")
+
+    assert cv.resolve_base(repo, head) == head
+    with pytest.raises(SystemExit, match="is not a commit"):
+        cv.resolve_base(repo, "deadbeef")
+    # A push that created the branch has no `before`: the default base, here none.
+    assert cv.resolve_base(repo, "0" * 40) is None
