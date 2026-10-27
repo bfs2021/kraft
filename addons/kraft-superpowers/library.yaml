@@ -1,16 +1,19 @@
 # Kraft's shipped chains (inherited from kraft-default), with superpowers'
-# methods on the tasks that plan, implement and repair. The agent loads each
-# `superpowers:` skill from the superpowers plugin, which must be installed
-# where it runs (https://github.com/obra/superpowers).
+# methods on the tasks that write the spec and the plan, implement, repair,
+# and weigh review feedback. The agent loads each `superpowers:` skill from the
+# superpowers plugin, which must be installed where it runs
+# (https://github.com/obra/superpowers).
 #
 # The methods are named in steering, not in `skill:`: Kraft treats an agent
 # task with `skill:` as a judging task, and tells it implementing is another
-# node's job. Planning keeps Kraft's own plan method, whose output
-# the plan gate and the board read, and borrows writing-plans' style.
+# node's job. The spec and the plan keep Kraft's own methods, whose output the
+# gates and the board read, and borrow brainstorming's and writing-plans'
+# shape: superpowers writes both for a person in the conversation, and here
+# the person is at Kraft's gates instead.
 #
-# Only methods that work with no person present are used: brainstorming asks
-# questions, and using-git-worktrees and finishing-a-development-branch do
-# what Kraft does itself.
+# Only methods that work with no person present are used: brainstorming's
+# conversation, using-git-worktrees and finishing-a-development-branch are
+# left out, and Kraft does what they would.
 
 steering:
   unattended:
@@ -20,12 +23,26 @@ steering:
       offer a choice, take the choice the work item and its approved documents
       support and say which you took, or stop with status "needs_context" when
       they cannot decide it. Of superpowers' skills, use only the ones these
-      instructions name. Do not use brainstorming (the spec and plan are
-      approved), executing-plans or subagent-driven-development (implement
-      the plan yourself, in this session), using-git-worktrees,
-      finishing-a-development-branch or requesting-code-review: Kraft's nodes
-      do those. Do not create worktrees or branches, push, open pull requests
-      or merge.
+      instructions name. Do not hold brainstorming's conversation (the work
+      item stands in for it) or follow its hand-off to writing-plans (Kraft's
+      plan node writes the plan), and do not use executing-plans or
+      subagent-driven-development (implement the plan yourself, in this
+      session), using-git-worktrees, finishing-a-development-branch or
+      requesting-code-review: Kraft's nodes do those. Do not create worktrees
+      or branches, push, open pull requests or merge.
+
+  spec-like-brainstorming:
+    instructions: >-
+      Write the spec as superpowers:brainstorming's written design, one a
+      talented builder could plan from without asking anyone: the intent and
+      the why; goals, non-goals and anti-goals; constraints; the parts of the
+      how the work item decides, as it decides them; and what is left to the
+      builder. The work item and its attachments stand in for the
+      conversation. Mark each choice you make that they do not as your call.
+      Before you finish, read it as that builder and settle what such a
+      builder could settle. Keep Kraft's spec format, and write it only where
+      Kraft's instructions say, not under docs/superpowers/specs/. Kraft's
+      spec gate is where a person approves it.
 
   plan-like-writing-plans:
     instructions: >-
@@ -48,13 +65,28 @@ steering:
 
   systematic-debugging:
     instructions: >-
-      Follow superpowers:systematic-debugging to find the root cause before
-      you change anything; load it before you start, and if you cannot, stop
-      with status "needs_context" naming it. Where it says to discuss with a
-      person after repeated failed fixes, stop with status "needs_context"
-      and say what you tried.
+      Follow superpowers:systematic-debugging to find the root cause of a
+      failure before you change anything; load it before you start, and if
+      you cannot, stop with status "needs_context" naming it. Where it says
+      to discuss with a person after repeated failed fixes, stop with status
+      "needs_context" and say what you tried.
+
+  receiving-code-review:
+    instructions: >-
+      Weigh every review finding and comment the way
+      superpowers:receiving-code-review does: check it against the code
+      before acting on it, act on what holds, and answer what does not with
+      technical reasoning, not agreement or thanks. Where Kraft gives you
+      threads to answer, answer on them as its instructions say. Do not ask
+      a person to clarify a comment: where an unclear one could change how
+      the others are handled, stop with status "needs_context" naming it;
+      otherwise handle the clear ones and say which you left and why.
 
 tasks:
+  spec_author:
+    extends: kraft-default:spec_author
+    steering: [project-standards, spec-like-brainstorming, unattended]
+
   plan_author:
     extends: kraft-default:plan_author
     steering: [plan-like-writing-plans, unattended]
@@ -65,8 +97,12 @@ tasks:
 
   repair_verification:
     extends: kraft-default:repair_verification
-    steering: [systematic-debugging, unattended]
+    steering: [receiving-code-review, systematic-debugging, unattended]
 
   repair_mr_feedback:
     extends: kraft-default:repair_mr_feedback
-    steering: [systematic-debugging, unattended]
+    steering: [receiving-code-review, systematic-debugging, unattended]
+
+  triage_review_feedback:
+    extends: kraft-default:triage_review_feedback
+    steering: [receiving-code-review, unattended]

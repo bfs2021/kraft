@@ -15,7 +15,7 @@ from kraft.progress import implementing_nodes
 from kraft.templates.library import TemplateLibrary
 
 REPO = Path(__file__).resolve().parents[2]
-CHILDREN = ("kraft-superpowers", "kraft-temper")
+CHILDREN = ("kraft-superpowers",)
 
 
 def _shipped_config(tmp_path: Path) -> Path:
@@ -58,3 +58,11 @@ def test_a_child_chain_keeps_its_implementing_node(library, child, chain):
     """A method set as `skill:` would make the implementer a judging task, and
     Kraft would tell it implementing is another node's job."""
     assert implementing_nodes(library.resolve_chain(f"{child}:{chain}")) == ["implementation"]
+
+
+def test_a_child_spec_keeps_the_shipped_steering(library):
+    """A child's `steering:` replaces its parent's list, so the spec task's own
+    standards must be named again beside the method."""
+    [spec] = [n for n in library.resolve_chain("kraft-superpowers:default").nodes if n.id == "spec"]
+    [author] = [t.task for step in spec.steps for t in step.tasks]
+    assert "kraft-superpowers:project-standards" in author.steering

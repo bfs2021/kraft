@@ -15,12 +15,7 @@
     {
       "name": "kraft-superpowers",
       "source": "./addons/kraft-superpowers",
-      "description": "Kraft's chains with superpowers' planning, TDD and debugging methods"
-    },
-    {
-      "name": "kraft-temper",
-      "source": "./addons/kraft-temper",
-      "description": "Kraft's chains with Temper's source-driven development"
+      "description": "Kraft's chains with superpowers' methods for the spec, plan, implementation, repairs and review feedback"
     }
   ]
 }
