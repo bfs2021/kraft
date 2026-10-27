@@ -196,7 +196,8 @@ new ones.
 ```text
 src/kraft/        the orchestrator: api/, executor/, store/, adapters/, worker/, cli/, index/, ...
 frontend/         the React SPA (vite), see frontend/README.md; e2e/ is Playwright, e2e/contract/ the UI contract
-config/           the packaged configuration: the default library, chains, harness profiles and policy, an install's seed
+config/           the packaged configuration: the default library, chains, harness profiles and policy, an install's seed, and the add-on kraft-default
+addons/           the other add-ons of Kraft's own collection, which build on kraft-default
 tests/            backend tests, mirroring src/kraft/ (CLAUDE.md says why that matters)
 dev/              the dev-instance seeder, CI check scripts, release and codegen helpers
 fixtures/         the fake agent and the PATH shim `just dev` uses
@@ -207,6 +208,17 @@ plugins/          the Claude Code plugins: kraft and kraft-lite
 vscode/           the VS Code extension
 install.sh        the one-line installer the README points to
 ```
+
+**Kraft's own collection.** `config/.kraft/addon.json` publishes `config/`'s
+`library.yaml` and `chains/` as the add-on `kraft-default`, and `addons/` holds
+the add-ons that build on it. An installed instance sees an update only when an
+add-on's `version` changes, so a change to `config/library.yaml`,
+`config/chains/` or an add-on under `addons/` raises that add-on's `version` in
+the same pull request: patch for a fix, minor for something new, major for a
+removed or renamed chain or task. When the change uses something the last
+release cannot read, raise `requires.kraft` too.
+`tests/addons/test_kraft_sdlc_collection.py` fails when a change to `config/`
+breaks an add-on built on it.
 
 The dot-directories are mostly the maintainer's agent tooling. You can ignore
 them unless you use the same tools:
@@ -221,6 +233,7 @@ them unless you use the same tools:
 | `.agents/` | a beads skill for agent sessions; `just setup` adds superpowers and impeccable beside it, gitignored | Only with an agent other than Claude Code |
 | `.codex/` | Codex hooks that call `bd`; they fail without beads installed | No |
 | `.kraft-lite/` | this repo's Kraft Lite bindings (`bindings.yaml`) | No |
+| `.kraft/` | `collection.json`, which publishes `config/` and `addons/` as the collection `kraft-sdlc` | Only to change what the collection lists |
 | `.gitlab/` | the PR template for GitLab, from before the move to GitHub; a symlink to `.github/`'s | No |
 
 ## Tests

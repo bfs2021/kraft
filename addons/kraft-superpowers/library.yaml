@@ -1,0 +1,40 @@
+# Kraft's shipped chains (inherited from kraft-default), with superpowers'
+# methods on the tasks that write a plan, implement it, or repair it. The
+# agent loads each `superpowers:` skill from the superpowers plugin, which
+# must be installed where it runs (https://github.com/obra/superpowers).
+#
+# Only the methods that work with no person present are used: brainstorming
+# asks questions, and using-git-worktrees and finishing-a-development-branch
+# do what Kraft does itself, so the spec and the merge request stay Kraft's.
+
+steering:
+  no-person-present:
+    instructions: >-
+      This session runs unattended inside a Kraft worktree. Where the method
+      asks a person something or offers a choice, take the choice the work
+      item and its approved documents support, and say which you took. Write
+      what you produce where Kraft's instructions say, not where the method
+      would. Do not create worktrees or branches, push, open pull requests or
+      merge: Kraft does those. Before you finish, follow
+      superpowers:verification-before-completion.
+
+tasks:
+  plan_author:
+    extends: kraft-default:plan_author
+    skill: superpowers:writing-plans
+    steering: [no-person-present]
+
+  implementer:
+    extends: kraft-default:implementer
+    skill: superpowers:test-driven-development
+    steering: [no-person-present]
+
+  repair_verification:
+    extends: kraft-default:repair_verification
+    skill: superpowers:systematic-debugging
+    steering: [no-person-present]
+
+  repair_mr_feedback:
+    extends: kraft-default:repair_mr_feedback
+    skill: superpowers:systematic-debugging
+    steering: [no-person-present]

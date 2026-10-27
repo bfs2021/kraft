@@ -1,0 +1,11 @@
+{
+  "$schema": "https://kraft-sdlc.dev/schemas/addon.schema.json",
+  "name": "kraft-temper",
+  "version": "1.0.0",
+  "description": "Kraft's chains, with Temper's source-driven development for implementing and repairing",
+  "requires": {
+    "kraft": "2.4",
+    "harnesses": ["claude"],
+    "addons": { "kraft-default@kraft-sdlc": "1" }
+  }
+}

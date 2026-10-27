@@ -1,0 +1,32 @@
+# Kraft's shipped chains (inherited from kraft-default), with Temper's
+# source-driven development on the tasks that write or repair code. The agent
+# loads each `temper:` skill from the Temper plugin, which must be installed
+# where it runs (https://github.com/galando/temper).
+#
+# Temper's stage commands (/temper:plan, /temper:build, ...) run Temper's own
+# gated flow, which would compete with Kraft's gates, so only its skills are
+# used. Kraft's gates stand in for Temper's.
+
+steering:
+  kraft-runs-the-flow:
+    instructions: >-
+      This session runs unattended inside a Kraft worktree, and Kraft runs the
+      flow: do not start a Temper run or any Temper stage command, and do not
+      ask a person anything. Write what you produce where Kraft's instructions
+      say. Do not push, open pull requests or merge: Kraft does those.
+
+tasks:
+  implementer:
+    extends: kraft-default:implementer
+    skill: temper:source-driven-development
+    steering: [kraft-runs-the-flow]
+
+  repair_verification:
+    extends: kraft-default:repair_verification
+    skill: temper:source-driven-development
+    steering: [kraft-runs-the-flow]
+
+  repair_mr_feedback:
+    extends: kraft-default:repair_mr_feedback
+    skill: temper:source-driven-development
+    steering: [kraft-runs-the-flow]

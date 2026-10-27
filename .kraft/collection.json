@@ -1,0 +1,26 @@
+{
+  "$schema": "https://kraft-sdlc.dev/schemas/collection.schema.json",
+  "name": "kraft-sdlc",
+  "description": "Chains and libraries published with Kraft",
+  "owner": {
+    "name": "Omid Karami",
+    "email": "6075589+itsOmidKarami@users.noreply.github.com"
+  },
+  "addons": [
+    {
+      "name": "kraft-default",
+      "source": "./config",
+      "description": "Kraft's shipped chains and library"
+    },
+    {
+      "name": "kraft-superpowers",
+      "source": "./addons/kraft-superpowers",
+      "description": "Kraft's chains with superpowers' planning, TDD and debugging methods"
+    },
+    {
+      "name": "kraft-temper",
+      "source": "./addons/kraft-temper",
+      "description": "Kraft's chains with Temper's source-driven development"
+    }
+  ]
+}
