@@ -217,8 +217,8 @@ add-on's `version` changes, so a change to `config/library.yaml`,
 the same pull request: patch for a fix, minor for something new, major for a
 removed or renamed chain or task. When the change uses something the last
 release cannot read, raise `requires.kraft` too.
-`dev/check_addon_versions.py` (in `just lint`) fails when an add-on changed since
-the latest release and kept its version, and
+`dev/check_addon_versions.py` (in `just ci-checks` and CI's lint job) fails when
+an add-on changed against the pull request's base and kept its version, and
 `tests/addons/test_kraft_sdlc_collection.py` fails when a change to `config/`
 breaks an add-on built on it. In this repository, `kraft-superpowers` chains are
 refused their superpowers skills: `.claude/hooks/kraft-worker-plugins.sh` turns

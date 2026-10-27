@@ -3,9 +3,9 @@
 # `superpowers:` skill from the superpowers plugin, which must be installed
 # where it runs (https://github.com/obra/superpowers).
 #
-# The methods are named in steering, not in `skill:`: an agent task with a
-# skill is one that judges the change, and Kraft tells the one without a
-# skill to implement it. Planning keeps Kraft's own plan method, whose output
+# The methods are named in steering, not in `skill:`: Kraft treats an agent
+# task with `skill:` as a judging task, and tells it implementing is another
+# node's job. Planning keeps Kraft's own plan method, whose output
 # the plan gate and the board read, and borrows writing-plans' style.
 #
 # Only methods that work with no person present are used: brainstorming asks
@@ -19,8 +19,13 @@ steering:
       anything or wait for an answer: where a method says to ask, discuss or
       offer a choice, take the choice the work item and its approved documents
       support and say which you took, or stop with status "needs_context" when
-      they cannot decide it. Do not create worktrees or branches, push, open
-      pull requests or merge: Kraft does those.
+      they cannot decide it. Of superpowers' skills, use only the ones these
+      instructions name. Do not use brainstorming (the spec and plan are
+      approved), executing-plans or subagent-driven-development (implement
+      the plan yourself, in this session), using-git-worktrees,
+      finishing-a-development-branch or requesting-code-review: Kraft's nodes
+      do those. Do not create worktrees or branches, push, open pull requests
+      or merge.
 
   plan-like-writing-plans:
     instructions: >-
@@ -28,15 +33,18 @@ steering:
       steps, the failing test first, exact files and commands. Keep Kraft's
       plan format and its `### Task N:` headings. Leave out its "REQUIRED
       SUB-SKILL" line and its execution handoff: Kraft's plan gate is the
-      review, and Kraft runs the plan.
+      review, and Kraft runs the plan. Write it only where Kraft's
+      instructions say, not under docs/superpowers/.
 
   test-driven-development:
     instructions: >-
       Follow superpowers:test-driven-development for every change; load it
       before you start, and if you cannot, stop with status "needs_context"
-      naming it. Run the tests for what you changed by path, as Kraft's
-      instructions say, not the whole suite. Before you finish, follow
-      superpowers:verification-before-completion.
+      naming it. Where the skill says to run the project's whole test command
+      before you call the change done, do not: run the tests for what you
+      changed, by path, as Kraft's instructions say. Kraft's verification
+      node and CI run the suite against your change. Before you finish,
+      follow superpowers:verification-before-completion.
 
   systematic-debugging:
     instructions: >-

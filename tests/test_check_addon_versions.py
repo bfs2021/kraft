@@ -1,6 +1,6 @@
 """`dev/check_addon_versions.py`: an add-on of Kraft's own collection that
-changed since the latest release has a new `version`, or no installed instance
-ever sees the change."""
+changed has a new `version`, or an instance that already took the old one
+never sees the change."""
 
 from __future__ import annotations
 
@@ -9,9 +9,11 @@ from pathlib import Path
 
 import pytest
 from support.addons import AGENT, make_collection, publish
-from support.harness import git
+from support.harness import commit_all, git, write
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "dev" / "check_addon_versions.py"
+RELEASE = {"release": {"library": {"tasks": {"base": AGENT}}}}
+MORE = {"library": {"tasks": {"base": AGENT, "more": AGENT}}}
 
 
 @pytest.fixture(scope="module")
@@ -26,30 +28,50 @@ def cv():
     ("change", "found"),
     [
         ({}, []),
-        ({"library": {"tasks": {"base": AGENT, "more": AGENT}}}, ["release"]),
-        ({"library": {"tasks": {"base": AGENT, "more": AGENT}}, "version": "1.1.0"}, []),
+        (MORE, ["release"]),
+        ({**MORE, "version": "1.1.0"}, []),
         ({"files": {"README.md": "notes\n"}}, []),
     ],
     ids=["unchanged", "changed-same-version", "changed-new-version", "file-kraft-never-reads"],
 )
 def test_a_changed_addon_needs_a_new_version(cv, tmp_path, change, found):
-    repo = make_collection(tmp_path, {"release": {"library": {"tasks": {"base": AGENT}}}})
-    git(repo, "tag", "v2.4.0")
+    repo = make_collection(tmp_path, RELEASE)
+    base = git(repo, "rev-parse", "HEAD")
     if change:
         publish(repo, "release", **change)
 
-    assert cv.latest_release(repo) == "v2.4.0"
-    assert [line.split(":")[0] for line in cv.problems(repo, "v2.4.0")] == found
+    assert [line.split(":")[0] for line in cv.problems(repo, base)] == found
 
 
-def test_an_addon_the_release_lacks_is_new(cv, tmp_path):
-    repo = make_collection(tmp_path, {"release": {"library": {"tasks": {"base": AGENT}}}})
-    git(repo, "tag", "v2.4.0")
+@pytest.mark.parametrize("before", ["absent", "no-manifest"])
+def test_an_addon_the_base_lacks_is_new(cv, tmp_path, before):
+    """`config/` was a directory long before it was the add-on kraft-default."""
+    repo = make_collection(tmp_path, RELEASE)
+    if before == "no-manifest":
+        write(repo, "addons/tools/library.yaml", "tasks: {}\n")
+        commit_all(repo, "a directory that is no add-on yet")
+    base = git(repo, "rev-parse", "HEAD")
     publish(repo, "tools", library={"tasks": {"base": AGENT}})
-    (repo / ".kraft/collection.json").write_text(
-        (repo / ".kraft/collection.json")
-        .read_text()
-        .replace('"addons": [', '"addons": [{"name": "tools", "source": "./addons/tools"}, ')
+    collection = repo / ".kraft/collection.json"
+    collection.write_text(
+        collection.read_text().replace(
+            '"addons": [', '"addons": [{"name": "tools", "source": "./addons/tools"}, '
+        )
     )
 
-    assert cv.problems(repo, "v2.4.0") == []
+    assert cv.problems(repo, base) == []
+
+
+def test_the_base_is_the_merge_base_or_the_commit_before(cv, tmp_path):
+    repo = make_collection(tmp_path, RELEASE)
+    first = git(repo, "rev-parse", "HEAD")
+    publish(repo, "release", **MORE)
+    second = git(repo, "rev-parse", "HEAD")
+    git(repo, "branch", "upstream")
+
+    # On the upstream branch itself (a push to main): the commit before.
+    assert cv.base_commit(repo, "upstream") == first
+    git(repo, "checkout", "-q", "-b", "feature")
+    publish(repo, "release", version="1.1.0")
+    # A branch off it: where it left.
+    assert cv.base_commit(repo, "upstream") == second

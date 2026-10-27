@@ -6,8 +6,8 @@ import shutil
 from pathlib import Path
 
 import pytest
-from cli.test_addon import _run
 
+from kraft import cli
 from kraft.addons import load
 from kraft.cli import addon as addon_cli
 from kraft.cli.addon import validate
@@ -31,22 +31,24 @@ def test_the_published_collection_validates_against_the_shipped_config(tmp_path)
     assert {a["name"] for a in report["addons"]} == {"kraft-default", *CHILDREN}
 
 
-@pytest.fixture
-def library(tmp_path, monkeypatch, capsys):
+@pytest.fixture(scope="module")
+def library(tmp_path_factory):
     """An instance seeded from the shipped config with both children installed
-    from this working tree."""
+    from this working tree, once for the module: an install takes seconds."""
+    tmp_path = tmp_path_factory.mktemp("kraft-sdlc")
     config, run_dir = _shipped_config(tmp_path), tmp_path / "run"
-    monkeypatch.setenv("KRAFT_CONFIG_DIR", str(config))
-    monkeypatch.setenv("KRAFT_RUN_DIR", str(run_dir))
-    monkeypatch.delenv("KRAFT_WORK_ITEM_ID", raising=False)
 
     async def no_server():
         return {}
 
-    monkeypatch.setattr(addon_cli.client, "reload_addons", no_server)
-    assert _run(capsys, "collection", "add", str(REPO))[0] == 0
-    for child in CHILDREN:
-        assert _run(capsys, "install", f"{child}@kraft-sdlc", "-y")[0] == 0
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("KRAFT_CONFIG_DIR", str(config))
+        mp.setenv("KRAFT_RUN_DIR", str(run_dir))
+        mp.delenv("KRAFT_WORK_ITEM_ID", raising=False)
+        mp.setattr(addon_cli.client, "reload_addons", no_server)
+        cli.main(["admin", "addon", "collection", "add", str(REPO)])
+        for child in CHILDREN:
+            cli.main(["admin", "addon", "install", f"{child}@kraft-sdlc", "-y"])
     return TemplateLibrary.from_yaml_dir(config, addons=load.installed(config, run_dir / "addons"))
 
 

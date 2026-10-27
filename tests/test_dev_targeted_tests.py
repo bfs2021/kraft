@@ -43,6 +43,7 @@ def tt():
         (["tests/support/justfile"], True),
         (["fixtures/fake-claude.sh"], True),
         (["docs/intent/x.md"], False),
+        (["addons/a/library.yaml", ".kraft/collection.json"], False),
         (["plugins/kraft/skills/a/SKILL.md"], True),
         (["docsite/content/a.md"], False),
         (["docs/café.md"], False),
@@ -60,6 +61,7 @@ def tt():
         "support-non-python",
         "fixtures",
         "intent-doc",
+        "kraft-collection",
         "skill",
         "a-docs-page",
         "a-non-ascii-path",
@@ -93,6 +95,7 @@ def test_the_plan_runs_the_full_suite_only_for_a_change_testmon_cannot_see(tt, c
     assert generated.argv[3 : 3 + len(tt.GENERATED_TESTS)] == list(tt.GENERATED_TESTS)
     # What reads docs/intent testmon cannot trace, so a change there adds it.
     assert (set(tt.INTENT_TESTS) <= set(generated.argv)) == any(map(tt.is_intent, changed))
+    assert (set(tt.COLLECTION_TESTS) <= set(generated.argv)) == any(map(tt.is_collection, changed))
     assert "--no-testmon" in generated.argv and generated.env == {}
     assert "--testmon-forceselect" in selected.argv and "--testmon" in selected.argv
     assert selected.argv[selected.argv.index("-n") + 1] == "logical"

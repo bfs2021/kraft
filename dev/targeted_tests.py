@@ -38,9 +38,6 @@ BLIND: tuple[tuple[str, bool], ...] = (
     ("src/kraft", True),
     ("fixtures", False),
     ("config", False),
-    # Kraft's own collection: read as data by tests/addons/test_kraft_sdlc_collection.py.
-    ("addons", False),
-    (".kraft", False),
     ("tests/support", True),
     # Run as subprocesses, found by grepping how tests start them; a test in
     # tests/test_dev_targeted_tests.py fails when a new one is not listed.
@@ -57,6 +54,11 @@ BLIND: tuple[tuple[str, bool], ...] = (
 #: than running the full suite. testmon still cannot see it, so `just test` warns.
 INTENT_TREE = "docs/intent"
 INTENT_TESTS = ("tests/test_intent_origins.py",)
+
+#: Kraft's own collection beside `config/`, read as data by `COLLECTION_TESTS`
+#: alone, so a change here adds them rather than running the full suite.
+COLLECTION = ("addons", ".kraft")
+COLLECTION_TESTS = ("tests/addons/test_kraft_sdlc_collection.py",)
 
 #: Tests that a committed generated file is current. A class body runs once at
 #: import, before any test, so testmon ties a change to it to no test; these are
@@ -115,6 +117,10 @@ def is_intent(path: str) -> bool:
     return _within(path, INTENT_TREE)
 
 
+def is_collection(path: str) -> bool:
+    return any(_within(path, directory) for directory in COLLECTION)
+
+
 def _git(cwd: Path, *args: str) -> str | None:
     done = subprocess.run(
         ["git", "-c", "core.quotePath=false", *args],
@@ -153,7 +159,11 @@ def plan(changed: list[str] | None) -> Plan:
     if blind:
         more = f" (and {len(blind) - 5} more)" if len(blind) > 5 else ""
         return Plan(f"testmon cannot see a change to {', '.join(blind[:5])}{more}", [_FULL])
-    tests = GENERATED_TESTS + (INTENT_TESTS if any(is_intent(path) for path in changed) else ())
+    tests = (
+        GENERATED_TESTS
+        + (INTENT_TESTS if any(is_intent(path) for path in changed) else ())
+        + (COLLECTION_TESTS if any(is_collection(path) for path in changed) else ())
+    )
     return Plan(
         None,
         [

@@ -330,6 +330,12 @@ WHERE an add-on comes from a git collection, the system SHALL treat it as having
 enforced-by: tests/addons/test_update.py::test_an_update_waits_for_a_version_change[same-version-new-commit], tests/addons/test_update.py::test_an_update_waits_for_a_version_change[version-raised], tests/addons/test_update.py::test_an_update_waits_for_a_version_change[version-lowered]
 origin: src/kraft/addons/update.py §update
 
+## REQ a-same-version-change-is-noted-only-for-what-kraft-reads
+
+WHERE an add-on from a git collection has a new commit at its locked version, the system SHALL note that its files changed only when the files Kraft reads from it differ from the locked ones.
+enforced-by: tests/cli/test_addon.py::test_update_check_notes_changed_files_at_the_same_version[layout], tests/cli/test_addon.py::test_update_check_notes_changed_files_at_the_same_version[file-kraft-never-reads]
+origin: src/kraft/addons/update.py §update
+
 ## REQ a-directory-collection-updates-on-every-change
 
 WHERE an add-on comes from a directory collection, the system SHALL treat any change to its digest as an update, whatever its version.

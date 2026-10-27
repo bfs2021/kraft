@@ -3,9 +3,9 @@
 # loads each `temper:` skill from the Temper plugin, which must be installed
 # where it runs (https://github.com/galando/temper).
 #
-# The method is named in steering, not in `skill:`: an agent task with a skill
-# is one that judges the change, and Kraft tells the one without a skill to
-# implement it. Temper's stage commands (/temper:plan, /temper:build, ...) run
+# The method is named in steering, not in `skill:`: Kraft treats an agent task
+# with `skill:` as a judging task, and tells it implementing is another node's
+# job. Temper's stage commands (/temper:plan, /temper:build, ...) run
 # Temper's own gated flow, which would compete with Kraft's, so only its skill
 # is used and Kraft's gates stand in for Temper's.
 
@@ -13,7 +13,7 @@ steering:
   unattended:
     instructions: >-
       This session runs unattended inside a Kraft worktree, and Kraft runs the
-      flow: do not start a Temper run or any Temper stage command, and never
+      flow. Do not start a Temper run or any Temper stage command, and never
       ask a person anything. Stop with status "needs_context" when the work
       item and its approved documents cannot decide something. Do not push,
       open pull requests or merge: Kraft does those.
@@ -22,8 +22,11 @@ steering:
     instructions: >-
       Follow temper:source-driven-development wherever you write code against
       a framework or library: check its documentation for the version this
-      repository uses before you write the code. Load it before you start,
-      and if you cannot, stop with status "needs_context" naming it.
+      repository uses before you write the code. If no documentation server
+      or web access is available, follow the skill's heuristic path from the
+      installed version's own source and type definitions, and say so; do
+      not stop for it. Load the skill before you start, and if you cannot,
+      stop with status "needs_context" naming it.
 
 tasks:
   implementer:
