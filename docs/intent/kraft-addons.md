@@ -332,7 +332,7 @@ origin: src/kraft/addons/update.py §update
 
 ## REQ a-same-version-change-is-noted-only-for-what-kraft-reads
 
-WHERE an add-on from a git collection has a new commit at its locked version, the system SHALL note that its files changed only when the files Kraft reads from it differ from the locked ones.
+WHERE an add-on from a git collection has a new commit at its locked version, the system SHALL note that its files changed when, and only when, the files Kraft reads from it differ from the locked ones.
 enforced-by: tests/cli/test_addon.py::test_update_check_notes_changed_files_at_the_same_version[layout], tests/cli/test_addon.py::test_update_check_notes_changed_files_at_the_same_version[file-kraft-never-reads]
 origin: src/kraft/addons/update.py §update
 

@@ -218,7 +218,10 @@ the same pull request: patch for a fix, minor for something new, major for a
 removed or renamed chain or task. When the change uses something the last
 release cannot read, raise `requires.kraft` too.
 `dev/check_addon_versions.py` (in `just ci-checks` and CI's lint job) fails when
-an add-on changed against the pull request's base and kept its version, and
+an add-on changed against the pull request's base and its version is not
+higher. Two pull requests that raise one add-on to the same version both pass
+alone, and the second fails on `main`: merge `main` into the second and raise
+it again before merging it.
 `tests/addons/test_kraft_sdlc_collection.py` fails when a change to `config/`
 breaks an add-on built on it. In this repository, `kraft-superpowers` chains are
 refused their superpowers skills: `.claude/hooks/kraft-worker-plugins.sh` turns

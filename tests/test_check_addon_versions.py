@@ -30,9 +30,16 @@ def cv():
         ({}, []),
         (MORE, ["release"]),
         ({**MORE, "version": "1.1.0"}, []),
+        ({**MORE, "version": "0.9.0"}, ["release"]),
         ({"files": {"README.md": "notes\n"}}, []),
     ],
-    ids=["unchanged", "changed-same-version", "changed-new-version", "file-kraft-never-reads"],
+    ids=[
+        "unchanged",
+        "changed-same-version",
+        "changed-new-version",
+        "changed-lower-version",
+        "file-kraft-never-reads",
+    ],
 )
 def test_a_changed_addon_needs_a_new_version(cv, tmp_path, change, found):
     repo = make_collection(tmp_path, RELEASE)

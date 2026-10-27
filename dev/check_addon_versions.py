@@ -7,23 +7,27 @@ or an add-on under `addons/` that keeps the version never reaches an instance
 that already took that version. This compares each add-on
 `.kraft/collection.json` lists, as the working tree has it, with the base: the
 merge base with `origin/main`, or the commit before when that is this one (a
-push to `main`). When the files Kraft reads from an add-on differ, its
-`version` must too. An add-on the base lacks is new and passes.
+push to `main`), or `--base`. When the files Kraft reads from an add-on differ,
+its `version` must be higher, since an update refuses a downgrade. An add-on
+the base lacks is new and passes.
 
-    uv run python dev/check_addon_versions.py
+    uv run python dev/check_addon_versions.py [--base REF]
 
-Needs `origin/main` (CI's lint job checks out with fetch-depth 0).
-Exits 1 on any finding.
+Needs `origin/main` (CI's lint job checks out with fetch-depth 0); without it,
+it only warns outside CI. Exits 1 on any finding.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 from kraft.addons import fetch, manifest
+from kraft.addons.review import precedence
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -51,30 +55,43 @@ def problems(root: Path, base: str) -> list[str]:
     found = []
     for entry in listed:
         source = entry["source"]
-        now = fetch.extract_dir(root / source.removeprefix("./")).files
+        try:
+            now = fetch.extract_dir(root / source.removeprefix("./")).files
+        except fetch.AddonRefused as exc:
+            found.append(f"{entry['name']}: Kraft refuses it as it is now: {exc}")
+            continue
         try:
             then = fetch.extract_git(git_dir, base, source).files
         except fetch.FetchError:
             continue  # no such directory at the base: new
-        if manifest.ADDON_JSON not in then:
-            continue  # a directory, but not yet an add-on: new
-        if fetch.digest(now) != fetch.digest(then) and _version(now) == _version(then):
+        except fetch.AddonRefused as exc:
+            found.append(f"{entry['name']}: Kraft refuses it at {base[:12]}: {exc}")
+            continue
+        if manifest.ADDON_JSON not in then or fetch.digest(now) == fetch.digest(then):
+            continue  # not yet an add-on at the base, or unchanged
+        if precedence(_version(now)) <= precedence(_version(then)):
             found.append(
-                f"{entry['name']}: changed since {base[:12]} but still version {_version(now)}; "
-                f"raise `version` in {source.removeprefix('./')}/{manifest.ADDON_JSON}"
+                f"{entry['name']}: changed since {base[:12]} but version {_version(now)} is "
+                f"not above {_version(then)}; raise `version` in "
+                f"{source.removeprefix('./')}/{manifest.ADDON_JSON}"
             )
     return found
 
 
 def main() -> int:
-    base = base_commit(ROOT)
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--base", help="the commit to compare with (CI: the commit before a push)")
+    args = ap.parse_args()
+    base = (
+        _git(ROOT, "rev-parse", "--verify", "--quiet", f"{args.base}^{{commit}}")
+        if args.base
+        else base_commit(ROOT)
+    )
     if base is None:
-        print("no merge base with origin/main: git fetch origin main", file=sys.stderr)
-        return 1
-    try:
-        found = problems(ROOT, base)
-    except fetch.AddonRefused as exc:
-        found = [f"an add-on at {base[:12]} is one Kraft refuses: {exc}"]
+        print("no base to compare with: git fetch origin main", file=sys.stderr)
+        # A clone with no origin/main cannot tell; CI always can.
+        return 1 if os.environ.get("CI") else 0
+    found = problems(ROOT, base)
     for line in found:
         print(line)
     if not found:
