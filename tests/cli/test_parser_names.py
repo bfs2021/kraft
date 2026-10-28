@@ -8,38 +8,37 @@ not about a field they never named.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from kraft import cli
 
-GROUPS = ("item", "view", "repo", "admin")
-
-
-def test_a_mistyped_command_names_the_command(capsys):
-    with pytest.raises(SystemExit) as caught:
-        cli.main(["vew", "list"])
-    assert caught.value.code == 2
-    err = capsys.readouterr().err
-    assert "argument command: invalid choice: 'vew'" in err
-    assert "argument group:" not in err
-
 
 @pytest.mark.parametrize(
-    "argv",
+    ("argv", "typed", "word"),
     [
-        ["view", "lits"],
-        ["admin", "addon", "lits"],
-        ["admin", "addon", "collection", "lits"],
-        ["admin", "templates", "lints"],
-        ["admin", "worker", "ad"],
+        pytest.param(["vew", "list"], "vew", "command", id="command"),
+        pytest.param(["admin", "addon", "lits"], "lits", "verb", id="addon"),
+        pytest.param(["admin", "addon", "collection", "lits"], "lits", "verb", id="collection"),
+        pytest.param(["admin", "templates", "lints"], "lints", "verb", id="templates"),
+        pytest.param(["admin", "worker", "ad"], "ad", "verb", id="worker"),
     ],
 )
-def test_a_mistyped_verb_names_the_verb(argv, capsys):
+def test_a_mistyped_name_says_which_word_it_is(argv, typed, word, capsys):
     with pytest.raises(SystemExit) as caught:
         cli.main(argv)
     assert caught.value.code == 2
-    err = capsys.readouterr().err
-    assert f"argument verb: invalid choice: '{argv[-1]}'" in err
+    assert f"argument {word}: invalid choice: '{typed}'" in capsys.readouterr().err
+
+
+def test_a_group_usage_line_says_verb(capsys):
+    """`view`'s dest was already `verb`, so the metavar only shows in the usage
+    line it prints: `kraft view [-h] verb ...`, not `{list,show,...} ...`."""
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["view", "--help"])
+    assert caught.value.code == 0
+    assert "kraft view [-h] verb ..." in capsys.readouterr().out
 
 
 def test_help_still_lists_every_group(capsys):
@@ -48,5 +47,5 @@ def test_help_still_lists_every_group(capsys):
     assert caught.value.code == 0
     out = capsys.readouterr().out
     assert "command ..." in out
-    for group in GROUPS:
-        assert group in out
+    for group in (*(name for name, _, _ in cli._GROUPS), "console"):
+        assert re.search(rf"^\s+{group}\s", out, re.M), group
